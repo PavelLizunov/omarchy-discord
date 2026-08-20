@@ -1,0 +1,4 @@
+# Backend builds go to $XDG_CACHE_HOME/omarchy-discord/target — never here.
+backend/dist/
+*.log
+.DS_Store
