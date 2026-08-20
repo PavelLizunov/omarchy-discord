@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell.Io
+import qs.Commons
 
 import "Api.js" as Api
 
@@ -80,6 +81,63 @@ Item {
 
   // Monitor name hosting the open full panel ("" when closed); set by Panel.qml.
   property string panelScreenName: ""
+
+  // --- panel view state (the panel is destroyed on hide; this restores it) ---
+  property string selectedGuildId: ""
+  property string currentChannelId: ""
+
+  // --- message store ---
+  // Channel ids this client has opened (per socket connection: re-sent to the
+  // backend on every reconnect). Replaced wholesale.
+  property var openChannels: []
+  // channelId -> { channel, messages (ascending), hasMore, loading, oldestId,
+  // unreadMarkerId }. The map is replaced wholesale on every change; the
+  // `messages` array is always a new array whose elements are the same object
+  // references for unchanged rows (Timeline diffs by id and keeps delegates).
+  property var channelData: ({})
+  // channelId -> { unread, mention_count, last_read_message_id } from
+  // read_state_changed events (never from snapshots: the structure mirror is
+  // the display truth; this map is what ack/unread-marker logic consults).
+  property var readState: ({})
+  // channelId -> [{ user_id, display_name, at }] with 10 s expiry.
+  property var typers: ({})
+  // userId -> display_name, accumulated from message authors seen.
+  property var knownUsers: ({})
+  readonly property string selfId: user ? String(user.id || "") : ""
+  // Any plain-unread channel anywhere (bar dot when there are no mentions).
+  readonly property bool anyUnread: {
+    for (var g = 0; g < guilds.length; g++)
+      if (String(guilds[g].unread || "read") !== "read") return true
+    for (var d = 0; d < dms.length; d++)
+      if (String(dms[d].unread || "read") !== "read") return true
+    return false
+  }
+  // id -> name over every channel in the structure mirror (mention resolver).
+  readonly property var channelNames: {
+    var map = ({})
+    for (var gid in channelsByGuild) {
+      var list = channelsByGuild[gid]
+      if (!Array.isArray(list)) continue
+      for (var i = 0; i < list.length; i++) map[String(list[i].id || "")] = String(list[i].name || "")
+    }
+    for (var d = 0; d < dms.length; d++) map[String(dms[d].id || "")] = String(dms[d].name || "")
+    return map
+  }
+  // Markdown.js render context: theme tokens + resolvers (harness Fixtures.ctx).
+  readonly property var markdownCtx: ({
+    users: knownUsers,
+    channels: channelNames,
+    roles: ({}),
+    selfId: selfId,
+    mentionColor: Color.accent,
+    mentionBg: Util.alpha(Color.accent, 0.18),
+    linkColor: Color.accent,
+    codeBg: Util.alpha(Color.foreground, 0.08),
+    spoilerColor: Color.muted,
+    mutedColor: Color.muted,
+    monoFamily: Style.font.family,
+    fontSize: Style.font.body
+  })
 
   // --- UI visibility refcount ---
   property var visibleSurfaces: ({})
@@ -234,6 +292,7 @@ Item {
         guilds = []
         dms = []
         channelsByGuild = ({})
+        clearMessages()
         notice = ""
         succeed("Logged out")
       }
@@ -291,6 +350,360 @@ Item {
     })
   }
 
+  // --- message store ---
+  function channelEntry(channelId) {
+    var entry = channelData[String(channelId || "")]
+    return entry ? entry : null
+  }
+
+  function messagesFor(channelId) {
+    var entry = channelEntry(channelId)
+    return entry && Array.isArray(entry.messages) ? entry.messages : []
+  }
+
+  function isOpen(channelId) {
+    return openChannels.indexOf(String(channelId || "")) >= 0
+  }
+
+  function setChannelEntry(channelId, entry) {
+    var next = Api.shallowCopy(channelData)
+    if (entry) next[channelId] = entry
+    else delete next[channelId]
+    channelData = next
+  }
+
+  function patchChannelEntry(channelId, fields) {
+    var current = channelEntry(channelId)
+    if (!current) return
+    setChannelEntry(channelId, Api.assign(Api.shallowCopy(current), fields))
+  }
+
+  function noteAuthors(messages) {
+    var next = null
+    for (var i = 0; i < messages.length; i++) {
+      var author = messages[i] && messages[i].author ? messages[i].author : null
+      if (!author || !author.id) continue
+      var id = String(author.id)
+      var name = String(author.display_name || author.username || "")
+      if (!name || knownUsers[id] === name || (next && next[id] === name)) continue
+      if (!next) next = Api.shallowCopy(knownUsers)
+      next[id] = name
+    }
+    if (next) knownUsers = next
+  }
+
+  // Select the view and open the channel (panel Enter, bar middle-click,
+  // quick switcher). `guildId` is optional; it is resolved from the
+  // open_channel response otherwise.
+  function showChannel(channelId, guildId) {
+    var id = String(channelId || "")
+    if (!id) return
+    // One channel open at a time this phase: the sidebar only needs
+    // read_state_changed (global), so the previous one is closed to keep the
+    // backend's per-connection stream small.
+    var previous = currentChannelId
+    currentChannelId = id
+    if (guildId !== undefined && guildId !== null && String(guildId) !== "")
+      selectedGuildId = String(guildId)
+    if (previous && previous !== id) closeChannel(previous)
+    openChannel(id)
+  }
+
+  function openChannel(channelId) {
+    var id = String(channelId || "")
+    if (!id) return
+    if (!isOpen(id)) openChannels = openChannels.concat([id])
+    var existing = channelEntry(id)
+    if (!existing) {
+      var marker = readState[id] ? String(readState[id].last_read_message_id || "") : ""
+      setChannelEntry(id, { channel: null, messages: [], hasMore: false, loading: true,
+        oldestId: "", unreadMarkerId: marker })
+    } else if (!existing.loading) patchChannelEntry(id, { loading: true })
+    if (!ready) return
+    send("open_channel", { channel_id: id }, function(ok, result) {
+      if (!root.isOpen(id)) return
+      if (!ok) {
+        root.patchChannelEntry(id, { loading: false })
+        return
+      }
+      var rows = result && Array.isArray(result.messages) ? result.messages : []
+      var channel = result && result.channel ? result.channel : null
+      root.noteAuthors(rows)
+      var entry = root.channelEntry(id) || ({})
+      // A re-open (reconnect) re-sends the tail; merge it over what is loaded
+      // so history already paged in survives and live rows are not duplicated.
+      var merged = root.mergeTail(entry.messages || [], rows)
+      root.setChannelEntry(id, {
+        channel: channel,
+        messages: merged,
+        // A re-open keeps the paging state already established for the window.
+        hasMore: (entry.messages && entry.messages.length) ? !!entry.hasMore : !!(result && result.has_more),
+        loading: false,
+        oldestId: merged.length ? String(merged[0].id || "") : "",
+        unreadMarkerId: entry.unreadMarkerId || ""
+      })
+      if (channel && root.currentChannelId === id) {
+        var guildId = channel.guild_id ? String(channel.guild_id) : "dms"
+        if (root.selectedGuildId !== guildId) root.selectedGuildId = guildId
+        if (guildId !== "dms") root.loadChannels(guildId)
+      }
+    })
+  }
+
+  // Merge a fresh newest-page over the loaded window: rows already loaded
+  // keep their object identity (Timeline diffing), unknown rows are added,
+  // result stays ascending by id.
+  function mergeTail(loaded, tail) {
+    if (!loaded.length) return tail.slice()
+    if (!tail.length) return loaded.slice()
+    var byId = ({})
+    for (var i = 0; i < loaded.length; i++) byId[String(loaded[i].id || "")] = true
+    var out = loaded.slice()
+    var added = false
+    for (var j = 0; j < tail.length; j++) {
+      var tid = String(tail[j].id || "")
+      if (byId[tid]) continue
+      out.push(tail[j])
+      added = true
+    }
+    if (added) out.sort(function(a, b) { return Api.compareIds(a.id, b.id) })
+    return out
+  }
+
+  function closeChannel(channelId) {
+    var id = String(channelId || "")
+    if (!isOpen(id)) return
+    openChannels = openChannels.filter(function(open) { return open !== id })
+    setChannelEntry(id, null)
+    var nextTypers = Api.shallowCopy(typers)
+    delete nextTypers[id]
+    typers = nextTypers
+    if (currentChannelId === id) currentChannelId = ""
+    if (connected) backendClient.sendCommand("close_channel", { channel_id: id }, null)
+  }
+
+  function reopenChannels() {
+    for (var i = 0; i < openChannels.length; i++) openChannel(openChannels[i])
+  }
+
+  function loadHistory(channelId) {
+    var id = String(channelId || "")
+    var entry = channelEntry(id)
+    if (!entry || entry.loading || !entry.hasMore || !entry.oldestId || !ready) return
+    var before = entry.oldestId
+    patchChannelEntry(id, { loading: true })
+    send("history", { channel_id: id, before_id: before }, function(ok, result) {
+      var current = root.channelEntry(id)
+      if (!current) return
+      if (!ok) {
+        root.patchChannelEntry(id, { loading: false })
+        return
+      }
+      var rows = result && Array.isArray(result.messages) ? result.messages : []
+      root.noteAuthors(rows)
+      var known = ({})
+      var loaded = current.messages || []
+      for (var i = 0; i < loaded.length; i++) known[String(loaded[i].id || "")] = true
+      var fresh = rows.filter(function(row) { return !known[String(row.id || "")] })
+      var merged = fresh.concat(loaded)
+      root.setChannelEntry(id, Api.assign(Api.shallowCopy(current), {
+        messages: merged,
+        hasMore: !!(result && result.has_more),
+        loading: false,
+        oldestId: merged.length ? String(merged[0].id || "") : current.oldestId
+      }))
+    })
+  }
+
+  function ack(channelId, messageId) {
+    var channel = String(channelId || "")
+    var message = String(messageId || "")
+    if (!channel || !message || !ready) return false
+    var state = readState[channel]
+    if (state && String(state.last_read_message_id || "") === message && !state.unread) return false
+    send("ack", { channel_id: channel, message_id: message }, null)
+    return true
+  }
+
+  // Ack the newest loaded message of the channel (Discord acks own messages too).
+  function markChannelRead(channelId) {
+    var rows = messagesFor(channelId)
+    if (!rows.length) return false
+    return ack(channelId, rows[rows.length - 1].id)
+  }
+
+  function typersFor(channelId) {
+    var list = typers[String(channelId || "")]
+    return Array.isArray(list) ? list : []
+  }
+
+  function pruneTypers() {
+    var cutoff = Date.now() - 10000
+    var next = ({})
+    var changed = false
+    var any = false
+    for (var id in typers) {
+      var kept = typers[id].filter(function(t) { return t.at > cutoff })
+      if (kept.length !== typers[id].length) changed = true
+      if (kept.length) { next[id] = kept; any = true }
+    }
+    if (changed) typers = next
+    typerTimer.running = any
+  }
+
+  function removeTyper(channelId, userId) {
+    var list = typers[channelId]
+    if (!list) return
+    var kept = list.filter(function(t) { return t.user_id !== userId })
+    if (kept.length === list.length) return
+    var next = Api.shallowCopy(typers)
+    if (kept.length) next[channelId] = kept
+    else delete next[channelId]
+    typers = next
+  }
+
+  function applyMessageCreate(message) {
+    var channelId = String(message.channel_id || "")
+    var row = message.message
+    if (!row || !row.id) return
+    // notify:true also arrives for channels we do not have open (Phase 2
+    // notifications); the store only holds open channels.
+    var entry = channelEntry(channelId)
+    if (!entry || !isOpen(channelId)) return
+    if (row.author && row.author.id) removeTyper(channelId, String(row.author.id))
+    var rows = entry.messages || []
+    var id = String(row.id)
+    for (var i = rows.length - 1; i >= 0; i--)
+      if (String(rows[i].id || "") === id) return
+    noteAuthors([row])
+    var next = rows.concat([row])
+    if (rows.length && Api.compareIds(rows[rows.length - 1].id, id) > 0)
+      next.sort(function(a, b) { return Api.compareIds(a.id, b.id) })
+    patchChannelEntry(channelId, { messages: next,
+      oldestId: next.length ? String(next[0].id || "") : "" })
+  }
+
+  function applyMessageUpdate(message) {
+    var channelId = String(message.channel_id || "")
+    var row = message.message
+    var entry = channelEntry(channelId)
+    if (!entry || !row || !row.id) return
+    var rows = entry.messages || []
+    var id = String(row.id)
+    for (var i = rows.length - 1; i >= 0; i--) {
+      if (String(rows[i].id || "") !== id) continue
+      var next = rows.slice()
+      next[i] = row
+      patchChannelEntry(channelId, { messages: next })
+      return
+    }
+  }
+
+  function applyMessageDelete(message) {
+    var channelId = String(message.channel_id || "")
+    var entry = channelEntry(channelId)
+    if (!entry) return
+    var id = String(message.message_id || "")
+    var rows = entry.messages || []
+    var next = rows.filter(function(row) { return String(row.id || "") !== id })
+    if (next.length === rows.length) return
+    patchChannelEntry(channelId, { messages: next,
+      oldestId: next.length ? String(next[0].id || "") : entry.oldestId })
+  }
+
+  function applyTypingStart(message) {
+    var channelId = String(message.channel_id || "")
+    if (!isOpen(channelId)) return
+    var userId = String(message.user_id || "")
+    if (!userId || userId === selfId) return
+    var list = typersFor(channelId).filter(function(t) { return t.user_id !== userId })
+    list.push({ user_id: userId, display_name: String(message.display_name || knownUsers[userId] || "Someone"),
+      at: Date.now() })
+    var next = Api.shallowCopy(typers)
+    next[channelId] = list
+    typers = next
+    typerTimer.running = true
+  }
+
+  // Read state: patch the channel mirror in place and reduce the guild row
+  // from its loaded channel list. When the guild's channels are not loaded the
+  // guild row only moves by this event's delta against the last read state
+  // seen for that channel (unknown previous => treated as 0). Either way the
+  // next guilds_synced / list_* replaces it with the backend's truth; the bar
+  // badge itself is total_mention_count, never this reduction.
+  function applyReadState(message) {
+    var channelId = String(message.channel_id || "")
+    if (!channelId) return
+    var unread = !!message.unread
+    var mentions = Math.max(0, Number(message.mention_count) || 0)
+    var marker = unread ? (mentions > 0 ? "mentioned" : "unread") : "read"
+    var previous = readState[channelId] || null
+    var nextState = Api.shallowCopy(readState)
+    nextState[channelId] = { unread: unread, mention_count: mentions,
+      last_read_message_id: message.last_read_message_id ? String(message.last_read_message_id) : "" }
+    readState = nextState
+
+    if (backendState && message.total_mention_count !== undefined
+        && Number(backendState.total_mention_count) !== Number(message.total_mention_count)) {
+      var nextBackend = Api.shallowCopy(backendState)
+      nextBackend.total_mention_count = message.total_mention_count
+      backendState = nextBackend
+    }
+
+    var guildId = message.guild_id ? String(message.guild_id) : ""
+    if (!guildId) {
+      var dmIndex = indexOfId(dms, channelId)
+      if (dmIndex >= 0) dms = patchedList(dms, dmIndex, { unread: marker, mention_count: mentions })
+      return
+    }
+    var list = channelsByGuild[guildId]
+    var guildUnread = marker
+    var guildMentions = mentions
+    var guildIndex = indexOfId(guilds, guildId)
+    if (Array.isArray(list)) {
+      var index = indexOfId(list, channelId)
+      if (index >= 0) {
+        var nextMap = Api.shallowCopy(channelsByGuild)
+        nextMap[guildId] = patchedList(list, index, { unread: marker, mention_count: mentions })
+        channelsByGuild = nextMap
+        list = nextMap[guildId]
+      }
+      guildUnread = "read"
+      guildMentions = 0
+      for (var i = 0; i < list.length; i++) {
+        var row = list[i]
+        if (String(row.type || "") === "category" || row.muted) continue
+        guildMentions += Math.max(0, Number(row.mention_count) || 0)
+        var state = String(row.unread || "read")
+        if (state === "mentioned") guildUnread = "mentioned"
+        else if (state === "unread" && guildUnread === "read") guildUnread = "unread"
+      }
+    } else if (guildIndex >= 0) {
+      var guild = guilds[guildIndex]
+      var before = previous ? previous.mention_count : 0
+      guildMentions = Math.max(0, (Number(guild.mention_count) || 0) + mentions - before)
+      var current = String(guild.unread || "read")
+      if (marker === "read") guildUnread = guildMentions > 0 ? "mentioned" : (current === "read" ? "read" : "unread")
+      else if (marker === "unread") guildUnread = current === "mentioned" && guildMentions > 0 ? "mentioned" : "unread"
+    }
+    if (guildIndex >= 0) {
+      var g = guilds[guildIndex]
+      if (String(g.unread || "read") !== guildUnread || (Number(g.mention_count) || 0) !== guildMentions)
+        guilds = patchedList(guilds, guildIndex, { unread: guildUnread, mention_count: guildMentions })
+    }
+  }
+
+  function indexOfId(list, id) {
+    for (var i = 0; i < list.length; i++) if (String(list[i].id || "") === id) return i
+    return -1
+  }
+
+  function patchedList(list, index, fields) {
+    var next = list.slice()
+    next[index] = Api.assign(Api.shallowCopy(list[index]), fields)
+    return next
+  }
+
   // --- event handling ---
   // Returns false (and ignores the payload) when `generation` is older than
   // the newest one seen. Messages without a generation always pass.
@@ -319,11 +732,18 @@ Item {
     }
     backendState = next
     if (next.error) lastError = Api.redact(String(next.error))
-    if (now === "ready" && was !== "ready") refreshStructure()
+    if (now === "ready" && was !== "ready") {
+      refreshStructure()
+      // Open channels are per socket connection: re-open after every
+      // (re)connect. A gateway resume on the same connection re-sends the tail,
+      // which mergeTail() absorbs.
+      reopenChannels()
+    }
     if (now !== "ready" && was === "ready" && now !== "connecting") {
       guilds = []
       dms = []
       channelsByGuild = ({})
+      clearMessages()
     }
   }
 
@@ -358,15 +778,32 @@ Item {
         break
       }
       case "read_state_changed":
-        if (backendState && message.total_mention_count !== undefined) {
-          var next = Api.shallowCopy(backendState)
-          next.total_mention_count = message.total_mention_count
-          backendState = next
-        }
+        applyReadState(message)
+        break
+      case "message_create":
+        applyMessageCreate(message)
+        break
+      case "message_update":
+        applyMessageUpdate(message)
+        break
+      case "message_delete":
+        applyMessageDelete(message)
+        break
+      case "typing_start":
+        applyTypingStart(message)
         break
       default:
         break
     }
+  }
+
+  // Forget loaded messages (session gone). The open set is kept so the
+  // channels are re-opened when a session comes back.
+  function clearMessages() {
+    channelData = ({})
+    readState = ({})
+    typers = ({})
+    typerTimer.running = false
   }
 
   function togglePanel() {
@@ -423,6 +860,13 @@ Item {
     id: reconnectGraceTimer
     interval: 3000
     onTriggered: root.reconnectGraceActive = false
+  }
+
+  Timer {
+    id: typerTimer
+    interval: 1000
+    repeat: true
+    onTriggered: root.pruneTypers()
   }
 
   Timer {

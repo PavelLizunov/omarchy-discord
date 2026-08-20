@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import Quickshell
@@ -5,11 +6,14 @@ import qs.Commons
 import qs.Ui
 
 import "Api.js" as Api
+import "components" as Components
 
-// Phase 0 panel: login form, then a bare two-column guild/channel browser.
-// Host contract: root Item with shell/manifest/service injected, `opened`,
-// open(payloadJson) (JSON string), close(). Destroyed on hide unless the
-// manifest sets keepLoaded, so authoritative state lives in Service.qml.
+// Phase 1 panel: login/status screens, then guild rail + channel list +
+// read-only timeline. Host contract: root Item with shell/manifest/service
+// injected, `opened`, open(payloadJson) (JSON string), close(). Destroyed on
+// hide unless the manifest sets keepLoaded, so authoritative state (selected
+// guild, open channel, messages) lives in Service.qml; this file only keeps
+// cursors.
 Item {
   id: root
 
@@ -18,6 +22,8 @@ Item {
   property var service: null
   property bool opened: false
   property bool closingFromHost: false
+  // Exposed for offscreen harnesses (dispatchKey + state inspection).
+  readonly property alias timeline: timelineView
 
   readonly property string pluginId: manifest && manifest.id
     ? String(manifest.id) : "quickshell.discord"
@@ -36,42 +42,88 @@ Item {
     && (lifecycle === "logged_out" || lifecycle === "reauth_needed")
   readonly property string errorText: service ? Api.redact(service.lastError) : ""
 
-  // --- zones: "guilds" | "channels" ---
-  property string zone: "guilds"
-  // Roving cursor keyed by guild id so a resync/reorder keeps the same server;
-  // guildCursor is the resolved index (CONVENTIONS §3).
+  // --- zones: "sidebar" (columns "rail" | "channels") and "timeline" ---
+  property string zone: "sidebar"
+  property string column: "rail"
+  // Roving cursors keyed by id so a resync/reorder keeps the same row.
   property string guildCursorId: "dms"
-  property int guildCursor: 0
-  property int channelCursor: 0
-  property string selectedGuildId: ""
-  property string requestedChannelId: ""
+  property string channelCursorId: ""
+
+  readonly property string selectedGuildId: service ? service.selectedGuildId : ""
+  readonly property string currentChannelId: service ? service.currentChannelId : ""
+  readonly property var currentEntry: service && currentChannelId
+    ? (service.channelData[currentChannelId] || null) : null
+  readonly property var currentMessages: currentEntry && Array.isArray(currentEntry.messages)
+    ? currentEntry.messages : []
 
   readonly property var guildRows: {
     var rows = [{ kind: "dms", id: "dms", name: "Direct Messages",
-      mention_count: dmMentionCount(), unread: "read" }]
+      mention_count: dmMentionCount(), unread: dmUnread() }]
     var guilds = service && Array.isArray(service.guilds) ? service.guilds : []
     for (var i = 0; i < guilds.length; i++) rows.push(guilds[i])
     return rows
   }
+  readonly property bool dmsSelected: selectedGuildId === "dms"
   readonly property var channelRows: {
     if (!service) return []
-    if (selectedGuildId === "dms") return Array.isArray(service.dms) ? service.dms : []
+    if (dmsSelected) return Array.isArray(service.dms) ? service.dms : []
     if (!selectedGuildId) return []
-    return service.channelsFor(selectedGuildId)
+    return Api.visibleChannels(service.channelsFor(selectedGuildId))
   }
+  readonly property int guildCursor: indexOfId(guildRows, guildCursorId)
+  readonly property int channelCursor: indexOfId(channelRows, channelCursorId)
   readonly property bool channelsLoading: !!(service && selectedGuildId
-    && selectedGuildId !== "dms" && service.isLoadingChannels(selectedGuildId))
+    && !dmsSelected && service.isLoadingChannels(selectedGuildId))
   readonly property string selectedGuildName: {
     for (var i = 0; i < guildRows.length; i++)
       if (String(guildRows[i].id) === selectedGuildId) return String(guildRows[i].name || "")
     return ""
   }
+  // The open channel's row: prefer the structure mirror (live unread state),
+  // fall back to the open_channel response.
+  readonly property var currentChannel: {
+    if (!service || !currentChannelId) return null
+    var lists = [service.dms]
+    for (var gid in service.channelsByGuild) lists.push(service.channelsByGuild[gid])
+    for (var l = 0; l < lists.length; l++) {
+      var list = Array.isArray(lists[l]) ? lists[l] : []
+      for (var i = 0; i < list.length; i++)
+        if (String(list[i].id || "") === currentChannelId) return list[i]
+    }
+    return currentEntry ? currentEntry.channel : null
+  }
+  readonly property string currentChannelTitle: currentChannel
+    ? Api.channelGlyph(currentChannel.type) + " " + String(currentChannel.name || "") : ""
+  readonly property string currentTopic: currentChannel
+    ? String(currentChannel.topic || "").replace(/\s+/g, " ") : ""
+  readonly property string typingText: {
+    if (!service || !currentChannelId) return ""
+    var list = service.typers[currentChannelId]
+    if (!Array.isArray(list) || !list.length) return ""
+    var names = []
+    for (var i = 0; i < list.length && i < 3; i++) names.push(String(list[i].display_name || "Someone"))
+    if (list.length > 3) return "Several people are typing…"
+    if (names.length === 1) return names[0] + " is typing…"
+    return names.slice(0, -1).join(", ") + " and " + names[names.length - 1] + " are typing…"
+  }
+  property string hint: ""
 
   function dmMentionCount() {
     var dms = service && Array.isArray(service.dms) ? service.dms : []
     var total = 0
     for (var i = 0; i < dms.length; i++) total += Number(dms[i].mention_count) || 0
     return total
+  }
+
+  function dmUnread() {
+    var dms = service && Array.isArray(service.dms) ? service.dms : []
+    var state = "read"
+    for (var i = 0; i < dms.length; i++) {
+      var s = String(dms[i].unread || "read")
+      if (s === "mentioned") return "mentioned"
+      if (s === "unread") state = "unread"
+    }
+    return state
   }
 
   function textInputFocused() {
@@ -82,7 +134,7 @@ Item {
   function open(payloadJson) {
     var payload = ({})
     try { payload = JSON.parse(String(payloadJson || "{}")) || ({}) } catch (e) {}
-    requestedChannelId = String(payload.channel || "")
+    var requested = String(payload.channel_id || payload.channel || "")
     closingFromHost = false
     opened = true
     if (service) {
@@ -90,8 +142,13 @@ Item {
       service.refresh()
     }
     publishScreen()
+    restoreView()
+    if (requested && service) {
+      service.showChannel(requested, guildIdForChannel(requested))
+      enterTimeline()
+    }
     Qt.callLater(function() {
-      focusScope.forceActiveFocus()
+      focusZone()
       if (root.showLogin) tokenField.forceActiveFocus()
     })
   }
@@ -117,74 +174,179 @@ Item {
     else close()
   }
 
+  // Put the cursors back on the view the service remembers.
+  function restoreView() {
+    guildCursorId = selectedGuildId || "dms"
+    channelCursorId = currentChannelId
+    if (currentChannelId) {
+      zone = "timeline"
+      column = "channels"
+    } else {
+      zone = "sidebar"
+      column = selectedGuildId ? "channels" : "rail"
+    }
+  }
+
+  function guildIdForChannel(channelId) {
+    if (!service) return ""
+    var id = String(channelId || "")
+    for (var d = 0; d < service.dms.length; d++)
+      if (String(service.dms[d].id || "") === id) return "dms"
+    for (var gid in service.channelsByGuild) {
+      var list = service.channelsByGuild[gid]
+      if (!Array.isArray(list)) continue
+      for (var i = 0; i < list.length; i++) if (String(list[i].id || "") === id) return gid
+    }
+    return ""
+  }
+
   // --- cursor helpers ---
   function clampCursor(index, length) {
     if (length <= 0) return 0
     return ((index % length) + length) % length
   }
 
-  function guildIndexOf(id) {
-    for (var i = 0; i < guildRows.length; i++)
-      if (String(guildRows[i].id || "") === id) return i
+  function indexOfId(list, id) {
+    if (!id) return -1
+    for (var i = 0; i < list.length; i++)
+      if (String(list[i].id || "") === id) return i
     return -1
   }
 
   function setGuildCursor(index) {
-    if (!guildRows.length) { guildCursor = 0; return }
-    guildCursor = Math.max(0, Math.min(index, guildRows.length - 1))
-    guildCursorId = String(guildRows[guildCursor].id || "")
-  }
-
-  function ensureCursors() {
-    var resolved = guildIndexOf(guildCursorId)
-    if (resolved >= 0) guildCursor = resolved
-    else setGuildCursor(guildCursor)
-    channelCursor = channelRows.length
-      ? Math.max(0, Math.min(channelCursor, channelRows.length - 1)) : 0
-    if (channelRows.length && !isSelectableChannel(channelRows[channelCursor]))
-      moveChannelCursor(1)
+    if (!guildRows.length) { guildCursorId = "dms"; return }
+    index = Math.max(0, Math.min(index, guildRows.length - 1))
+    guildCursorId = String(guildRows[index].id || "")
+    guildList.positionViewAtIndex(index, ListView.Contain)
   }
 
   function moveGuildCursor(delta) {
     if (!guildRows.length) return
-    setGuildCursor(clampCursor(guildCursor + delta, guildRows.length))
-    guildList.positionViewAtIndex(guildCursor, ListView.Contain)
+    var index = guildCursor < 0 ? 0 : guildCursor
+    setGuildCursor(clampCursor(index + delta, guildRows.length))
   }
 
-  function isSelectableChannel(row) {
-    return row && String(row.type || "") !== "category"
+  function setChannelCursor(index) {
+    if (index < 0 || index >= channelRows.length) return
+    channelCursorId = String(channelRows[index].id || "")
+    channelList.positionViewAtIndex(index, ListView.Contain)
+  }
+
+  // Steps from `from` by `delta` (wrapping) to the next row satisfying
+  // `accept`; -1 when none does.
+  function findChannel(from, delta, accept) {
+    var count = channelRows.length
+    if (!count) return -1
+    var index = from
+    for (var step = 0; step < count; step++) {
+      index = clampCursor(index + delta, count)
+      if (accept(channelRows[index])) return index
+    }
+    return -1
   }
 
   function moveChannelCursor(delta) {
-    var count = channelRows.length
-    if (!count) return
-    var index = channelCursor
-    for (var step = 0; step < count; step++) {
-      index = clampCursor(index + delta, count)
-      if (isSelectableChannel(channelRows[index])) break
-    }
-    channelCursor = index
-    channelList.positionViewAtIndex(channelCursor, ListView.Contain)
+    var from = channelCursor
+    if (from < 0) from = delta > 0 ? -1 : 0
+    var next = findChannel(from, delta, Api.isSelectableChannel)
+    if (next >= 0) setChannelCursor(next)
   }
 
+  function ensureCursors() {
+    if (guildCursor < 0) guildCursorId = "dms"
+    if (channelCursor < 0 || !Api.isSelectableChannel(channelRows[channelCursor])) {
+      var first = findChannel(-1, 1, Api.isSelectableChannel)
+      channelCursorId = first >= 0 ? String(channelRows[first].id || "") : ""
+    }
+  }
+
+  // --- navigation ---
   function selectGuild(index) {
-    if (index < 0 || index >= guildRows.length) return
+    if (index < 0 || index >= guildRows.length || !service) return
     setGuildCursor(index)
-    var row = guildRows[index]
-    selectedGuildId = String(row.id || "")
-    channelCursor = 0
-    if (service && selectedGuildId !== "dms") service.loadChannels(selectedGuildId)
+    var id = String(guildRows[index].id || "")
+    if (service.selectedGuildId !== id) {
+      service.selectedGuildId = id
+      channelCursorId = ""
+    }
+    if (id !== "dms") service.loadChannels(id)
   }
 
   function enterChannels() {
-    selectGuild(guildCursor)
-    zone = "channels"
-    channelCursor = -1
-    moveChannelCursor(1)
+    selectGuild(guildCursor < 0 ? 0 : guildCursor)
+    zone = "sidebar"
+    column = "channels"
+    hint = ""
+    if (currentChannelId && indexOfId(channelRows, currentChannelId) >= 0)
+      channelCursorId = currentChannelId
+    ensureCursors()
+    focusZone()
   }
 
   function leaveChannels() {
-    zone = "guilds"
+    column = "rail"
+    hint = ""
+  }
+
+  function activateChannel(index) {
+    var row = channelRows[index]
+    if (!row || !service) return
+    var type = String(row.type || "")
+    if (type === "thread" || type === "forum") {
+      hint = (type === "thread" ? "Threads" : "Forum channels") + " open in a later phase."
+      setChannelCursor(index)
+      return
+    }
+    if (!Api.isOpenableChannel(row)) return
+    hint = ""
+    setChannelCursor(index)
+    service.showChannel(String(row.id || ""), selectedGuildId)
+    enterTimeline()
+  }
+
+  function enterTimeline() {
+    if (!currentChannelId) return
+    zone = "timeline"
+    timelineView.focusNewest()
+    focusZone()
+  }
+
+  function leaveTimeline(markRead) {
+    if (markRead && service && currentChannelId) service.markChannelRead(currentChannelId)
+    zone = "sidebar"
+    column = "channels"
+    if (currentChannelId && indexOfId(channelRows, currentChannelId) >= 0)
+      channelCursorId = currentChannelId
+    focusZone()
+  }
+
+  function moveZone(direction) {
+    if (direction === "right") {
+      if (zone === "sidebar" && column === "rail") { enterChannels(); return }
+      if (zone === "sidebar" && currentChannelId) enterTimeline()
+      return
+    }
+    if (zone === "timeline") leaveTimeline(false)
+    else if (column === "channels") leaveChannels()
+  }
+
+  // Alt+Up/Down (and Shift for unread only): step through the current list
+  // from the open channel and open the neighbour.
+  function stepChannel(delta, unreadOnly) {
+    var from = indexOfId(channelRows, currentChannelId)
+    if (from < 0) from = channelCursor
+    if (from < 0) from = delta > 0 ? -1 : 0
+    var accept = unreadOnly
+      ? function(row) { return Api.isOpenableChannel(row) && Api.isUnread(row) }
+      : Api.isOpenableChannel
+    var next = findChannel(from, delta, accept)
+    if (next < 0 || next === from) return
+    activateChannel(next)
+  }
+
+  function focusZone() {
+    if (zone === "timeline") timelineView.forceActiveFocus()
+    else sidebarFocus.forceActiveFocus()
   }
 
   // `r` while the browser is down: start the backend if it is not running,
@@ -195,6 +357,13 @@ Item {
     else service.refresh()
   }
 
+  function reload() {
+    if (!service) return
+    service.refresh()
+    if (selectedGuildId && !dmsSelected) service.loadChannels(selectedGuildId, true)
+    if (currentChannelId) service.openChannel(currentChannelId)
+  }
+
   function submitToken() {
     if (!service) return
     var token = tokenField.text
@@ -203,6 +372,8 @@ Item {
     token = ""
   }
 
+  // Panel-level keys. The Timeline handles its own keys first when it has
+  // focus (j/k/gg/G/PgUp/Y/O/Esc/Alt+h/l) and only unhandled ones arrive here.
   function handleKey(event) {
     if (textInputFocused()) {
       if (event.key === Qt.Key_Escape) {
@@ -213,48 +384,63 @@ Item {
     }
     var key = event.key
     var text = event.text
-    if (key === Qt.Key_Escape) {
-      if (zone === "channels") leaveChannels()
-      else root.requestClose()
-      event.accepted = true
-      return
-    }
+    var alt = (event.modifiers & Qt.AltModifier) !== 0
+    var shift = (event.modifiers & Qt.ShiftModifier) !== 0
     if (!ready) {
-      if (text === "r") { retry(); event.accepted = true }
+      if (key === Qt.Key_Escape) { root.requestClose(); event.accepted = true }
+      else if (text === "r") { retry(); event.accepted = true }
       return
     }
-    if (zone === "guilds") {
+    if (alt && key === Qt.Key_Down) stepChannel(1, shift)
+    else if (alt && key === Qt.Key_Up) stepChannel(-1, shift)
+    else if (alt && key === Qt.Key_H) moveZone("left")
+    else if (alt && key === Qt.Key_L) moveZone("right")
+    else if (text === "r") reload()
+    else if (zone === "sidebar") {
+      if (!handleSidebarKey(key, text)) return
+    } else return
+    event.accepted = true
+  }
+
+  function handleSidebarKey(key, text) {
+    if (key === Qt.Key_Escape) {
+      if (column === "channels") leaveChannels()
+      else root.requestClose()
+      return true
+    }
+    if (column === "rail") {
       if (key === Qt.Key_Down || text === "j") moveGuildCursor(1)
       else if (key === Qt.Key_Up || text === "k") moveGuildCursor(-1)
-      else if (key === Qt.Key_Home || text === "g") { setGuildCursor(0); guildList.positionViewAtBeginning() }
-      else if (key === Qt.Key_End || text === "G") { setGuildCursor(guildRows.length - 1); guildList.positionViewAtEnd() }
+      else if (key === Qt.Key_Home || text === "g") setGuildCursor(0)
+      else if (key === Qt.Key_End || text === "G") setGuildCursor(guildRows.length - 1)
       else if (key === Qt.Key_Return || key === Qt.Key_Enter || key === Qt.Key_Right
           || text === "l") enterChannels()
-      else if (text === "r") { if (service) service.refresh() }
-      else return
-      event.accepted = true
-      return
+      else return false
+      return true
     }
-    if (zone === "channels") {
-      if (key === Qt.Key_Down || text === "j") moveChannelCursor(1)
-      else if (key === Qt.Key_Up || text === "k") moveChannelCursor(-1)
-      else if (key === Qt.Key_Home || text === "g") { channelCursor = -1; moveChannelCursor(1) }
-      else if (key === Qt.Key_End || text === "G") { channelCursor = 0; moveChannelCursor(-1) }
-      else if (key === Qt.Key_Left || text === "h") leaveChannels()
-      else if (key === Qt.Key_Return || key === Qt.Key_Enter) { /* Phase 1 opens the channel */ }
-      else if (text === "r") { if (service) service.loadChannels(selectedGuildId, true) }
-      else return
-      event.accepted = true
-    }
+    if (key === Qt.Key_Down || text === "j") moveChannelCursor(1)
+    else if (key === Qt.Key_Up || text === "k") moveChannelCursor(-1)
+    else if (key === Qt.Key_Home || text === "g") { channelCursorId = ""; moveChannelCursor(1) }
+    else if (key === Qt.Key_End || text === "G") { channelCursorId = ""; moveChannelCursor(-1) }
+    else if (key === Qt.Key_Left || text === "h") leaveChannels()
+    else if (key === Qt.Key_Right || text === "l") { if (currentChannelId) enterTimeline() }
+    else if (key === Qt.Key_Return || key === Qt.Key_Enter) activateChannel(channelCursor)
+    else return false
+    return true
+  }
+
+  // Synthesized-key entry point for offscreen harnesses (mirrors the focus
+  // chain: the timeline first when it owns the zone, then the panel).
+  function dispatchKey(event) {
+    if (zone === "timeline" && ready && !textInputFocused()) timelineView.handleKey(event)
+    if (!event.accepted) handleKey(event)
+    return event.accepted
   }
 
   onGuildRowsChanged: ensureCursors()
   onChannelRowsChanged: ensureCursors()
   onShowLoginChanged: if (showLogin && opened) Qt.callLater(function() { tokenField.forceActiveFocus() })
-  onReadyChanged: {
-    if (ready && !selectedGuildId && guildRows.length) selectGuild(0)
-    if (!ready) zone = "guilds"
-  }
+  onReadyChanged: if (!ready) { zone = "sidebar"; column = "rail" }
 
   Component.onDestruction: {
     tokenField.clear()
@@ -264,14 +450,27 @@ Item {
     }
   }
 
+  // Ack-on-read: the timeline reached its newest row while focused and
+  // visible; debounce so a burst of arrivals acks once, and re-check at fire
+  // time that we are still pinned to the bottom.
+  Timer {
+    id: ackTimer
+    interval: 500
+    onTriggered: {
+      if (!root.opened || root.zone !== "timeline" || !root.currentChannelId) return
+      if (!timelineView.pinned || !root.service) return
+      root.service.markChannelRead(root.currentChannelId)
+    }
+  }
+
   FloatingWindow {
     id: window
     visible: root.opened
     title: "Omarchy Discord"
     color: root.background
-    implicitWidth: 900
-    implicitHeight: 640
-    minimumSize: Qt.size(560, 400)
+    implicitWidth: 1040
+    implicitHeight: 680
+    minimumSize: Qt.size(640, 420)
 
     onVisibleChanged: {
       if (!visible && root.opened && !root.closingFromHost) root.requestClose()
@@ -284,6 +483,14 @@ Item {
       focus: true
       Keys.priority: Keys.BeforeItem
       Keys.onPressed: function(event) { root.handleKey(event) }
+
+      // Keyboard owner for the sidebar zone (keys bubble to focusScope).
+      Item {
+        id: sidebarFocus
+        focus: true
+        width: 0
+        height: 0
+      }
 
       Column {
         anchors.fill: parent
@@ -443,116 +650,137 @@ Item {
             }
           }
 
-          // Two-column browser
+          // Three-column client
           Row {
             anchors.fill: parent
             visible: root.ready
             spacing: Style.spacing.panelGap
 
+            // Guild rail
             BorderSurface {
-              id: guildPane
-              width: Math.round(parent.width * 0.34)
+              id: railPane
+              width: Style.space(64)
               height: parent.height
               radius: Style.cornerRadius
               color: Color.popups.background
-              borderSpec: root.zone === "guilds"
+              borderSpec: root.zone === "sidebar" && root.column === "rail"
                 ? Border.controlSpec("focus", root.foreground, root.accent)
                 : root.panelBorderSpec
               padding: Style.spacing.sm
 
-              Column {
+              ListView {
+                id: guildList
                 anchors.fill: parent
                 anchors.margins: Style.spacing.sm
-                spacing: Style.spacing.xs
+                clip: true
+                reuseItems: true
+                cacheBuffer: Style.space(150)
+                boundsBehavior: Flickable.StopAtBounds
+                spacing: Style.spacing.sm
+                model: root.guildRows.length
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-                PanelSectionHeader {
-                  width: parent.width
-                  text: "Servers"
-                  foreground: root.foreground
-                }
+                delegate: Item {
+                  id: guildRow
+                  required property int index
+                  readonly property var row: root.guildRows[index] || ({})
+                  readonly property bool isDms: String(row.id) === "dms"
+                  readonly property bool hasCursor: root.zone === "sidebar" && root.column === "rail"
+                    && index === root.guildCursor
+                  readonly property bool selected: String(row.id) === root.selectedGuildId
+                  readonly property int mentions: Number(row.mention_count) || 0
+                  readonly property bool unread: Api.isUnread(row)
+                  width: guildList.width
+                  height: Style.space(48)
 
-                ListView {
-                  id: guildList
-                  width: parent.width
-                  height: parent.height - Style.spacing.controlHeight
-                  clip: true
-                  reuseItems: true
-                  cacheBuffer: Style.space(150)
-                  boundsBehavior: Flickable.StopAtBounds
-                  spacing: Style.spacing.xxs
-                  model: root.guildRows.length
-                  ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                  // Selected-guild indicator along the left edge.
+                  Rectangle {
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Style.spacing.xs
+                    height: guildRow.selected ? Style.space(28) : (guildRow.unread ? Style.spacing.lg : 0)
+                    radius: width / 2
+                    color: guildRow.selected ? root.accent : root.foreground
+                    visible: height > 0
+                    Behavior on height { NumberAnimation { duration: 120 } }
+                  }
 
-                  delegate: Item {
-                    id: guildRow
-                    required property int index
-                    readonly property var row: root.guildRows[index] || ({})
-                    readonly property bool hasCursor: root.zone === "guilds" && index === root.guildCursor
-                    readonly property bool selected: String(row.id) === root.selectedGuildId
-                    readonly property int mentions: Number(row.mention_count) || 0
-                    width: guildList.width
-                    height: Style.spacing.popupRowHeight
+                  BorderSurface {
+                    id: guildTile
+                    anchors.centerIn: parent
+                    width: Style.space(40)
+                    height: width
+                    radius: guildRow.selected || guildRow.hasCursor ? Style.cornerRadius + Style.spacing.sm : width / 2
+                    color: guildRow.hasCursor
+                      ? Style.hoverFillFor(root.foreground, root.accent)
+                      : (guildRow.selected ? Style.selectedFillFor(root.foreground, root.accent)
+                        : (guildMouse.containsMouse ? Style.hoverFillFor(root.foreground, root.accent)
+                          : Style.normalFillFor(root.foreground, root.accent)))
+                    borderSpec: guildRow.hasCursor
+                      ? Border.controlSpec("hover-cursor", root.foreground, root.accent)
+                      : Border.none()
+                    Behavior on radius { NumberAnimation { duration: 120 } }
 
-                    BorderSurface {
-                      anchors.fill: parent
-                      radius: Style.cornerRadius
-                      color: guildRow.hasCursor
-                        ? Style.hoverFillFor(root.foreground, root.accent)
-                        : (guildRow.selected ? Style.selectedFillFor(root.foreground, root.accent)
-                          : (guildMouse.containsMouse ? Style.hoverFillFor(root.foreground, root.accent)
-                            : "transparent"))
-                      borderSpec: guildRow.hasCursor
-                        ? Border.controlSpec("hover-cursor", root.foreground, root.accent)
-                        : Border.none()
-
-                      Text {
-                        anchors.left: parent.left
-                        anchors.right: guildBadge.visible ? guildBadge.left : parent.right
-                        anchors.leftMargin: Style.spacing.rowPaddingX
-                        anchors.rightMargin: Style.spacing.sm
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: String(guildRow.row.name || "")
-                        elide: Text.ElideRight
-                        color: root.foreground
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.body
-                        font.bold: String(guildRow.row.unread || "read") !== "read"
-                      }
-                      Text {
-                        id: guildBadge
-                        anchors.right: parent.right
-                        anchors.rightMargin: Style.spacing.rowPaddingX
-                        anchors.verticalCenter: parent.verticalCenter
-                        visible: guildRow.mentions > 0
-                        text: guildRow.mentions > 99 ? "99+" : String(guildRow.mentions)
-                        color: Color.urgent
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        font.bold: true
-                      }
-                      MouseArea {
-                        id: guildMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        onClicked: {
-                          root.zone = "guilds"
-                          root.setGuildCursor(guildRow.index)
-                          root.enterChannels()
-                        }
-                      }
+                    Text {
+                      anchors.centerIn: parent
+                      text: guildRow.isDms ? "@" : Api.initials(guildRow.row.name)
+                      color: guildRow.unread || guildRow.selected ? root.foreground : Color.muted
+                      font.family: root.fontFamily
+                      font.pixelSize: guildRow.isDms ? Style.font.title : Style.font.bodySmall
+                      font.bold: guildRow.unread
                     }
+                  }
+
+                  // Mention badge, bottom-right of the tile.
+                  Rectangle {
+                    visible: guildRow.mentions > 0
+                    anchors.right: guildTile.right
+                    anchors.bottom: guildTile.bottom
+                    anchors.margins: -Style.spacing.xxs
+                    width: Math.max(height, guildBadge.implicitWidth + Style.spacing.sm * 2)
+                    height: Style.space(16)
+                    radius: height / 2
+                    color: Color.urgent
+
+                    Text {
+                      id: guildBadge
+                      anchors.centerIn: parent
+                      text: guildRow.mentions > 99 ? "99+" : String(guildRow.mentions)
+                      color: Color.popups.background
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      font.bold: true
+                    }
+                  }
+
+                  MouseArea {
+                    id: guildMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onClicked: {
+                      root.zone = "sidebar"
+                      root.column = "rail"
+                      root.setGuildCursor(guildRow.index)
+                      root.enterChannels()
+                    }
+                  }
+
+                  PanelToolTip {
+                    text: String(guildRow.row.name || "")
+                    visible: guildMouse.containsMouse
                   }
                 }
               }
             }
 
+            // Channel list
             BorderSurface {
               id: channelPane
-              width: parent.width - guildPane.width - parent.spacing
+              width: Style.space(230)
               height: parent.height
               radius: Style.cornerRadius
               color: Color.popups.background
-              borderSpec: root.zone === "channels"
+              borderSpec: root.zone === "sidebar" && root.column === "channels"
                 ? Border.controlSpec("focus", root.foreground, root.accent)
                 : root.panelBorderSpec
               padding: Style.spacing.sm
@@ -571,9 +799,10 @@ Item {
                 Text {
                   width: parent.width
                   visible: !root.channelRows.length
+                  wrapMode: Text.WordWrap
                   text: !root.selectedGuildId ? "Pick a server with Enter or l."
                     : (root.channelsLoading ? "Loading channels"
-                      : (root.selectedGuildId === "dms" ? "No direct messages." : "No visible channels."))
+                      : (root.dmsSelected ? "No direct messages." : "No text channels."))
                   color: Color.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
@@ -597,10 +826,14 @@ Item {
                     id: channelRow
                     required property int index
                     readonly property var row: root.channelRows[index] || ({})
-                    readonly property bool category: String(row.type || "") === "category"
-                    readonly property bool hasCursor: root.zone === "channels"
+                    readonly property string type: String(row.type || "")
+                    readonly property bool category: type === "category"
+                    readonly property bool hasCursor: root.zone === "sidebar" && root.column === "channels"
                       && index === root.channelCursor && !category
+                    readonly property bool open: String(row.id || "") === root.currentChannelId
+                    readonly property bool unread: Api.isUnread(row)
                     readonly property int mentions: Number(row.mention_count) || 0
+                    readonly property bool dim: !!row.muted || (!unread && !open)
                     width: channelList.width
                     height: category ? Style.spacing.controlHeight : Style.spacing.popupRowHeight
 
@@ -618,7 +851,8 @@ Item {
                       anchors.fill: parent
                       radius: Style.cornerRadius
                       color: channelRow.hasCursor || channelMouse.containsMouse
-                        ? Style.hoverFillFor(root.foreground, root.accent) : "transparent"
+                        ? Style.hoverFillFor(root.foreground, root.accent)
+                        : (channelRow.open ? Style.selectedFillFor(root.foreground, root.accent) : "transparent")
                       borderSpec: channelRow.hasCursor
                         ? Border.controlSpec("hover-cursor", root.foreground, root.accent)
                         : Border.none()
@@ -627,49 +861,169 @@ Item {
                         id: channelGlyph
                         anchors.left: parent.left
                         anchors.leftMargin: Style.spacing.rowPaddingX
-                          + (channelRow.row.parent_id ? Style.spacing.lg : 0)
+                          + (channelRow.row.parent_id && !root.dmsSelected ? Style.spacing.lg : 0)
                         anchors.verticalCenter: parent.verticalCenter
-                        text: Api.channelGlyph(channelRow.row.type)
-                        color: Color.muted
+                        text: Api.channelGlyph(channelRow.type)
+                        color: channelRow.dim ? Color.muted : root.foreground
                         font.family: root.fontFamily
                         font.pixelSize: Style.font.body
                       }
                       Text {
                         anchors.left: channelGlyph.right
-                        anchors.right: channelBadge.visible ? channelBadge.left : parent.right
+                        anchors.right: channelBadge.visible ? channelBadge.left
+                          : (channelDot.visible ? channelDot.left : parent.right)
                         anchors.leftMargin: Style.spacing.sm
                         anchors.rightMargin: Style.spacing.sm
                         anchors.verticalCenter: parent.verticalCenter
                         text: String(channelRow.row.name || "")
                         elide: Text.ElideRight
-                        color: channelRow.row.muted ? Color.muted : root.foreground
+                        color: channelRow.dim ? Color.muted : root.foreground
                         font.family: root.fontFamily
                         font.pixelSize: Style.font.body
-                        font.bold: String(channelRow.row.unread || "read") !== "read"
+                        font.bold: channelRow.unread
                       }
-                      Text {
-                        id: channelBadge
+                      Rectangle {
+                        id: channelDot
                         anchors.right: parent.right
                         anchors.rightMargin: Style.spacing.rowPaddingX
                         anchors.verticalCenter: parent.verticalCenter
+                        visible: channelRow.unread && channelRow.mentions === 0
+                        width: Style.spacing.lg
+                        height: width
+                        radius: width / 2
+                        color: root.foreground
+                      }
+                      Rectangle {
+                        id: channelBadge
+                        anchors.right: parent.right
+                        anchors.rightMargin: Style.spacing.sm
+                        anchors.verticalCenter: parent.verticalCenter
                         visible: channelRow.mentions > 0
-                        text: channelRow.mentions > 99 ? "99+" : String(channelRow.mentions)
+                        width: Math.max(height, channelBadgeText.implicitWidth + Style.spacing.sm * 2)
+                        height: Style.space(16)
+                        radius: height / 2
                         color: Color.urgent
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        font.bold: true
+
+                        Text {
+                          id: channelBadgeText
+                          anchors.centerIn: parent
+                          text: channelRow.mentions > 99 ? "99+" : String(channelRow.mentions)
+                          color: Color.popups.background
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.caption
+                          font.bold: true
+                        }
                       }
                       MouseArea {
                         id: channelMouse
                         anchors.fill: parent
                         hoverEnabled: true
                         onClicked: {
-                          root.zone = "channels"
-                          root.channelCursor = channelRow.index
+                          root.zone = "sidebar"
+                          root.column = "channels"
+                          root.activateChannel(channelRow.index)
                         }
                       }
                     }
                   }
+                }
+              }
+            }
+
+            // Timeline column
+            Column {
+              width: parent.width - railPane.width - channelPane.width - parent.spacing * 2
+              height: parent.height
+              spacing: Style.spacing.xs
+
+              // Channel header: name + topic
+              Item {
+                id: channelHeader
+                width: parent.width
+                height: Style.spacing.controlHeight
+
+                Text {
+                  id: channelTitle
+                  anchors.left: parent.left
+                  anchors.leftMargin: Style.spacing.sm
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: root.currentChannelTitle || "No channel open"
+                  color: root.currentChannelId ? root.foreground : Color.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.title
+                  font.bold: !!root.currentChannelId
+                }
+                Text {
+                  anchors.left: channelTitle.right
+                  anchors.right: parent.right
+                  anchors.leftMargin: Style.spacing.controlGap
+                  anchors.rightMargin: Style.spacing.sm
+                  anchors.verticalCenter: parent.verticalCenter
+                  visible: root.currentTopic !== ""
+                  text: "· " + root.currentTopic
+                  elide: Text.ElideRight
+                  color: Color.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                }
+              }
+
+              Components.Timeline {
+                id: timelineView
+                width: parent.width
+                height: parent.height - channelHeader.height - typingLine.height
+                  - composerPlaceholder.height - parent.spacing * 3
+                messages: root.currentMessages
+                hasMore: !!(root.currentEntry && root.currentEntry.hasMore)
+                loading: !!(root.currentEntry && root.currentEntry.loading)
+                channelId: root.currentChannelId
+                selfId: root.service ? root.service.selfId : ""
+                lastReadMessageId: root.currentEntry ? String(root.currentEntry.unreadMarkerId || "") : ""
+                active: root.zone === "timeline" && root.ready
+                ctx: root.service ? root.service.markdownCtx : ({})
+
+                onRequestHistory: function(beforeId) {
+                  if (root.service) root.service.loadHistory(root.currentChannelId)
+                }
+                onEscapeRequested: root.leaveTimeline(true)
+                onMoveZone: function(direction) { root.moveZone(direction) }
+                onOpenLink: function(url) { Quickshell.execDetached(["xdg-open", String(url)]) }
+                onCopied: if (root.service) root.service.succeed("Copied to clipboard")
+                onReachedBottom: if (root.zone === "timeline" && root.opened) ackTimer.restart()
+                onActiveFocusChanged: if (activeFocus && root.zone !== "timeline") root.zone = "timeline"
+              }
+
+              Text {
+                id: typingLine
+                width: parent.width
+                height: Style.font.caption * 1.6
+                leftPadding: Style.spacing.sm
+                verticalAlignment: Text.AlignVCenter
+                text: root.typingText
+                elide: Text.ElideRight
+                color: Color.muted
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.italic: true
+              }
+
+              // Where the composer goes in Phase 2: not focusable, not a zone.
+              BorderSurface {
+                id: composerPlaceholder
+                width: parent.width
+                height: Style.spacing.controlHeight + Style.spacing.sm * 2
+                radius: Style.cornerRadius
+                color: Style.normalFillFor(root.foreground, root.accent)
+                borderSpec: root.panelBorderSpec
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  anchors.left: parent.left
+                  anchors.leftMargin: Style.spacing.rowPaddingX
+                  text: "Read-only in this phase. The composer arrives in Phase 2."
+                  color: Color.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
                 }
               }
             }
@@ -702,6 +1056,14 @@ Item {
           }
           Text {
             width: parent.width
+            visible: root.hint !== ""
+            text: root.hint
+            color: Color.muted
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+          Text {
+            width: parent.width
             visible: root.service && root.service.statusMessage !== ""
             text: root.service ? root.service.statusMessage : ""
             color: root.accent
@@ -711,12 +1073,16 @@ Item {
           Text {
             width: parent.width
             elide: Text.ElideRight
-            text: root.ready
-              ? (root.zone === "guilds"
-                ? "j/k or arrows move · Enter/l opens channels · r refreshes · Tab reaches buttons · Esc closes"
-                : "j/k or arrows move · h/Esc back to servers · r reloads · Tab reaches buttons")
-              : (root.showLogin ? "Enter logs in · Tab reaches buttons · Esc closes"
-                : "r retries · Tab reaches buttons · Esc closes")
+            text: {
+              if (!root.ready)
+                return root.showLogin ? "Enter logs in · Tab reaches buttons · Esc closes"
+                  : "r retries · Tab reaches buttons · Esc closes"
+              if (root.zone === "timeline")
+                return "j/k move · gg/G top/newest · PgUp pages history · Y copies · O opens link · Alt+↑/↓ channel (Shift: unread) · Esc marks read, back to sidebar"
+              if (root.column === "rail")
+                return "j/k move · Enter/l opens channels · Alt+l timeline · r reloads · Esc closes"
+              return "j/k move · Enter opens channel · h/Esc servers · Alt+↑/↓ channel (Shift: unread) · Alt+l timeline · r reloads"
+            }
             color: Color.muted
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption

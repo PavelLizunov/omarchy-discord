@@ -78,3 +78,60 @@ function channelGlyph(type) {
     default: return "#"
   }
 }
+
+// Snowflake ids are decimal strings too wide for a double; compare by length
+// then lexically.
+function compareIds(a, b) {
+  var x = String(a || "")
+  var y = String(b || "")
+  if (x.length !== y.length) return x.length - y.length
+  return x < y ? -1 : (x > y ? 1 : 0)
+}
+
+// Guild rail label: first letters of up to three words ("Omarchy Dev" -> "OD").
+function initials(name) {
+  var words = String(name || "").trim().split(/[\s\-_]+/).filter(function(w) { return w.length > 0 })
+  var out = ""
+  for (var i = 0; i < words.length && i < 3; i++) out += words[i].charAt(0).toUpperCase()
+  return out || "?"
+}
+
+// Sidebar filter: voice/stage channels are a non-goal and hidden entirely;
+// a category whose visible children are all hidden goes with them.
+function isHiddenChannelType(type) {
+  var t = String(type || "")
+  return t === "voice" || t === "stage"
+}
+
+function visibleChannels(channels) {
+  var list = Array.isArray(channels) ? channels : []
+  var out = []
+  for (var i = 0; i < list.length; i++) {
+    var row = list[i]
+    if (!row || isHiddenChannelType(row.type)) continue
+    if (String(row.type || "") === "category") {
+      var keep = false
+      for (var j = i + 1; j < list.length; j++) {
+        if (String(list[j].type || "") === "category") break
+        if (!isHiddenChannelType(list[j].type)) { keep = true; break }
+      }
+      if (!keep) continue
+    }
+    out.push(row)
+  }
+  return out
+}
+
+function isOpenableChannel(row) {
+  if (!row) return false
+  var t = String(row.type || "")
+  return t !== "category" && t !== "thread" && t !== "forum" && !isHiddenChannelType(t)
+}
+
+function isSelectableChannel(row) {
+  return !!row && String(row.type || "") !== "category" && !isHiddenChannelType(row.type)
+}
+
+function isUnread(row) {
+  return !!row && String(row.unread || "read") !== "read"
+}

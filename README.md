@@ -6,9 +6,12 @@ Go backend, instead of the 1 GB Electron app. Same architecture as
 quickshell.spotify: QML owns everything visible, a systemd user unit owns the
 Discord connection, and a private JSON-lines socket joins them.
 
-**Status: Phase 0, skeleton that connects.** Bar mark with mention badge, token
-login, and a bare guild/channel browser. No message timeline yet. See
-`docs/PLAN.md` for the roadmap and `docs/CONVENTIONS.md` for the mechanics contract.
+**Status: Phase 1, read-only client.** Bar mark with mention badge and unread dot,
+token login, guild rail + channel list, a virtualized message timeline with history
+paging and markdown rendering, live read state (ack on read), and a typing line.
+No composer yet (Phase 2); threads and forums are listed but open in Phase 3; voice
+and stage channels are hidden entirely (voice is a non-goal). See `docs/PLAN.md` for
+the roadmap and `docs/CONVENTIONS.md` for the mechanics contract.
 
 ## Install (development)
 
@@ -61,17 +64,32 @@ printf '%s' "$TOKEN" | ~/.local/lib/omarchy-discord/omarchy-discord-backend logi
 `login` reads the token from stdin. `omarchy-discord-backend check` prints an
 environment summary.
 
-## Keyboard (Phase 0 panel)
+## Keyboard (Phase 1 panel)
+
+Two focus zones: the **sidebar** (guild rail + channel list, `h`/`l` or arrows move
+between the two columns) and the **timeline**. Focus is always visible; the active
+column or timeline carries the focus border.
 
 | Key | Action |
 |---|---|
-| `j` / `k`, arrows | Move the cursor in the focused list |
-| `Enter` / `l` / Right | Load and focus the selected server's channels |
-| `h` / Left / `Esc` | Back to the server list |
-| `g` / `G`, Home / End | First / last row |
-| `r` | Refresh (starts the backend if it is stopped) |
-| `Tab` / `Shift+Tab`, `Enter` | Move between buttons and press them |
-| `Esc` (server list) | Close the panel |
+| `Alt+h` / `Alt+l` | Move focus zone: sidebar ↔ timeline |
+| `j` / `k`, arrows | Move the cursor in the focused column / timeline |
+| `Enter` (rail) | Select the server and focus its channel list |
+| `Enter` (channel list) | Open the channel and focus the timeline |
+| `h` / `l`, Left / Right | Rail ↔ channel list ↔ timeline |
+| `Alt+↑` / `Alt+↓` | Previous / next channel in the current list |
+| `Alt+Shift+↑` / `Alt+Shift+↓` | Previous / next **unread** channel |
+| `gg` / `G`, Home / End, `PgUp` / `PgDn` | Timeline top (pages history) / newest / page |
+| `Y` / `O` | Copy the focused message's text / open its first link or attachment |
+| `r` | Reload (structure, channel list, open channel; starts the backend if stopped) |
+| `Esc` (timeline) | Mark the channel read and return to the sidebar |
+| `Esc` (channel list) | Back to the rail |
+| `Esc` (rail) | Close the panel |
+| `Tab` / `Shift+Tab` | Reach the Log out / Close buttons |
+
+Reaching the bottom of the timeline while it is focused marks the channel read
+(debounced); scrolling back up never acks. Middle-clicking the bar mark opens the
+most recent unread DM.
 
 ## Settings
 

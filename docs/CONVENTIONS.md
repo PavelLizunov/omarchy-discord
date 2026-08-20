@@ -242,6 +242,14 @@ strings passed through the redact helper (§7).
 - List rendering: `ListView { clip: true; reuseItems: true; cacheBuffer:
   Style.space(150); boundsBehavior: Flickable.StopAtBounds }`, heterogeneous rows via a
   `Loader` delegate switching on row kind, model = plain JS array + `model: rows.length`.
+- **Accepted deviation — the message timeline** (`components/Timeline.qml`): an int
+  model resets the ListView on every change, so the timeline keeps a small `ListModel`
+  of message ids and diffs each new `messages` array against it (history prepends
+  become `insert(0, …)`, new messages `append(…)`; anything else resets with a
+  captured/restored scroll anchor). Its rows use `reuseItems: false` because a reused
+  variable-height delegate re-lays out in polish and shifts the visible rows. Feeding
+  it: pass a **new** array whose unchanged elements are the **same object references**
+  (Service.qml does `concat`/`slice`, never deep copies).
 - Heavy/pure logic in a plugin-local `.js` library (spotify `Api.js` pattern), out of
   bindings.
 - Render-thread animations (`XAnimator`) for continuous motion; no JS timers driving

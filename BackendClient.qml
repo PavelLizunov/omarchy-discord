@@ -129,8 +129,15 @@ Item {
       onConnectionStateChanged: {
         // Unix-socket connects complete synchronously, before the Loader has
         // published this item, so defer the greeting one turn.
-        if (connected) Qt.callLater(function() { root.sendCommand("hello", null, null) })
-        else root.lifecycle = ""
+        if (connected) {
+          // Capture both now: if the Loader tears this Socket down before the
+          // deferred call runs, its context object is gone and `root` is undefined.
+          var client = root
+          var sock = this
+          Qt.callLater(function() {
+            if (client && client.activeSocket === sock && sock.connected) client.sendCommand("hello", null, null)
+          })
+        } else root.lifecycle = ""
       }
     }
   }

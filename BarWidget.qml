@@ -21,6 +21,9 @@ BarWidget {
     || !screenName || discord.panelScreenName === screenName
   readonly property bool online: !!(discord && discord.showStructure)
   readonly property int mentionCount: discord ? discord.totalMentionCount : 0
+  // Plain unreads are a subtle dot; mentions take precedence (badge).
+  readonly property bool unreadDot: online && mentionCount === 0
+    && !!(discord && discord.anyUnread)
   readonly property bool showMentionCount:
     String(root.setting("showMentionCount", "On")) !== "Off"
   readonly property string middleClickAction:
@@ -33,6 +36,7 @@ BarWidget {
     if (discord.user && discord.user.username)
       text += " as " + String(discord.user.display_name || discord.user.username)
     if (mentionCount > 0) text += " · " + mentionCount + " mention" + (mentionCount === 1 ? "" : "s")
+    else if (unreadDot) text += " · unread"
     return text
   }
 
@@ -64,7 +68,7 @@ BarWidget {
       return
     }
     var channelId = discord ? discord.unreadDmChannelId : ""
-    openFullPanel(channelId ? { channel: channelId } : {})
+    openFullPanel(channelId ? { channel_id: channelId } : {})
   }
 
   function syncSettings() {
@@ -105,11 +109,28 @@ BarWidget {
       spacing: Style.space(4)
       enabled: false
 
-      DiscordIcon {
-        id: mark
+      Item {
         anchors.verticalCenter: parent.verticalCenter
-        iconSize: Style.bar.iconFont
-        color: root.foreground
+        implicitWidth: mark.implicitWidth
+        implicitHeight: mark.implicitHeight
+
+        DiscordIcon {
+          id: mark
+          anchors.centerIn: parent
+          iconSize: Style.bar.iconFont
+          color: root.foreground
+        }
+
+        Rectangle {
+          visible: root.unreadDot
+          anchors.right: parent.right
+          anchors.top: parent.top
+          anchors.margins: -Style.space(1)
+          width: Style.space(5)
+          height: width
+          radius: width / 2
+          color: Util.alpha(root.foreground, 0.7)
+        }
       }
 
       Text {
