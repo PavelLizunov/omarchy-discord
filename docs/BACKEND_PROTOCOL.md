@@ -77,6 +77,7 @@ time with `get_state` / `list_guilds`.
 |---|---|
 | `invalid_request` | request line failed to parse; answered with id 0 |
 | `unsupported_version` | `v != 1` |
+| `unknown_command` | `command` is not (yet) implemented by this backend |
 | `invalid_argument` | known command, missing/ill-typed field |
 | `serialization_error` | internal failure serializing a result/snapshot |
 | `not_logged_in` | command needs a session and lifecycle is `logged_out`/`reauth_needed` |

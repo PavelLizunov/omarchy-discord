@@ -2,3 +2,5 @@
 backend/dist/
 *.log
 .DS_Store
+.claude/prompts/
+.claude/docs/

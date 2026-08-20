@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "id": "quickshell.discord",
+  "name": "Omarchy Discord",
+  "version": "0.1.0",
+  "author": "Matt Calayo",
+  "license": "MIT",
+  "description": "Text-only Discord client as an Omarchy shell plugin: themed panel and bar widget in front of a small native backend.",
+  "kinds": ["service", "bar-widget", "panel"],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml",
+    "panel": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Omarchy Discord",
+    "description": "Discord mark with a mention badge. Left click opens the client; middle click runs the configured quick action.",
+    "category": "Communication",
+    "allowMultiple": false,
+    "defaultSection": "left",
+    "defaults": {
+      "stayConnected": "On",
+      "notifications": "Mentions and DMs",
+      "showMentionCount": "On",
+      "middleClick": "Last unread DM",
+      "imagePreviews": "On",
+      "mediaCacheMB": 512
+    },
+    "schema": [
+      {
+        "key": "stayConnected",
+        "type": "enum",
+        "label": "Stay connected",
+        "options": ["On", "Off"],
+        "defaultValue": "On",
+        "description": "On keeps the backend connected while the plugin is enabled so mentions keep arriving. Off disconnects when no Discord surface has been open for a while."
+      },
+      {
+        "key": "notifications",
+        "type": "enum",
+        "label": "Notifications",
+        "options": ["All", "Mentions and DMs", "Off"],
+        "defaultValue": "Mentions and DMs",
+        "description": "Which messages raise a desktop notification through the Omarchy notification center."
+      },
+      {
+        "key": "showMentionCount",
+        "type": "enum",
+        "label": "Show mention count in bar",
+        "options": ["On", "Off"],
+        "defaultValue": "On",
+        "description": "Show the number of unread mentions next to the bar mark."
+      },
+      {
+        "key": "middleClick",
+        "type": "enum",
+        "label": "Middle click on the bar mark",
+        "options": ["Last unread DM", "Raise panel"],
+        "defaultValue": "Last unread DM",
+        "description": "Quick action for a middle click on the bar widget."
+      },
+      {
+        "key": "imagePreviews",
+        "type": "enum",
+        "label": "Image previews",
+        "options": ["On", "Off"],
+        "defaultValue": "On",
+        "description": "Render image attachments and embeds inline in the timeline."
+      },
+      {
+        "key": "mediaCacheMB",
+        "type": "integer",
+        "label": "Media cache size (MB)",
+        "min": 64,
+        "max": 4096,
+        "step": 64,
+        "defaultValue": 512,
+        "description": "Upper bound for cached avatars, emoji, and attachments under the user cache directory."
+      }
+    ]
+  }
+}

@@ -1,0 +1,9 @@
+/target/
+# Release builds are deliberately shipped with the plugin. Omarchy does not
+# execute install hooks when it clones a plugin, so users must not need the Go
+# toolchain just to get the backend on first launch.
+!/dist/
+!/dist/*
+!/dist/x86_64/
+!/dist/x86_64/*
+!/dist/x86_64/omarchy-discord-backend

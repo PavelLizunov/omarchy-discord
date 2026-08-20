@@ -1,0 +1,353 @@
+{
+  "v": 9,
+  "user": {
+    "id": "100000000000000001",
+    "username": "tester",
+    "discriminator": "",
+    "avatar": "",
+    "global_name": "Tester"
+  },
+  "session_id": "synthetic-session",
+  "private_channels": [
+    {
+      "id": "400000000000000002",
+      "type": 3,
+      "last_message_id": "500000000000000060",
+      "recipients": [
+        {
+          "id": "100000000000000002",
+          "username": "ada",
+          "discriminator": "",
+          "avatar": "aaaa",
+          "global_name": "Ada"
+        },
+        {
+          "id": "100000000000000003",
+          "username": "lin",
+          "discriminator": "",
+          "avatar": "",
+          "global_name": ""
+        }
+      ],
+      "last_pin_timestamp": null
+    },
+    {
+      "id": "400000000000000001",
+      "type": 1,
+      "last_message_id": "500000000000000070",
+      "recipients": [
+        {
+          "id": "100000000000000002",
+          "username": "ada",
+          "discriminator": "",
+          "avatar": "aaaa",
+          "global_name": "Ada"
+        }
+      ],
+      "last_pin_timestamp": null
+    }
+  ],
+  "guilds": [
+    {
+      "id": "200000000000000001",
+      "name": "Omarchy",
+      "icon": "iconhash",
+      "system_channel_flags": 0,
+      "verification_level": 0,
+      "default_message_notifications": 0,
+      "explicit_content_filter": 0,
+      "premium_tier": 0,
+      "mfa_level": 0,
+      "owner_id": "100000000000000002",
+      "region": "",
+      "afk_timeout": null,
+      "roles": [
+        {
+          "id": "200000000000000001",
+          "name": "@everyone",
+          "permissions": "3072",
+          "position": 0,
+          "color": 0,
+          "hoist": false,
+          "managed": false,
+          "mentionable": false,
+          "tags": {}
+        }
+      ],
+      "emojis": null,
+      "features": null,
+      "rules_channel_id": null,
+      "preferred_locale": "",
+      "public_updates_channel_id": null,
+      "nsfw_level": 0,
+      "joined_at": null,
+      "members": [
+        {
+          "user": {
+            "id": "100000000000000001",
+            "username": "tester",
+            "discriminator": "",
+            "avatar": "",
+            "global_name": "Tester"
+          },
+          "roles": null,
+          "joined_at": null,
+          "premium_since": null,
+          "communication_disabled_until": null,
+          "deaf": false,
+          "mute": false,
+          "flags": 0,
+          "pending": false
+        }
+      ],
+      "channels": [
+        {
+          "id": "300000000000000001",
+          "guild_id": "200000000000000001",
+          "type": 4,
+          "position": 1,
+          "name": "General",
+          "last_pin_timestamp": null
+        },
+        {
+          "id": "300000000000000003",
+          "guild_id": "200000000000000001",
+          "position": 1,
+          "name": "dev",
+          "last_message_id": "500000000000000020",
+          "parent_id": "300000000000000001",
+          "last_pin_timestamp": null
+        },
+        {
+          "id": "300000000000000002",
+          "guild_id": "200000000000000001",
+          "name": "general",
+          "last_message_id": "500000000000000010",
+          "parent_id": "300000000000000001",
+          "last_pin_timestamp": null
+        },
+        {
+          "id": "300000000000000004",
+          "guild_id": "200000000000000001",
+          "type": 2,
+          "name": "Voice",
+          "parent_id": "300000000000000001",
+          "last_pin_timestamp": null
+        },
+        {
+          "id": "300000000000000005",
+          "guild_id": "200000000000000001",
+          "position": 2,
+          "permission_overwrites": [
+            {
+              "id": "200000000000000001",
+              "type": 0,
+              "allow": "0",
+              "deny": "1024"
+            }
+          ],
+          "name": "secret",
+          "last_message_id": "500000000000000030",
+          "parent_id": "300000000000000001",
+          "last_pin_timestamp": null
+        },
+        {
+          "id": "300000000000000006",
+          "guild_id": "200000000000000001",
+          "type": 4,
+          "name": "Empty",
+          "last_pin_timestamp": null
+        },
+        {
+          "id": "300000000000000007",
+          "guild_id": "200000000000000001",
+          "position": 5,
+          "name": "loose",
+          "last_message_id": "500000000000000040",
+          "last_pin_timestamp": null
+        }
+      ]
+    },
+    {
+      "id": "200000000000000002",
+      "name": "Quiet",
+      "icon": "",
+      "system_channel_flags": 0,
+      "verification_level": 0,
+      "default_message_notifications": 0,
+      "explicit_content_filter": 0,
+      "premium_tier": 0,
+      "mfa_level": 0,
+      "owner_id": "100000000000000001",
+      "region": "",
+      "afk_timeout": null,
+      "roles": [
+        {
+          "id": "200000000000000002",
+          "name": "@everyone",
+          "permissions": "1024",
+          "position": 0,
+          "color": 0,
+          "hoist": false,
+          "managed": false,
+          "mentionable": false,
+          "tags": {}
+        }
+      ],
+      "emojis": null,
+      "features": null,
+      "rules_channel_id": null,
+      "preferred_locale": "",
+      "public_updates_channel_id": null,
+      "nsfw_level": 0,
+      "joined_at": null,
+      "members": [
+        {
+          "user": {
+            "id": "100000000000000001",
+            "username": "tester",
+            "discriminator": "",
+            "avatar": "",
+            "global_name": "Tester"
+          },
+          "roles": null,
+          "joined_at": null,
+          "premium_since": null,
+          "communication_disabled_until": null,
+          "deaf": false,
+          "mute": false,
+          "flags": 0,
+          "pending": false
+        }
+      ],
+      "channels": [
+        {
+          "id": "300000000000000008",
+          "guild_id": "200000000000000002",
+          "name": "chat",
+          "last_message_id": "500000000000000050",
+          "last_pin_timestamp": null
+        }
+      ]
+    }
+  ],
+  "application": {
+    "id": null,
+    "flags": 0
+  },
+  "user_settings": {
+    "show_current_game": false,
+    "default_guilds_restricted": false,
+    "inline_attachment_media": false,
+    "inline_embed_media": false,
+    "gif_auto_play": false,
+    "render_embeds": false,
+    "render_reactions": false,
+    "animate_emoji": false,
+    "animate_stickers": 0,
+    "enable_tts_command": false,
+    "message_display_compact": false,
+    "convert_emoticons": false,
+    "explicit_content_filter": 0,
+    "disable_games_tab": false,
+    "developer_mode": false,
+    "detect_platform_accounts": false,
+    "stream_notification_enabled": false,
+    "allow_accessibility_detection": false,
+    "contact_sync_enabled": false,
+    "native_phone_integration_enabled": false,
+    "timezone_offset": 0,
+    "locale": "",
+    "theme": "",
+    "guild_positions": null,
+    "guild_folders": [
+      {
+        "name": "",
+        "id": null,
+        "guild_ids": [
+          "200000000000000002"
+        ],
+        "color": 0
+      },
+      {
+        "name": "",
+        "id": null,
+        "guild_ids": [
+          "200000000000000001"
+        ],
+        "color": 0
+      }
+    ],
+    "restricted_guilds": null,
+    "friend_source_flags": {},
+    "status": "idle",
+    "custom_status": null
+  },
+  "read_state": [
+    {
+      "id": "300000000000000002",
+      "last_message_id": "500000000000000010",
+      "last_pin_timestamp": null,
+      "mention_count": 0
+    },
+    {
+      "id": "300000000000000003",
+      "last_message_id": "500000000000000019",
+      "last_pin_timestamp": null,
+      "mention_count": 2
+    },
+    {
+      "id": "300000000000000007",
+      "last_message_id": "500000000000000039",
+      "last_pin_timestamp": null,
+      "mention_count": 0
+    },
+    {
+      "id": "300000000000000008",
+      "last_message_id": "500000000000000049",
+      "last_pin_timestamp": null,
+      "mention_count": 0
+    },
+    {
+      "id": "400000000000000001",
+      "last_message_id": "500000000000000069",
+      "last_pin_timestamp": null,
+      "mention_count": 1
+    },
+    {
+      "id": "400000000000000002",
+      "last_message_id": "500000000000000060",
+      "last_pin_timestamp": null,
+      "mention_count": 0
+    }
+  ],
+  "user_guild_settings": [
+    {
+      "guild_id": "200000000000000002",
+      "suppress_roles": false,
+      "suppress_everyone": false,
+      "muted": true,
+      "mute_config": null,
+      "mobile_push": false,
+      "message_notifications": 0,
+      "channel_overrides": null
+    },
+    {
+      "guild_id": "200000000000000001",
+      "suppress_roles": false,
+      "suppress_everyone": false,
+      "muted": false,
+      "mute_config": null,
+      "mobile_push": false,
+      "message_notifications": 0,
+      "channel_overrides": [
+        {
+          "muted": false,
+          "mute_config": null,
+          "message_notifications": 0,
+          "channel_id": "300000000000000007"
+        }
+      ]
+    }
+  ]
+}
