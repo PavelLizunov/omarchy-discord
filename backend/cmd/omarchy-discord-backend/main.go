@@ -26,6 +26,7 @@ import (
 	"github.com/diamondburned/ningen/v3"
 
 	"github.com/mattcalayo/omarchy-discord/backend/internal/keyring"
+	"github.com/mattcalayo/omarchy-discord/backend/internal/media"
 	"github.com/mattcalayo/omarchy-discord/backend/internal/protocol"
 	"github.com/mattcalayo/omarchy-discord/backend/internal/redact"
 	"github.com/mattcalayo/omarchy-discord/backend/internal/session"
@@ -95,6 +96,12 @@ func serve(socketPath string) int {
 		redact.Logf("%v", err)
 		return exitRuntimeDir
 	}
+	cache, err := media.New(media.Options{Dir: mediaDir(), Emit: srv.Broadcast})
+	if err != nil {
+		// Not fatal: fetch_media answers media_error until the dir is fixed.
+		redact.Logf("media cache unavailable: %v", err)
+	}
+	mgr.Configure(filepath.Dir(socketPath), cache)
 	redact.Logf("listening on %s (backend %s, protocol v%d)", socketPath, protocol.BackendVersion, protocol.Version)
 
 	go func() {
@@ -117,15 +124,33 @@ type checkReport struct {
 	SocketPath         string `json:"socket_path"`
 	RuntimeDir         string `json:"runtime_dir"`
 	RuntimeDirWritable bool   `json:"runtime_dir_writable"`
+	MediaCacheDir      string `json:"media_cache_dir"`
+	MediaCacheWritable bool   `json:"media_cache_writable"`
+	StagedDir          string `json:"staged_dir"`
+	StagedDirWritable  bool   `json:"staged_dir_writable"`
 	SecretTool         bool   `json:"secret_tool"`
 	TokenPresent       bool   `json:"token_present"`
 	Error              string `json:"error,omitempty"`
+}
+
+// mediaDir is $XDG_CACHE_HOME/omarchy-discord/media (fallback ~/.cache).
+func mediaDir() string {
+	dir := os.Getenv("XDG_CACHE_HOME")
+	if dir == "" {
+		home, _ := os.UserHomeDir()
+		dir = filepath.Join(home, ".cache")
+	}
+	return filepath.Join(dir, "omarchy-discord", "media")
 }
 
 func check(socketPath string) int {
 	r := checkReport{BackendVersion: protocol.BackendVersion, ProtocolVersion: protocol.Version, SocketPath: socketPath}
 	r.RuntimeDir = filepath.Dir(socketPath)
 	r.RuntimeDirWritable = dirWritable(r.RuntimeDir)
+	r.MediaCacheDir = mediaDir()
+	r.MediaCacheWritable = dirWritable(r.MediaCacheDir)
+	r.StagedDir = filepath.Join(r.RuntimeDir, "staged")
+	r.StagedDirWritable = dirWritable(r.StagedDir)
 	r.SecretTool = keyring.Available()
 	code := exitOK
 	if r.SecretTool {
@@ -139,7 +164,7 @@ func check(socketPath string) int {
 		}
 	}
 	switch {
-	case !r.RuntimeDirWritable:
+	case !r.RuntimeDirWritable, !r.StagedDirWritable, !r.MediaCacheWritable:
 		code = exitRuntimeDir
 	case !r.SecretTool:
 		code = exitNoSecretTool

@@ -75,7 +75,7 @@ func TestStartWithoutToken(t *testing.T) {
 			t.Errorf("%s: %v", c, e)
 		}
 	}
-	_, e := m.Handle(context.Background(), req(t, `{"v":1,"id":1,"command":"send"}`))
+	_, e := m.Handle(context.Background(), req(t, `{"v":1,"id":1,"command":"frobnicate"}`))
 	if e == nil || e.Code != protocol.CodeUnknownCommand {
 		t.Errorf("unknown: %v", e)
 	}

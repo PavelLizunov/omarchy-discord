@@ -89,6 +89,34 @@ var goldens = []struct {
 	{"event_typing_start", NewTypingStart("1049931213073821696", str("1000000000000000001"), "2000000000000000001", "ada", "2026-08-20T14:03:22.000Z"), &TypingStartEvent{}},
 	{"event_read_state_changed", NewReadStateChanged("1049931213073821696", str("1000000000000000001"), true, 2, str("1049931302442426390"), 5), &ReadStateChangedEvent{}},
 	{"event_read_state_changed_dm_ack", NewReadStateChanged("1049931213073821696", nil, false, 0, str("1049931339989602304"), 0), &ReadStateChangedEvent{}},
+	// Phase 2.
+	{"response_send", OKResponse(31, SendResult{MessageID: "1049931339989602304", Nonce: "a1b2c3d4e5f60718"}), &typedResponse[SendResult]{}},
+	{"response_edit", OKResponse(32, EmptyResult{}), &typedResponse[EmptyResult]{}},
+	{"response_delete", OKResponse(33, EmptyResult{}), &typedResponse[EmptyResult]{}},
+	{"response_react", OKResponse(34, EmptyResult{}), &typedResponse[EmptyResult]{}},
+	{"response_typing", OKResponse(35, EmptyResult{}), &typedResponse[EmptyResult]{}},
+	{"response_set_presence", OKResponse(36, EmptyResult{}), &typedResponse[EmptyResult]{}},
+	{"response_forbidden", ErrResponse(32, &Error{Code: CodeForbidden, Message: "only own messages can be edited"}), &typedResponse[struct{}]{}},
+	{"response_rate_limited", ErrResponse(31, &Error{Code: CodeRateLimited, Message: "rate limited: retry after 2.5s"}), &typedResponse[struct{}]{}},
+	{"response_fetch_media_hit", OKResponse(40, FetchMediaResult{Cached: true, Path: "/home/m/.cache/omarchy-discord/media/ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12.png"}), &typedResponse[FetchMediaResult]{}},
+	{"response_fetch_media_miss", OKResponse(41, FetchMediaResult{Cached: false}), &typedResponse[FetchMediaResult]{}},
+	{"response_media_error", ErrResponse(42, &Error{Code: CodeMediaError, Message: "disallowed host"}), &typedResponse[struct{}]{}},
+	{"response_set_config", OKResponse(43, EmptyResult{}), &typedResponse[EmptyResult]{}},
+	{"response_upload", OKResponse(44, SendResult{MessageID: "1049931401540221011", Nonce: "e5f6a7b8c9d0e1f2"}), &typedResponse[SendResult]{}},
+	{"response_upload_too_large", ErrResponse(44, &Error{Code: CodeUploadTooLarge, Message: "52428801 bytes exceeds the 10485760 byte upload limit"}), &typedResponse[struct{}]{}},
+	{"response_start_qr_login", OKResponse(50, EmptyResult{}), &typedResponse[EmptyResult]{}},
+	{"response_cancel_qr_login", OKResponse(51, EmptyResult{}), &typedResponse[EmptyResult]{}},
+	{"response_qr_unavailable", ErrResponse(50, &Error{Code: CodeQRUnavailable, Message: "a QR login is already in progress"}), &typedResponse[struct{}]{}},
+	{"event_media_ready", NewMediaReady("https://cdn.discordapp.com/attachments/1049931213073821696/1049931339989602305/shot-1.png", true, "/home/m/.cache/omarchy-discord/media/ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12.png", ""), &MediaReadyEvent{}},
+	{"event_media_ready_failed", NewMediaReady("https://cdn.discordapp.com/attachments/1049931213073821696/1049931339989602305/gone.png", false, "", "http 404"), &MediaReadyEvent{}},
+	{"event_upload_progress", NewUploadProgress(44, "shot-1.png", 262144, 1048576), &UploadProgressEvent{}},
+	{"event_upload_progress_final", NewUploadProgress(44, "shot-1.png", 1048576, 1048576), &UploadProgressEvent{}},
+	{"event_qr_code", NewQRCode("https://discord.com/ra/0123456789abcdef0123456789abcdef0123456789ab", "0123456789abcdef0123456789abcdef0123456789ab", 120000, "/run/user/1000/omarchy-discord/qr.png"), &QRCodeEvent{}},
+	{"event_qr_scanned", NewQRScanned(QRUser{ID: "183627919046737920", Username: "m", Discriminator: "0", AvatarHash: "a1b2c3"}), &QRScannedEvent{}},
+	{"event_qr_approved", NewQRApproved(), &QRApprovedEvent{}},
+	{"event_qr_cancelled_declined", NewQRCancelled(QRReasonDeclined, ""), &QRCancelledEvent{}},
+	{"event_qr_cancelled_expired", NewQRCancelled(QRReasonExpired, ""), &QRCancelledEvent{}},
+	{"event_qr_cancelled_error", NewQRCancelled(QRReasonError, "remoteauth: ticket exchange failed: http 400"), &QRCancelledEvent{}},
 }
 
 var (
@@ -215,6 +243,74 @@ func TestGoldenRequests(t *testing.T) {
 				t.Fatalf("ack params: %v %+v", e, p)
 			}
 		}},
+		{"request_send", 31, "send", func(t *testing.T, r *Request) {
+			var p SendParams
+			if e := r.Params(&p); e != nil || p.ChannelID != "1049931213073821696" || p.Content != "on my way" || p.ReplyTo != "1049931302442426390" || p.ReplyMention != nil {
+				t.Fatalf("send params: %v %+v", e, p)
+			}
+		}},
+		{"request_send_no_mention", 31, "send", func(t *testing.T, r *Request) {
+			var p SendParams
+			if e := r.Params(&p); e != nil || p.ReplyMention == nil || *p.ReplyMention {
+				t.Fatalf("send params: %v %+v", e, p)
+			}
+		}},
+		{"request_edit", 32, "edit", func(t *testing.T, r *Request) {
+			var p EditParams
+			if e := r.Params(&p); e != nil || p.ChannelID != "1049931213073821696" || p.MessageID != "1049931401540221011" || p.Content != "on my way!" {
+				t.Fatalf("edit params: %v %+v", e, p)
+			}
+		}},
+		{"request_delete", 33, "delete", func(t *testing.T, r *Request) {
+			var p DeleteParams
+			if e := r.Params(&p); e != nil || p.ChannelID != "1049931213073821696" || p.MessageID != "1049931401540221011" {
+				t.Fatalf("delete params: %v %+v", e, p)
+			}
+		}},
+		{"request_react", 34, "react", func(t *testing.T, r *Request) {
+			var p ReactParams
+			if e := r.Params(&p); e != nil || p.Emoji != "👍" {
+				t.Fatalf("react params: %v %+v", e, p)
+			}
+		}},
+		{"request_unreact_custom", 34, "unreact", func(t *testing.T, r *Request) {
+			var p ReactParams
+			if e := r.Params(&p); e != nil || p.Emoji != "omarchy:1000000000000000099" {
+				t.Fatalf("unreact params: %v %+v", e, p)
+			}
+		}},
+		{"request_typing", 35, "typing", func(t *testing.T, r *Request) {
+			var p TypingParams
+			if e := r.Params(&p); e != nil || p.ChannelID != "1049931213073821696" {
+				t.Fatalf("typing params: %v %+v", e, p)
+			}
+		}},
+		{"request_set_presence", 36, "set_presence", func(t *testing.T, r *Request) {
+			var p SetPresenceParams
+			if e := r.Params(&p); e != nil || p.Status != "dnd" {
+				t.Fatalf("set_presence params: %v %+v", e, p)
+			}
+		}},
+		{"request_fetch_media", 40, "fetch_media", func(t *testing.T, r *Request) {
+			var p FetchMediaParams
+			if e := r.Params(&p); e != nil || p.URL != "https://cdn.discordapp.com/avatars/183627919046737920/a.png" || p.Size != 64 {
+				t.Fatalf("fetch_media params: %v %+v", e, p)
+			}
+		}},
+		{"request_set_config", 43, "set_config", func(t *testing.T, r *Request) {
+			var p SetConfigParams
+			if e := r.Params(&p); e != nil || p.MediaCacheMB == nil || *p.MediaCacheMB != 256 {
+				t.Fatalf("set_config params: %v %+v", e, p)
+			}
+		}},
+		{"request_upload", 44, "upload", func(t *testing.T, r *Request) {
+			var p UploadParams
+			if e := r.Params(&p); e != nil || p.ChannelID != "1049931213073821696" || len(p.Paths) != 1 || p.Paths[0] != "/run/user/1000/omarchy-discord/staged/shot-1.png" || p.Content != "look at this" || p.Spoiler {
+				t.Fatalf("upload params: %v %+v", e, p)
+			}
+		}},
+		{"request_start_qr_login", 50, "start_qr_login", nil},
+		{"request_cancel_qr_login", 51, "cancel_qr_login", nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -36,6 +36,9 @@ const (
 	CodeForbidden          = "forbidden"
 	CodeRateLimited        = "rate_limited"
 	CodeEmptyDMRefused     = "empty_dm_refused"
+	CodeUploadTooLarge     = "upload_too_large"
+	CodeMediaError         = "media_error"
+	CodeQRUnavailable      = "qr_unavailable"
 	CodeDiscordError       = "discord_error"
 	CodeInternalError      = "internal_error"
 )

@@ -24,7 +24,7 @@ Quality gate (all must pass): `gofmt -l .` (empty), `go vet ./...`,
 | command | what it does |
 |---|---|
 | `serve` (default) | run the socket server and the Discord session; logs to stderr only |
-| `check` | print a JSON environment summary to stdout and exit (`secret_tool`, `runtime_dir_writable`, `token_present`; never the token) |
+| `check` | print a JSON environment summary to stdout and exit (`secret_tool`, `runtime_dir_writable`, `media_cache_writable`, `staged_dir_writable`, `token_present`; never the token) |
 | `login` | read a token from the first line of stdin, validate it with `GET /users/@me`, store it in the keyring, exit |
 | `logout` | clear the keyring entry (looped, max 20) |
 
@@ -41,7 +41,7 @@ only in memory while serving and never logged.
 |---|---|
 | 0 | ok (`check`: environment ready and a token is stored) |
 | 1 | usage error / unreadable stdin |
-| 2 | runtime dir not writable or socket bind failed |
+| 2 | runtime, staged, or media cache dir not writable, or socket bind failed |
 | 3 | `secret-tool` not installed |
 | 4 | `check`: no token stored; `login`: empty stdin |
 | 5 | `login`: token rejected by Discord |

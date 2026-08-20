@@ -35,6 +35,9 @@ type Client interface {
 	// CloseChannel reports whether the channel was open.
 	CloseChannel(id string) bool
 	HasOpen(id string) bool
+	// Push queues an event to this client only (per-request progress such
+	// as upload_progress); it shares the connection's writer with broadcasts.
+	Push(ev any)
 }
 
 type clientKey struct{}
@@ -265,6 +268,8 @@ func (c *conn) HasOpen(id string) bool {
 	_, ok := c.open[id]
 	return ok
 }
+
+func (c *conn) Push(ev any) { c.send(protocol.MustEncode(0, ev)) }
 
 // hasOpenLocked is HasOpen for callers already holding srv.mu.
 func (c *conn) hasOpenLocked(id string) bool {

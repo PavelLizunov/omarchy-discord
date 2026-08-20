@@ -26,7 +26,7 @@ Request — caller-chosen integer `id`, command params flattened at top level:
 Success response (echoes `id`):
 
 ```json
-{"type":"response","v":1,"id":12,"ok":true,"result":{"message_id":"1049931339989602304","nonce":"k3q9x1"}}
+{"type":"response","v":1,"id":12,"ok":true,"result":{"message_id":"1049931339989602304","nonce":"a1b2c3d4e5f60718"}}
 ```
 
 Failure response (`result` and `error` are mutually exclusive; only one appears):
@@ -96,7 +96,7 @@ events.
 | `unknown_command` | `command` is not (yet) implemented by this backend |
 | `invalid_argument` | known command, missing/ill-typed field |
 | `serialization_error` | internal failure serializing a result/snapshot |
-| `not_logged_in` | no session exists (`starting`, `logged_out`, `error` without a token). `reauth_needed` keeps its cached session and does **not** produce this for read-only structure commands |
+| `not_logged_in` | no session exists (`starting`, `logged_out`, `error` without a token). `reauth_needed` keeps its cached session and does **not** produce this for read-only structure commands; write commands (`send`, `edit`, `delete`, `react`, `typing`, `upload`, `set_presence`) do get it in `reauth_needed`, and a write whose REST call returns 401 fails with it while the lifecycle moves to `reauth_needed` |
 | `login_failed` | token rejected at login (invalid/revoked) |
 | `qr_unavailable` | remote-auth gateway unreachable or flow already running |
 | `gateway_unavailable` | a session exists but has not processed its first READY (`connecting` after login/start) — structure is not yet known; for write commands, also when the gateway is currently disconnected. Retry later |
@@ -129,9 +129,10 @@ events.
 | `error` | string | redacted human-readable detail when lifecycle is `error`/`reauth_needed`, else `""` |
 
 `reauth_needed` semantics: entered when the gateway closes with a fatal code
-(4004/4010–4014 — token invalid) or a REST 401. The backend drops the in-memory token,
-clears the keyring entry, stays running, and keeps serving structure from cache
-read-only (`list_guilds` / `list_channels` / `list_dms` succeed). Recovery is `login` or `start_qr_login`. A new `login` resets
+(4004/4010–4014 — token invalid) or a REST 401 on any command. The backend drops the
+in-memory token, clears the keyring entry, closes the gateway, stays running, and
+keeps serving structure from cache read-only (`list_guilds` / `list_channels` /
+`list_dms` succeed). The command that hit the 401 fails with `not_logged_in`. Recovery is `login` or `start_qr_login`. A new `login` resets
 `user`, `presence`, `total_mention_count`, and `unread_dm_channel_id` to their
 pre-ready values (null / `""` / 0 / null) in the `connecting` state it emits, even
 when it replaces a live session. Transient disconnects surface as
@@ -229,23 +230,56 @@ Disconnect the gateway, drop the in-memory token, clear the keyring entry.
 - Errors: `not_logged_in`.
 
 #### `set_presence`
-- Request: `{status: "online"|"idle"|"dnd"|"invisible"}`
+- Request: `{status: "online"|"idle"|"dnd"|"invisible"}` (`"offline"` is accepted as
+  an alias of `invisible`; the state always reports `invisible`)
 - Result: `{}` — sends the gateway presence update and PATCHes user settings so it
-  persists across devices (ningen `SetStatus`).
-- Errors: `invalid_argument`, `not_logged_in`, `gateway_unavailable`.
+  persists across devices (ningen `SetStatus`). A `state_changed` with the new
+  `presence` follows when it actually changed.
+- Errors: `invalid_argument`, `not_logged_in`, `gateway_unavailable`, `rate_limited`,
+  `discord_error`.
+
+```json
+{"v":1,"id":36,"command":"set_presence","status":"dnd"}
+{"type":"response","v":1,"id":36,"ok":true,"result":{}}
+```
 
 #### `start_qr_login`
 Open Discord's remote-auth gateway and begin the QR flow. Progress arrives as events
-(`qr_code`, `qr_scanned`, `qr_approved`, `qr_cancelled`); the command returns as soon
-as the gateway session is established.
-- Request: no fields. Result: `{}`. Lifecycle → `qr_pending`.
-- Errors: `qr_unavailable` (gateway unreachable, or a QR flow / logged-in session
-  already active).
+(`qr_code`, `qr_scanned`, `qr_approved`, `qr_cancelled`); the command returns once
+the gateway has issued the first code, so the `qr_code` event is already queued
+(and precedes the response) when the response lands. Lifecycle → `qr_pending` is
+emitted before the response. If the gateway cannot be reached, or issues no code
+within ~10 s, the flow is torn down, the lifecycle returns to its previous value
+(`logged_out` or `reauth_needed`), and the response is `qr_unavailable` — no
+`qr_cancelled` is emitted in that case.
+- Request: no fields. Result: `{}`.
+- Errors: `qr_unavailable` (gateway unreachable / no code in time, a QR flow already
+  running, or a live session — `connecting`/`ready` — exists; `reauth_needed` is
+  allowed and is replaced on success). While a flow runs, `login` is also refused
+  with `qr_unavailable`.
+
+```json
+{"v":1,"id":50,"command":"start_qr_login"}
+{"type":"response","v":1,"id":50,"ok":true,"result":{}}
+```
 
 #### `cancel_qr_login`
 - Request: no fields. Result: `{}` — closes the remote-auth WS; emits
-  `qr_cancelled {reason:"cancelled"}`; lifecycle → `logged_out`.
+  `qr_cancelled {reason:"cancelled"}` and the lifecycle `state_changed` (back to
+  `logged_out` / `reauth_needed`) **before** the response; removes the QR image.
 - Errors: `qr_unavailable` (no flow running).
+
+#### `set_config`
+Push settings the backend needs. QML sends it on connect and whenever the setting
+changes; it is not persisted by the backend.
+- Request: `{media_cache_mb?: int}` — media cache LRU cap in MiB (default 512;
+  must be > 0). Absent fields are left unchanged; an empty request is a no-op.
+- Result: `{}`. Errors: `invalid_argument`.
+
+```json
+{"v":1,"id":43,"command":"set_config","media_cache_mb":256}
+{"type":"response","v":1,"id":43,"ok":true,"result":{}}
+```
 
 ### Structure
 
@@ -335,44 +369,75 @@ deliberately).
   it), `not_logged_in`, `gateway_unavailable`, `unknown_channel`, `forbidden`,
   `rate_limited`, `discord_error`.
 
+All write commands below additionally require a live gateway: `not_logged_in`
+when there is no session or it is in `reauth_needed`, `gateway_unavailable` while
+`connecting`. A REST 401 on any of them moves the session to `reauth_needed` and
+fails the command with `not_logged_in`. Every `error.message` is redacted; a
+`rate_limited` message carries Discord's retry hint.
+
 #### `send`
 - Request: `{channel_id: string, content: string, reply_to?: string (message id),
   reply_mention?: bool (default true)}`
-- Result: `{message_id: string, nonce: string}` — the backend generates the nonce and
-  sets it on `SendMessageData`; the gateway echo (`message_create` carrying the same
-  `nonce`) is the QML-side dedup for optimistic rows.
-- Errors: `channel_not_open`, `invalid_argument` (empty content, over length limit),
-  `forbidden`, `rate_limited`, `discord_error`.
+- Result: `{message_id: string, nonce: string}` — the backend always generates the
+  nonce (16 random hex chars) and sets it on `SendMessageData`; the gateway echo
+  (`message_create` carrying the same `nonce`) is the QML-side dedup for optimistic
+  rows. `reply_to` becomes the message reference; `reply_mention` maps to
+  `allowed_mentions.replied_user`.
+- Errors: `invalid_argument` (non-snowflake ids, empty/whitespace content, content
+  over the limit — 2000 runes, 4000 with Nitro), `channel_not_open`, `not_logged_in`,
+  `gateway_unavailable`, `forbidden`, `rate_limited`, `discord_error`. Validation
+  happens before any REST call.
 
 ```json
 {"v":1,"id":31,"command":"send","channel_id":"1049931213073821696","content":"on my way","reply_to":"1049931302442426390"}
-{"type":"response","v":1,"id":31,"ok":true,"result":{"message_id":"1049931339989602304","nonce":"a1b2c3d4"}}
+{"type":"response","v":1,"id":31,"ok":true,"result":{"message_id":"1049931339989602304","nonce":"a1b2c3d4e5f60718"}}
 ```
 
 #### `edit`
-Own messages only.
+Own messages only: when the target is cached and its author is not the account,
+the backend answers `forbidden` without calling Discord; an uncached target is left
+to Discord to judge.
 - Request: `{channel_id: string, message_id: string, content: string}`
 - Result: `{}` — the updated row arrives as `message_update`.
-- Errors: `channel_not_open`, `unknown_message`, `forbidden`, `discord_error`.
+- Errors: `invalid_argument` (ids, empty/over-long content), `channel_not_open`,
+  `not_logged_in`, `gateway_unavailable`, `unknown_message` (REST 404),
+  `forbidden`, `rate_limited`, `discord_error`.
+
+```json
+{"v":1,"id":32,"command":"edit","channel_id":"1049931213073821696","message_id":"1049931401540221011","content":"on my way!"}
+{"type":"response","v":1,"id":32,"ok":true,"result":{}}
+```
 
 #### `delete`
 - Request: `{channel_id: string, message_id: string}`
 - Result: `{}` — row removal is driven by the `message_delete` event, not the response.
-- Errors: `channel_not_open`, `unknown_message`, `forbidden`, `discord_error`.
+- Errors: `invalid_argument`, `channel_not_open`, `not_logged_in`,
+  `gateway_unavailable`, `unknown_message`, `forbidden`, `rate_limited`,
+  `discord_error`.
 
 #### `react` / `unreact`
 - Request: `{channel_id: string, message_id: string, emoji: string}` — unicode emoji
   or `"name:id"` for custom. The backend strips U+FE0F variation selectors before the
-  REST call (they 400 otherwise).
+  REST call (they 400 otherwise); `"name:id"` must have a non-empty name and a
+  snowflake id.
 - Result: `{}` — reaction state updates arrive via `message_update`.
-- Errors: `channel_not_open`, `unknown_message`, `invalid_argument`, `forbidden`,
-  `discord_error`.
+- Errors: `invalid_argument` (ids, empty or malformed emoji), `channel_not_open`,
+  `not_logged_in`, `gateway_unavailable`, `unknown_message`, `forbidden`,
+  `rate_limited`, `discord_error`.
+
+```json
+{"v":1,"id":34,"command":"react","channel_id":"1049931213073821696","message_id":"1049931339989602304","emoji":"👍"}
+{"v":1,"id":34,"command":"unreact","channel_id":"1049931213073821696","message_id":"1049931339989602304","emoji":"omarchy:1000000000000000099"}
+{"type":"response","v":1,"id":34,"ok":true,"result":{}}
+```
 
 #### `typing`
 Broadcast own typing. The backend throttles to one Discord call per 10 s per channel;
 QML may call freely on keystrokes.
 - Request: `{channel_id: string}`. Result: `{}` (also when throttled).
-- Errors: `channel_not_open`.
+- Errors: `invalid_argument`, `channel_not_open`, `not_logged_in`,
+  `gateway_unavailable`, `rate_limited`, `discord_error` (the latter two only when
+  a call actually went out).
 
 ### Read state
 
@@ -392,32 +457,61 @@ marker. Does not require the channel to be open on this connection.
 ### Media
 
 #### `fetch_media`
-Fetch a Discord CDN URL into the media cache and return a local path. Only
-`cdn.discordapp.com` and `media.discordapp.net` are allowed. Cache lives at
-`$XDG_CACHE_HOME/omarchy-discord/media/` with an LRU cap (`mediaCacheMB` setting).
-- Request: `{url: string, size?: int (power-of-two hint appended as ?size= for
-  avatars/emoji)}`
-- Result — cache hit: `{cached: true, path: "/home/…/media/ab12…"}`; miss:
-  `{cached: false}` with completion pushed later as a `media_ready` event keyed by
-  `url`.
-- Errors: `invalid_argument`, `media_error` (disallowed host, immediately).
+Fetch a Discord CDN URL into the media cache and return a local path. Only `https`
+URLs on `cdn.discordapp.com` and `media.discordapp.net` are fetched, and redirects
+off those hosts are never followed. Cache lives at
+`$XDG_CACHE_HOME/omarchy-discord/media/` (dir 0700, files 0600) with an LRU cap set
+by `set_config {media_cache_mb}` (default 512; oldest-mtime files are evicted after
+each download; a hit refreshes the file's mtime). File names are
+`sha256(url + size)` plus an extension derived from the response content type
+(`.png`/`.jpg`/`.gif`/`.webp`/…, else the URL's own extension, else none).
+- Request: `{url: string, size?: int}` — `size` is appended as `?size=` **only**
+  for `/avatars/`, `/emojis/`, `/icons/`, `/app-icons/`, `/banners/` paths and only
+  when the URL has no query string; it still participates in the cache key, so the
+  same URL at two sizes is two entries.
+- Result — cache hit: `{cached: true, path: "/home/…/media/<sha256>.png"}`; miss:
+  `{cached: false}` (no `path`) with completion pushed later as a `media_ready`
+  event keyed by `url`. Concurrent requests for the same `url`+`size` coalesce into
+  one download and one event; at most 4 downloads run at once.
+- Errors: `invalid_argument` (empty/unparseable url), `media_error` (disallowed
+  host or scheme — immediately; also when the cache dir could not be created at
+  startup).
+
+```json
+{"v":1,"id":40,"command":"fetch_media","url":"https://cdn.discordapp.com/avatars/183627919046737920/a.png","size":64}
+{"type":"response","v":1,"id":40,"ok":true,"result":{"cached":false}}
+{"type":"event","v":1,"event":"media_ready","url":"https://cdn.discordapp.com/avatars/183627919046737920/a.png","ok":true,"path":"/home/m/.cache/omarchy-discord/media/ab12….png","error":""}
+{"type":"response","v":1,"id":41,"ok":true,"result":{"cached":true,"path":"/home/m/.cache/omarchy-discord/media/ab12….png"}}
+```
 
 #### `upload`
 Send a message with file attachments (the clipboard-paste pipeline). Streams the
 files; progress is pushed as `upload_progress` events carrying this request's `id`.
 The response arrives on completion.
-- Request: `{channel_id: string, paths: [string], content?: string,
+- Request: `{channel_id: string, paths: [string] (1–10), content?: string,
   reply_to?: string, spoiler?: bool}`
-- Result: `{message_id: string, nonce: string}`
-- Errors: `channel_not_open`, `invalid_argument` (unreadable path),
-  `upload_too_large` (checked against `DetermineUploadSize` before sending),
-  `forbidden`, `rate_limited`, `discord_error`.
+- Path policy: every path must be **absolute** and name a readable **regular file**
+  (directories, devices, sockets, missing files are `invalid_argument`). Any such
+  path is accepted — the staged dir (`$XDG_RUNTIME_DIR/omarchy-discord/staged/`)
+  is the normal source, but drag-and-drop from anywhere works too. After a
+  **successful** send, files that live under the staged dir are deleted; files
+  elsewhere are never touched; on failure nothing is deleted.
+- Size: the **sum** of the file sizes is checked against
+  `DetermineUploadSize(guild)` before anything is sent (`upload_too_large`, message
+  shows both numbers). `content` may be empty; when present it obeys the `send`
+  length rules. `spoiler: true` prefixes every filename with `SPOILER_` (not doubled
+  if already present). The nonce is generated like `send`.
+- Result: `{message_id: string, nonce: string}` — the response follows the last
+  `upload_progress` event for this request.
+- Errors: `invalid_argument` (ids, empty or >10 paths, bad path), `channel_not_open`,
+  `not_logged_in`, `gateway_unavailable`, `upload_too_large`, `forbidden`,
+  `rate_limited`, `discord_error`.
 
 ```json
 {"v":1,"id":44,"command":"upload","channel_id":"1049931213073821696","paths":["/run/user/1000/omarchy-discord/staged/shot-1.png"],"content":"look at this"}
 {"type":"event","v":1,"event":"upload_progress","upload_id":44,"filename":"shot-1.png","bytes_sent":262144,"bytes_total":1048576}
 {"type":"event","v":1,"event":"upload_progress","upload_id":44,"filename":"shot-1.png","bytes_sent":1048576,"bytes_total":1048576}
-{"type":"response","v":1,"id":44,"ok":true,"result":{"message_id":"1049931401540221011","nonce":"e5f6a7b8"}}
+{"type":"response","v":1,"id":44,"ok":true,"result":{"message_id":"1049931401540221011","nonce":"e5f6a7b8c9d0e1f2"}}
 ```
 
 ---
@@ -500,22 +594,34 @@ actually changed. Because ningen raises these on its own goroutine, a
 
 ### `media_ready`
 `{url: string, ok: bool, path: string ("" on failure), error: string ("" on
-success, redacted)}` — completion of a `fetch_media` cache miss. Keyed by `url`;
-multiple pending requests for the same URL coalesce into one event.
+success, redacted)}` — completion of a `fetch_media` cache miss, delivered to
+**every** connection. `url` is exactly the string passed to `fetch_media` (not the
+`?size=`-decorated one). Multiple pending requests for the same URL+size coalesce
+into one event; two different sizes of one URL produce two events with the same
+`url`, so a client that requests several sizes must expect either to arrive. The
+`error` text never contains the URL.
 
 ### `upload_progress`
-`{upload_id: int (the originating request id), filename: string, bytes_sent: int,
-bytes_total: int}` — emitted from a counting reader wrapping each file as the
-multipart body streams; final event has `bytes_sent == bytes_total`. Frequency capped
-(≥100 ms between events per upload).
+`{upload_id: int (the originating request id), filename: string (as sent, i.e.
+with any `SPOILER_` prefix), bytes_sent: int, bytes_total: int}` — emitted from a
+counting reader wrapping each file as the multipart body streams, **only to the
+connection that issued the `upload`**; one series per file, each ending with
+`bytes_sent == bytes_total`. Frequency capped (≥100 ms between events per file; the
+final event is always sent). All progress events precede the response.
 
 ### QR login events
 
 #### `qr_code`
-`{url: string, fingerprint: string, expires_in_ms: int}` — the remote-auth gateway
-issued a fingerprint; `url` is `https://discord.com/ra/<fingerprint>`, which the panel
-renders as a QR. Fires after `start_qr_login`, and again with a fresh code if the
-backend reconnects after expiry while the flow is still wanted.
+`{url: string, fingerprint: string, expires_in_ms: int, image_path: string}` — the
+remote-auth gateway issued a fingerprint; `url` is
+`https://discord.com/ra/<fingerprint>`. `image_path` is a 512×512 PNG rendering of
+`url` at `$XDG_RUNTIME_DIR/omarchy-discord/qr.png` (mode 0600) that the panel can
+show directly (`Image { source: "file://" + image_path; cache: false }`); it is
+rewritten on every `qr_code` and **deleted when the flow ends** (approved,
+cancelled, expired, failed), so reload it per event and do not keep the path
+around. `image_path` is `""` if the PNG could not be written (render the `url`
+yourself). Fires once per `start_qr_login`; expiry does **not** auto-refresh — see
+`qr_cancelled`.
 
 #### `qr_scanned`
 `{user: {id, username, discriminator, avatar_hash}}` — the phone scanned the code
@@ -523,17 +629,22 @@ backend reconnects after expiry while the flow is still wanted.
 confirm on your phone".
 
 #### `qr_approved`
-`{}` — the user confirmed on the phone; the backend exchanged the ticket
-(`ExchangeRemoteAuthTicket`), decrypted the token, stored it in the keyring, and is
-connecting. Followed by `state_changed` events (`connecting` → `ready`). The token
-itself never appears on the socket.
+`{}` — the user confirmed on the phone. The backend then exchanges the ticket
+(`ExchangeRemoteAuthTicket`), decrypts the token, stores it in the keyring, and
+connects exactly like `login`: `state_changed` events follow (`connecting` →
+`ready`). If the exchange fails after this event, a `qr_cancelled {reason:"error"}`
+follows instead. A keyring store failure is logged only (the session is still live
+for this process); the token itself never appears on the socket.
 
 #### `qr_cancelled`
 `{reason: "declined"|"expired"|"cancelled"|"error", error: string (redacted, ""
-unless reason is "error")}` — the flow ended without login. Lifecycle returns to
-`logged_out`. `expired` fires when the hello `timeout_ms` (~2 min) lapses without a
-scan and the client did not keep the flow alive; call `start_qr_login` again for a
-fresh code.
+unless reason is "error")}` — the flow ended without login, after at least one
+`qr_code` was issued (a failure before the first code is reported only as the
+`qr_unavailable` response to `start_qr_login`). A `state_changed` follows,
+returning the lifecycle to `logged_out` (or `reauth_needed` if that is where the
+flow started). `expired` fires when the hello `timeout_ms` (~2 min) lapses without
+approval; there is no auto-restart — call `start_qr_login` again for a fresh code.
+`cancelled` is the result of `cancel_qr_login` (or backend shutdown).
 
 ---
 

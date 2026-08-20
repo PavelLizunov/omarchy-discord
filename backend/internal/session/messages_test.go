@@ -20,8 +20,9 @@ import (
 
 // fakeClient stands in for the socket connection's open-channel set.
 type fakeClient struct {
-	mu   sync.Mutex
-	open map[string]bool
+	mu     sync.Mutex
+	open   map[string]bool
+	pushed []any
 }
 
 func newFakeClient() *fakeClient { return &fakeClient{open: map[string]bool{}} }
@@ -41,6 +42,16 @@ func (f *fakeClient) HasOpen(id string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.open[id]
+}
+func (f *fakeClient) Push(ev any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pushed = append(f.pushed, ev)
+}
+func (f *fakeClient) events() []any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]any(nil), f.pushed...)
 }
 
 const (
@@ -522,6 +533,19 @@ func nextUnrouted(t *testing.T, m *Manager) any {
 	}
 }
 
+// noUnrouted asserts no state/read-state event arrives; the routed
+// message_create may still be in flight (see nextUnrouted).
+func noUnrouted(t *testing.T, m *Manager) {
+	t.Helper()
+	select {
+	case ev := <-m.Events():
+		if _, ok := ev.(socket.Routed); !ok {
+			t.Fatalf("unexpected event %#v", ev)
+		}
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
 func TestReadStateChangedFunnel(t *testing.T) {
 	m, n := readyManager(t)
 	// A new message in #general (read, 0 mentions) → unread, total unchanged (3).
@@ -531,7 +555,7 @@ func TestReadStateChangedFunnel(t *testing.T) {
 	if !ok || rs.ChannelID != "300000000000000002" || !rs.Unread || rs.MentionCount != 0 || rs.TotalMentionCount != 3 || rs.GuildID == nil {
 		t.Fatalf("read_state_changed: %#v", ev)
 	}
-	noEvent(t, m) // total unchanged → no state_changed
+	noUnrouted(t, m) // total unchanged → no state_changed
 
 	// A mention bumps the total and emits state_changed after the read event.
 	msg := guildMsg(2, "<@100000000000000001>")
@@ -565,11 +589,11 @@ func TestReadStateChangedFunnel(t *testing.T) {
 	if e := call(`{"v":1,"id":2,"command":"ack","channel_id":"300000000000000002","message_id":"600000000000000002"}`); e != nil {
 		t.Fatal(e)
 	}
-	rs = nextEvent(t, m).(protocol.ReadStateChangedEvent)
+	rs = nextUnrouted(t, m).(protocol.ReadStateChangedEvent)
 	if rs.Unread || rs.MentionCount != 0 || rs.LastReadMessageID == nil || *rs.LastReadMessageID != "600000000000000002" || rs.TotalMentionCount != 3 {
 		t.Fatalf("ack read state: %+v", rs)
 	}
-	if st := nextEvent(t, m).(protocol.StateChangedEvent).State; st.TotalMentionCount != 3 {
+	if st := nextUnrouted(t, m).(protocol.StateChangedEvent).State; st.TotalMentionCount != 3 {
 		t.Fatalf("state after ack: %+v", st)
 	}
 

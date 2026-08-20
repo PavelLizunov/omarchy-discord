@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/diamondburned/ningen/v3/states/read"
 
 	"github.com/mattcalayo/omarchy-discord/backend/internal/keyring"
+	"github.com/mattcalayo/omarchy-discord/backend/internal/media"
 	"github.com/mattcalayo/omarchy-discord/backend/internal/protocol"
 	"github.com/mattcalayo/omarchy-discord/backend/internal/redact"
 )
@@ -62,6 +64,21 @@ type Manager struct {
 	// replace them to avoid the network.
 	fetchTail   func(ctx context.Context, n *ningen.State, chID discord.ChannelID, limit uint) ([]discord.Message, error)
 	fetchBefore func(ctx context.Context, n *ningen.State, chID discord.ChannelID, before discord.MessageID, limit uint) ([]discord.Message, error)
+	// rest holds the write calls; now is the clock for throttles/progress.
+	rest restOps
+	now  func() time.Time
+	// runQR / newState / qrWait are the QR login seams.
+	runQR    qrRunner
+	newState func(token string) *ningen.State
+	qrWait   time.Duration
+
+	typers typingThrottle
+	// media is the media cache (nil until Configure; fetch_media then fails).
+	media *media.Cache
+	// stagedDir is where QML stages pasted uploads; files under it are
+	// removed after a successful upload. qrPath is the rendered QR image.
+	stagedDir string
+	qrPath    string
 
 	mu         sync.Mutex
 	lifecycle  string
@@ -77,6 +94,7 @@ type Manager struct {
 	everReady bool
 	cancel    context.CancelFunc
 	loopDone  chan struct{}
+	qr        *qrFlow
 }
 
 // New creates a manager in the `starting` lifecycle.
@@ -84,7 +102,17 @@ func New(kr Keyring) *Manager {
 	m := &Manager{kr: kr, events: make(chan any, 1024), lifecycle: protocol.LifecycleStarting, generation: 1}
 	m.runLoop = m.loop
 	m.fetchTail, m.fetchBefore = fetchTail, fetchBefore
+	m.rest, m.now = liveREST(), time.Now
+	m.runQR, m.newState, m.qrWait = liveQR, defaultNewState, qrFirstCodeWait
 	return m
+}
+
+// Configure sets the runtime directory (staged uploads, QR image) and the
+// media cache. Call before Start.
+func (m *Manager) Configure(runtimeDir string, cache *media.Cache) {
+	m.stagedDir = filepath.Join(runtimeDir, "staged")
+	m.qrPath = qrImagePath(runtimeDir)
+	m.media = cache
 }
 
 // Events yields state_changed / guilds_synced events in the order they were
@@ -157,6 +185,9 @@ func (m *Manager) Start(ctx context.Context) {
 
 // Stop closes the gateway and waits for the connect loop.
 func (m *Manager) Stop() {
+	if m.qrRunning() {
+		m.CancelQRLogin()
+	}
 	m.opMu.Lock()
 	defer m.opMu.Unlock()
 	m.mu.Lock()
@@ -433,6 +464,9 @@ func (m *Manager) Handle(ctx context.Context, req *protocol.Request) (any, *prot
 		if p.Token == "" {
 			return nil, protocol.Errorf(protocol.CodeInvalidArgument, "token is required")
 		}
+		if m.qrRunning() {
+			return nil, protocol.Errorf(protocol.CodeQRUnavailable, "a QR login is in progress; cancel it first")
+		}
 		res, e := m.Login(ctx, p.Token)
 		if e != nil {
 			return nil, e
@@ -488,6 +522,36 @@ func (m *Manager) Handle(ctx context.Context, req *protocol.Request) (any, *prot
 		return m.history(ctx, req)
 	case "ack":
 		return m.ack(req)
+	case "send":
+		return m.send(ctx, req)
+	case "edit":
+		return m.edit(ctx, req)
+	case "delete":
+		return m.deleteMessage(ctx, req)
+	case "react":
+		return m.react(ctx, req, true)
+	case "unreact":
+		return m.react(ctx, req, false)
+	case "typing":
+		return m.typing(ctx, req)
+	case "set_presence":
+		return m.setPresence(req)
+	case "upload":
+		return m.upload(ctx, req)
+	case "fetch_media":
+		return m.fetchMedia(ctx, req)
+	case "set_config":
+		return m.setConfig(req)
+	case "start_qr_login":
+		if e := m.StartQRLogin(ctx); e != nil {
+			return nil, e
+		}
+		return protocol.EmptyResult{}, nil
+	case "cancel_qr_login":
+		if e := m.CancelQRLogin(); e != nil {
+			return nil, e
+		}
+		return protocol.EmptyResult{}, nil
 	case "list_dms":
 		n, e := m.cachedSession()
 		if e != nil {

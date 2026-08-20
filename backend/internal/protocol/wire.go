@@ -1,5 +1,7 @@
 package protocol
 
+import "github.com/mattcalayo/omarchy-discord/backend/internal/redact"
+
 // Lifecycle values carried in State.Lifecycle.
 const (
 	LifecycleStarting     = "starting"
@@ -306,4 +308,146 @@ func NewTypingStart(channelID string, guildID *string, userID, displayName, time
 // NewReadStateChanged builds a read_state_changed event.
 func NewReadStateChanged(channelID string, guildID *string, unread bool, mentions int, lastRead *string, total int) ReadStateChangedEvent {
 	return ReadStateChangedEvent{EventHeader: header("read_state_changed"), ChannelID: channelID, GuildID: guildID, Unread: unread, MentionCount: mentions, LastReadMessageID: lastRead, TotalMentionCount: total}
+}
+
+// Phase 2 parameter shapes: messaging, presence, media, upload, QR, config.
+type (
+	SendParams struct {
+		ChannelID string `json:"channel_id"`
+		Content   string `json:"content"`
+		ReplyTo   string `json:"reply_to"`
+		// ReplyMention defaults to true when absent.
+		ReplyMention *bool `json:"reply_mention"`
+	}
+	EditParams struct {
+		ChannelID string `json:"channel_id"`
+		MessageID string `json:"message_id"`
+		Content   string `json:"content"`
+	}
+	DeleteParams struct {
+		ChannelID string `json:"channel_id"`
+		MessageID string `json:"message_id"`
+	}
+	ReactParams struct {
+		ChannelID string `json:"channel_id"`
+		MessageID string `json:"message_id"`
+		Emoji     string `json:"emoji"`
+	}
+	TypingParams struct {
+		ChannelID string `json:"channel_id"`
+	}
+	SetPresenceParams struct {
+		Status string `json:"status"`
+	}
+	FetchMediaParams struct {
+		URL  string `json:"url"`
+		Size int    `json:"size"`
+	}
+	UploadParams struct {
+		ChannelID string   `json:"channel_id"`
+		Paths     []string `json:"paths"`
+		Content   string   `json:"content"`
+		ReplyTo   string   `json:"reply_to"`
+		Spoiler   bool     `json:"spoiler"`
+	}
+	SetConfigParams struct {
+		// MediaCacheMB is the media cache size cap; nil leaves it unchanged.
+		MediaCacheMB *int `json:"media_cache_mb"`
+	}
+)
+
+// Phase 2 result shapes.
+type (
+	SendResult struct {
+		MessageID string `json:"message_id"`
+		Nonce     string `json:"nonce"`
+	}
+	FetchMediaResult struct {
+		Cached bool `json:"cached"`
+		// Path is present only on a hit.
+		Path string `json:"path,omitempty"`
+	}
+)
+
+// QRUser is the account that scanned a QR code (qr_scanned).
+type QRUser struct {
+	ID            string `json:"id"`
+	Username      string `json:"username"`
+	Discriminator string `json:"discriminator"`
+	AvatarHash    string `json:"avatar_hash"`
+}
+
+// QR cancel reasons.
+const (
+	QRReasonDeclined  = "declined"
+	QRReasonExpired   = "expired"
+	QRReasonCancelled = "cancelled"
+	QRReasonError     = "error"
+)
+
+// Phase 2 event shapes.
+type (
+	MediaReadyEvent struct {
+		EventHeader
+		URL   string `json:"url"`
+		OK    bool   `json:"ok"`
+		Path  string `json:"path"`
+		Error string `json:"error"`
+	}
+	UploadProgressEvent struct {
+		EventHeader
+		UploadID   int64  `json:"upload_id"`
+		Filename   string `json:"filename"`
+		BytesSent  int64  `json:"bytes_sent"`
+		BytesTotal int64  `json:"bytes_total"`
+	}
+	QRCodeEvent struct {
+		EventHeader
+		URL         string `json:"url"`
+		Fingerprint string `json:"fingerprint"`
+		ExpiresInMS int64  `json:"expires_in_ms"`
+		// ImagePath is a PNG rendering of URL, written for the panel; it is
+		// removed when the flow ends.
+		ImagePath string `json:"image_path"`
+	}
+	QRScannedEvent struct {
+		EventHeader
+		User QRUser `json:"user"`
+	}
+	QRApprovedEvent struct {
+		EventHeader
+	}
+	QRCancelledEvent struct {
+		EventHeader
+		Reason string `json:"reason"`
+		Error  string `json:"error"`
+	}
+)
+
+// NewMediaReady builds a media_ready event; errText is redacted.
+func NewMediaReady(url string, ok bool, path, errText string) MediaReadyEvent {
+	return MediaReadyEvent{EventHeader: header("media_ready"), URL: url, OK: ok, Path: path, Error: redact.Redact(errText)}
+}
+
+// NewUploadProgress builds an upload_progress event.
+func NewUploadProgress(uploadID int64, filename string, sent, total int64) UploadProgressEvent {
+	return UploadProgressEvent{EventHeader: header("upload_progress"), UploadID: uploadID, Filename: filename, BytesSent: sent, BytesTotal: total}
+}
+
+// NewQRCode builds a qr_code event.
+func NewQRCode(url, fingerprint string, expiresInMS int64, imagePath string) QRCodeEvent {
+	return QRCodeEvent{EventHeader: header("qr_code"), URL: url, Fingerprint: fingerprint, ExpiresInMS: expiresInMS, ImagePath: imagePath}
+}
+
+// NewQRScanned builds a qr_scanned event.
+func NewQRScanned(u QRUser) QRScannedEvent {
+	return QRScannedEvent{EventHeader: header("qr_scanned"), User: u}
+}
+
+// NewQRApproved builds a qr_approved event.
+func NewQRApproved() QRApprovedEvent { return QRApprovedEvent{EventHeader: header("qr_approved")} }
+
+// NewQRCancelled builds a qr_cancelled event; errText is redacted.
+func NewQRCancelled(reason, errText string) QRCancelledEvent {
+	return QRCancelledEvent{EventHeader: header("qr_cancelled"), Reason: reason, Error: redact.Redact(errText)}
 }
