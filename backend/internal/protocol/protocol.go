@@ -70,8 +70,9 @@ func (r *Request) Params(dst any) *Error {
 func (r *Request) Raw() []byte { return r.raw }
 
 // DecodeRequest parses one request line. A parse failure yields an
-// invalid_request error; a version mismatch yields unsupported_version with the
-// request's id preserved when it could be read.
+// invalid_request error with no request (the id is unknowable); a parseable
+// line with a bad version or missing command returns the request alongside the
+// error so the caller can echo its id.
 func DecodeRequest(line []byte) (*Request, *Error) {
 	var req Request
 	if err := json.Unmarshal(line, &req); err != nil {
@@ -118,14 +119,15 @@ func header(name string) EventHeader {
 	return EventHeader{Type: "event", V: Version, Event: name}
 }
 
-// Encode serializes one wire object as a single redacted JSON line including
-// the trailing newline.
+// Encode serializes one wire object as a single JSON line including the
+// trailing newline. Redaction happens at the text sources (Errorf, the state
+// error field, logs), not here: running regexes over a serialized line can
+// match across fields and produce invalid JSON.
 func Encode(v any) ([]byte, error) {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return nil, err
 	}
-	b = []byte(redact.Redact(string(b)))
 	return append(b, '\n'), nil
 }
 

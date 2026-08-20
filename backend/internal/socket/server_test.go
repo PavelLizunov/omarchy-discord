@@ -28,7 +28,7 @@ func (f *fakeBackend) Snapshot() []any {
 	evs := []any{protocol.NewStateChanged(st)}
 	if f.ready {
 		st.Lifecycle = protocol.LifecycleReady
-		evs = []any{protocol.NewStateChanged(st), protocol.NewGuildsSynced([]protocol.Guild{{ID: "1", Name: "g", Unread: "read"}}, nil)}
+		evs = []any{protocol.NewStateChanged(st), protocol.NewGuildsSynced(1, []protocol.Guild{{ID: "1", Name: "g", Unread: "read"}}, nil)}
 	}
 	return evs
 }
@@ -173,6 +173,12 @@ func TestMalformedAndUnknownAndVersion(t *testing.T) {
 		t.Fatalf("malformed: %v", m)
 	}
 
+	fmt.Fprint(c, `{"v":1,"id":4}`+"\n")
+	m = next(t, sc)
+	if m["id"] != float64(4) || m["error"].(map[string]any)["code"] != "invalid_request" {
+		t.Fatalf("missing command must echo id: %v", m)
+	}
+
 	fmt.Fprint(c, `{"v":1,"id":5,"command":"send","content":"x"}`+"\n")
 	m = next(t, sc)
 	if m["id"] != float64(5) || m["error"].(map[string]any)["code"] != "unknown_command" {
@@ -212,4 +218,35 @@ func TestOutOfOrderResponsesAndBroadcastFanOut(t *testing.T) {
 			t.Fatalf("broadcast: %v", m)
 		}
 	}
+}
+
+// The snapshot's lines are never interleaved with broadcast events, even under
+// concurrent connects and broadcasts.
+func TestSnapshotNotInterleavedByBroadcasts(t *testing.T) {
+	srv, _ := startServer(t, &fakeBackend{ready: true})
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+				srv.Broadcast(protocol.NewStateChanged(protocol.State{Lifecycle: protocol.LifecycleReady, Generation: int64(100 + i)}))
+			}
+		}
+	}()
+	for i := 0; i < 20; i++ {
+		_, sc := dial(t, srv)
+		if m := next(t, sc); m["event"] != "state_changed" || m["state"].(map[string]any)["generation"] != float64(1) {
+			t.Fatalf("conn %d: first line %v", i, m)
+		}
+		if m := next(t, sc); m["event"] != "guilds_synced" || m["generation"] != float64(1) {
+			t.Fatalf("conn %d: second line %v", i, m)
+		}
+	}
+	close(stop)
+	wg.Wait()
 }

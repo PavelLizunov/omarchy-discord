@@ -3,19 +3,23 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/diamondburned/arikawa/v3/utils/ws"
+	"github.com/diamondburned/ningen/v3"
 
 	"github.com/mattcalayo/omarchy-discord/backend/internal/keyring"
 	"github.com/mattcalayo/omarchy-discord/backend/internal/protocol"
 )
 
 type fakeKeyring struct {
-	token  string
-	clears int
-	stores []string
+	token    string
+	clears   int
+	stores   []string
+	storeErr error
 }
 
 func (f *fakeKeyring) Lookup(context.Context) (string, error) {
@@ -25,6 +29,9 @@ func (f *fakeKeyring) Lookup(context.Context) (string, error) {
 	return f.token, nil
 }
 func (f *fakeKeyring) Store(_ context.Context, t string) error {
+	if f.storeErr != nil {
+		return f.storeErr
+	}
 	f.stores = append(f.stores, t)
 	f.token = t
 	return nil
@@ -116,6 +123,10 @@ func TestLifecycleFromFixture(t *testing.T) {
 	if len(gs.Guilds) != 2 || len(gs.DMs) != 2 {
 		t.Fatalf("guilds_synced: %+v", gs)
 	}
+	// Structure carries a generation newer than the state that preceded it.
+	if gs.Generation <= st.Generation {
+		t.Fatalf("guilds_synced generation %d not after state generation %d", gs.Generation, st.Generation)
+	}
 	b, _ := json.Marshal(gs)
 	var m2 map[string]any
 	json.Unmarshal(b, &m2)
@@ -126,6 +137,13 @@ func TestLifecycleFromFixture(t *testing.T) {
 	snap := m.Snapshot()
 	if len(snap) != 2 {
 		t.Fatalf("snapshot %+v", snap)
+	}
+	// A connect-time snapshot is stamped with the current generation, so a
+	// client can discard the (older) guilds_synced still in flight from the
+	// event channel.
+	snapState, snapGS := snap[0].(protocol.StateChangedEvent).State, snap[1].(protocol.GuildsSyncedEvent)
+	if snapGS.Generation != snapState.Generation || snapGS.Generation < gs.Generation {
+		t.Fatalf("snapshot generations: state %d guilds %d (event %d)", snapState.Generation, snapGS.Generation, gs.Generation)
 	}
 	res, e := m.Handle(context.Background(), req(t, `{"v":1,"id":1,"command":"list_channels","guild_id":"200000000000000001"}`))
 	if e != nil || len(res.(protocol.ListChannelsResult).Channels) != 5 {
@@ -168,4 +186,104 @@ func TestLifecycleFromFixture(t *testing.T) {
 	if kr.clears != 1 {
 		t.Fatalf("keyring clears = %d", kr.clears)
 	}
+}
+
+// stubLoops replaces the network connect loop: each loop just waits for its
+// context to be cancelled and records that it was torn down.
+type stubLoops struct {
+	mu        sync.Mutex
+	cancelled map[*ningen.State]bool
+}
+
+func (s *stubLoops) run(ctx context.Context, n *ningen.State, done chan struct{}) {
+	defer close(done)
+	<-ctx.Done()
+	s.mu.Lock()
+	s.cancelled[n] = true
+	s.mu.Unlock()
+}
+
+// Two concurrent session replacements must leave exactly one live session, with
+// the other one closed — never two loops running or a live session orphaned.
+func TestConcurrentLoginKeepsOneSession(t *testing.T) {
+	m := New(&fakeKeyring{})
+	loops := &stubLoops{cancelled: map[*ningen.State]bool{}}
+	m.runLoop = loops.run
+	n1, _ := newUnopenedState(t)
+	n2, _ := newUnopenedState(t)
+
+	var wg sync.WaitGroup
+	for _, n := range []*ningen.State{n1, n2} {
+		wg.Add(1)
+		go func(n *ningen.State) {
+			defer wg.Done()
+			m.replaceSession(n, "tok")
+		}(n)
+	}
+	wg.Wait()
+
+	m.mu.Lock()
+	live := m.n
+	m.mu.Unlock()
+	if live != n1 && live != n2 {
+		t.Fatalf("no live session: %p", live)
+	}
+	loser := n1
+	if live == n1 {
+		loser = n2
+	}
+	loops.mu.Lock()
+	defer loops.mu.Unlock()
+	if !loops.cancelled[loser] {
+		t.Fatalf("losing session was not torn down")
+	}
+	if loops.cancelled[live] {
+		t.Fatalf("surviving session was torn down")
+	}
+	t.Cleanup(m.Stop)
+}
+
+// Replacing a live session resets the per-account state before the new
+// session reports ready, and always emits a state_changed.
+func TestReplacementResetsUserState(t *testing.T) {
+	m := New(&fakeKeyring{})
+	loops := &stubLoops{cancelled: map[*ningen.State]bool{}}
+	m.runLoop = loops.run
+	n1, ready := newUnopenedState(t)
+	m.replaceSession(n1, "tok")
+	nextEvent(t, m) // connecting
+	dispatch(n1, ready)
+	if st := nextEvent(t, m).(protocol.StateChangedEvent).State; st.User == nil || st.TotalMentionCount != 3 {
+		t.Fatalf("ready state: %+v", st)
+	}
+	nextEvent(t, m) // guilds_synced
+
+	n2, _ := newUnopenedState(t)
+	m.replaceSession(n2, "tok2")
+	st := nextEvent(t, m).(protocol.StateChangedEvent).State
+	if st.Lifecycle != protocol.LifecycleConnecting || st.User != nil || st.Presence != "" || st.TotalMentionCount != 0 || st.UnreadDMChannelID != nil {
+		t.Fatalf("state after replacement: %+v", st)
+	}
+	t.Cleanup(m.Stop)
+}
+
+// A keyring store failure still yields a live session; the result says so.
+func TestLoginResultReportsKeyringFailure(t *testing.T) {
+	kr := &fakeKeyring{storeErr: errors.New("secret-tool: no collection")}
+	m := New(kr)
+	loops := &stubLoops{cancelled: map[*ningen.State]bool{}}
+	m.runLoop = loops.run
+	n, _ := newUnopenedState(t)
+	res := m.finishLogin(context.Background(), n, "tok", protocol.User{ID: "1"})
+	if res.KeyringStored || res.User.ID != "1" {
+		t.Fatalf("%+v", res)
+	}
+	if st := nextEvent(t, m).(protocol.StateChangedEvent).State; st.Lifecycle != protocol.LifecycleConnecting {
+		t.Fatalf("%+v", st)
+	}
+	kr.storeErr = nil
+	if res := m.finishLogin(context.Background(), n, "tok", protocol.User{ID: "1"}); !res.KeyringStored || kr.token != "tok" {
+		t.Fatalf("%+v", res)
+	}
+	t.Cleanup(m.Stop)
 }

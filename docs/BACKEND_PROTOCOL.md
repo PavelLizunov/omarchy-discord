@@ -5,9 +5,11 @@ discipline as the quickshell.spotify backend protocol; the event model deliberat
 departs (granular events instead of full-state-only — a chat timeline cannot be a
 single snapshot).
 
-- Socket: `$XDG_RUNTIME_DIR/omarchy-discord/backend.sock` (fallback
-  `/run/user/<uid>/...`). Parent dir created; stale socket file unlinked before bind;
-  socket `chmod 0600`; removed on clean shutdown. Overridable via `--socket-path`.
+- Socket: `$XDG_RUNTIME_DIR/omarchy-discord/backend.sock`. When `XDG_RUNTIME_DIR` is
+  unset, backend **and** client use the single shared fallback
+  `/run/user/<uid>/omarchy-discord/backend.sock` — never `/tmp`. Parent dir created;
+  stale socket file unlinked before bind; socket `chmod 0600`; removed on clean
+  shutdown. Overridable via `--socket-path`.
 - Transport: UTF-8 JSON, **one object per line**, `\n`-terminated. No pretty-printing.
 - The backend is the single source of truth; QML holds a mirror, never authoritative
   state.
@@ -43,13 +45,16 @@ Rules:
 
 - Responses may arrive out of request order; correlation is by `id` only. Long-running
   commands (`upload`, `history` on a cold channel) keep the connection usable.
-- A malformed request line is answered with `invalid_request` and **`id: 0`** (the real
-  id is unknowable); clients must tolerate responses whose id matches no pending request.
+- A request line that fails to parse is answered with `invalid_request` and **`id: 0`**
+  (the real id is unknowable); clients must tolerate responses whose id matches no
+  pending request. A line that parses but has a missing/empty `command` is also
+  `invalid_request`, with its `id` echoed so the pending request can be failed.
 - All snowflakes (guild/channel/message/user ids) are **strings** on the wire —
   64-bit integers do not survive QML/JS number round-trips.
 - Timestamps are RFC 3339 UTC strings (`"2026-08-20T14:03:22.117Z"`).
-- All `error.message` strings and the state `error` field are redacted before
-  serialization; internal sequencing fields never appear on the wire.
+- All `error.message` strings and the state `error` field are redacted at the point
+  they are built; user content (names, topics, message text) is never altered by
+  redaction. Internal sequencing fields never appear on the wire.
 
 ## Versioning
 
@@ -71,19 +76,28 @@ On every client connect, before reading any request, the backend pushes:
 Thereafter events are pushed as things change. A client can force a refresh at any
 time with `get_state` / `list_guilds`.
 
+Both `state` and `guilds_synced` carry `generation`, one monotonically increasing
+counter bumped on every state or structure change. A snapshot is a consistent cut at
+the current generation, but an event produced *before* the snapshot may still be
+delivered after it (events reach the socket asynchronously). Clients keep the highest
+generation seen across both events and **discard any `state_changed` or
+`guilds_synced` whose generation is lower than it**. Equal generations (the two
+snapshot lines) are applied. A snapshot's two lines are never interleaved with other
+events.
+
 ## Error codes (stable, machine-readable)
 
 | code | meaning |
 |---|---|
-| `invalid_request` | request line failed to parse; answered with id 0 |
+| `invalid_request` | request line failed to parse (answered with id 0) or parsed without a `command` (id echoed) |
 | `unsupported_version` | `v != 1` |
 | `unknown_command` | `command` is not (yet) implemented by this backend |
 | `invalid_argument` | known command, missing/ill-typed field |
 | `serialization_error` | internal failure serializing a result/snapshot |
-| `not_logged_in` | command needs a session and lifecycle is `logged_out`/`reauth_needed` |
+| `not_logged_in` | no session exists (`starting`, `logged_out`, `error` without a token). `reauth_needed` keeps its cached session and does **not** produce this for read-only structure commands |
 | `login_failed` | token rejected at login (invalid/revoked) |
 | `qr_unavailable` | remote-auth gateway unreachable or flow already running |
-| `gateway_unavailable` | logged in but gateway currently disconnected; retry later |
+| `gateway_unavailable` | a session exists but has not processed its first READY (`connecting` after login/start) — structure is not yet known; for write commands, also when the gateway is currently disconnected. Retry later |
 | `unknown_guild` | guild id not in session state |
 | `unknown_channel` | channel id not visible to this account |
 | `unknown_message` | message id not found in the channel |
@@ -115,7 +129,10 @@ time with `get_state` / `list_guilds`.
 `reauth_needed` semantics: entered when the gateway closes with a fatal code
 (4004/4010–4014 — token invalid) or a REST 401. The backend drops the in-memory token,
 clears the keyring entry, stays running, and keeps serving structure from cache
-read-only. Recovery is `login` or `start_qr_login`. Transient disconnects surface as
+read-only (`list_guilds` / `list_channels` / `list_dms` succeed). Recovery is `login` or `start_qr_login`. A new `login` resets
+`user`, `presence`, `total_mention_count`, and `unread_dm_channel_id` to their
+pre-ready values (null / `""` / 0 / null) in the `connecting` state it emits, even
+when it replaces a live session. Transient disconnects surface as
 `connecting`, never `reauth_needed`; QML should apply a ~3 s grace before showing
 reconnect UI.
 
@@ -132,8 +149,9 @@ name, topic (string), parent_id (string|null), position (int),
 last_message_id (string|null), unread ("read"|"unread"|"mentioned"),
 mention_count (int), muted (bool)}`
 
-For DMs, `name` is the recipient display name (group DMs: joined names or set name)
-and `recipients` (`[{id, username, display_name, avatar_url}]`) is present.
+`recipients` (`[{id, username, display_name, avatar_url}]`) is always present: the
+members for `dm`/`group_dm` (possibly empty), `[]` for guild channels. For DMs, `name`
+is the recipient display name (group DMs: joined names or set name).
 
 ### `message`
 
@@ -178,16 +196,21 @@ Answered in the socket layer without touching the session.
 - Result: the full `state` object. Errors: `serialization_error`.
 
 #### `login`
-Log in with a pasted user token. The token is written to the keyring (stdin path) on
-success and held in memory; this request line is exempt from all logging.
+Log in with a pasted user token. The token is validated (REST `/users/@me`), written
+to the keyring (stdin path), and held in memory; this request line is exempt from all
+logging. Any existing session (live or `reauth_needed`) is replaced; concurrent
+`login`/`logout` requests are serialized so exactly one session survives.
 - Request: `{token: string}`
-- Result: `{user: {id, username, display_name, avatar_url}}` — lifecycle proceeds
-  `connecting` → `ready` via `state_changed` events.
+- Result: `{user: {id, username, display_name, avatar_url}, keyring_stored: bool}` —
+  lifecycle proceeds `connecting` → `ready` via `state_changed` events.
+  `keyring_stored: false` means the session is live for this process but the token
+  could not be persisted (the user must log in again after a restart); the client
+  should surface a warning.
 - Errors: `invalid_argument`, `login_failed`, `qr_unavailable` (QR flow in progress).
 
 ```json
 {"v":1,"id":4,"command":"login","token":"<redacted>"}
-{"type":"response","v":1,"id":4,"ok":true,"result":{"user":{"id":"183627919046737920","username":"m","display_name":"m","avatar_url":"https://cdn.discordapp.com/avatars/..."}}}
+{"type":"response","v":1,"id":4,"ok":true,"result":{"user":{"id":"183627919046737920","username":"m","display_name":"m","avatar_url":"https://cdn.discordapp.com/avatars/..."},"keyring_stored":true}}
 ```
 
 #### `logout`
@@ -216,20 +239,25 @@ as the gateway session is established.
 
 ### Structure
 
+Structure commands read the session cache. They succeed in `ready` and in
+`reauth_needed` (cached, read-only); before the first READY of a session they return
+`gateway_unavailable`; with no session at all, `not_logged_in`.
+
 #### `list_guilds`
 - Result: `{guilds: [guild]}` sorted by user's guild order.
-- Errors: `not_logged_in`.
+- Errors: `not_logged_in`, `gateway_unavailable`.
 
 #### `list_channels`
 - Request: `{guild_id: string}`
 - Result: `{channels: [channel]}` — permission-filtered, empty categories removed,
   category-grouped display order (ningen `Channels(guildID, allowedTypes)`).
-- Errors: `not_logged_in`, `unknown_guild`.
+- Errors: `not_logged_in`, `gateway_unavailable`, `invalid_argument` (non-snowflake
+  id), `unknown_guild`.
 
 #### `list_dms`
 - Result: `{channels: [channel]}` sorted by `last_message_id` desc (ningen
   `PrivateChannels`).
-- Errors: `not_logged_in`.
+- Errors: `not_logged_in`, `gateway_unavailable`.
 
 #### `quick_switch`
 Fuzzy match over channels and DMs for the Ctrl+K switcher.
@@ -366,9 +394,12 @@ connection, event order is the order the backend processed them (ningen's
 are not re-sent. This is the only event a client is guaranteed before `ready`.
 
 ### `guilds_synced`
-`{guilds: [guild], dms: [channel]}` — the complete structure. Fires after READY
-processing completes (including reconnect/resume), and on guild join/leave/reorder.
-QML replaces its whole structure mirror on receipt.
+`{generation: int, guilds: [guild], dms: [channel]}` — the complete structure. Fires
+after READY processing completes (including reconnect/resume), and on guild
+join/leave/reorder; each such change bumps the shared state generation and
+`generation` carries the new value. QML replaces its whole structure mirror on
+receipt, unless `generation` is lower than the highest already seen (§ Snapshot on
+connect).
 
 ### `channel_update`
 `{change: "create"|"update"|"delete", channel: channel}` — channel/thread created,

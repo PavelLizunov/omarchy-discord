@@ -30,13 +30,17 @@ Item {
 
   readonly property string lifecycle: service ? service.lifecycle : ""
   readonly property bool connected: !!(service && service.connected)
-  readonly property bool ready: !!(service && service.ready)
+  // Structure stays visible through the short reconnect grace (Service.showStructure).
+  readonly property bool ready: !!(service && service.showStructure)
   readonly property bool showLogin: connected
     && (lifecycle === "logged_out" || lifecycle === "reauth_needed")
   readonly property string errorText: service ? Api.redact(service.lastError) : ""
 
   // --- zones: "guilds" | "channels" ---
   property string zone: "guilds"
+  // Roving cursor keyed by guild id so a resync/reorder keeps the same server;
+  // guildCursor is the resolved index (CONVENTIONS §3).
+  property string guildCursorId: "dms"
   property int guildCursor: 0
   property int channelCursor: 0
   property string selectedGuildId: ""
@@ -85,6 +89,7 @@ Item {
       service.setUiVisible("full-panel", true)
       service.refresh()
     }
+    publishScreen()
     Qt.callLater(function() {
       focusScope.forceActiveFocus()
       if (root.showLogin) tokenField.forceActiveFocus()
@@ -96,7 +101,15 @@ Item {
     opened = false
     tokenField.clear()
     if (service) service.setUiVisible("full-panel", false)
+    publishScreen()
     closingFromHost = false
+  }
+
+  // Tell the bar widgets which monitor hosts the panel, so a click on the
+  // same monitor closes it while a click elsewhere remaps it.
+  function publishScreen() {
+    if (!service) return
+    service.panelScreenName = opened && window.screen ? String(window.screen.name || "") : ""
   }
 
   function requestClose() {
@@ -110,8 +123,22 @@ Item {
     return ((index % length) + length) % length
   }
 
+  function guildIndexOf(id) {
+    for (var i = 0; i < guildRows.length; i++)
+      if (String(guildRows[i].id || "") === id) return i
+    return -1
+  }
+
+  function setGuildCursor(index) {
+    if (!guildRows.length) { guildCursor = 0; return }
+    guildCursor = Math.max(0, Math.min(index, guildRows.length - 1))
+    guildCursorId = String(guildRows[guildCursor].id || "")
+  }
+
   function ensureCursors() {
-    guildCursor = Math.max(0, Math.min(guildCursor, guildRows.length - 1))
+    var resolved = guildIndexOf(guildCursorId)
+    if (resolved >= 0) guildCursor = resolved
+    else setGuildCursor(guildCursor)
     channelCursor = channelRows.length
       ? Math.max(0, Math.min(channelCursor, channelRows.length - 1)) : 0
     if (channelRows.length && !isSelectableChannel(channelRows[channelCursor]))
@@ -120,7 +147,7 @@ Item {
 
   function moveGuildCursor(delta) {
     if (!guildRows.length) return
-    guildCursor = clampCursor(guildCursor + delta, guildRows.length)
+    setGuildCursor(clampCursor(guildCursor + delta, guildRows.length))
     guildList.positionViewAtIndex(guildCursor, ListView.Contain)
   }
 
@@ -142,7 +169,7 @@ Item {
 
   function selectGuild(index) {
     if (index < 0 || index >= guildRows.length) return
-    guildCursor = index
+    setGuildCursor(index)
     var row = guildRows[index]
     selectedGuildId = String(row.id || "")
     channelCursor = 0
@@ -158,6 +185,14 @@ Item {
 
   function leaveChannels() {
     zone = "guilds"
+  }
+
+  // `r` while the browser is down: start the backend if it is not running,
+  // otherwise re-pull state.
+  function retry() {
+    if (!service) return
+    if (!connected) service.startBackend()
+    else service.refresh()
   }
 
   function submitToken() {
@@ -185,14 +220,14 @@ Item {
       return
     }
     if (!ready) {
-      if (text === "r") { if (service) service.refresh(); event.accepted = true }
+      if (text === "r") { retry(); event.accepted = true }
       return
     }
     if (zone === "guilds") {
       if (key === Qt.Key_Down || text === "j") moveGuildCursor(1)
       else if (key === Qt.Key_Up || text === "k") moveGuildCursor(-1)
-      else if (key === Qt.Key_Home || text === "g") { guildCursor = 0; guildList.positionViewAtBeginning() }
-      else if (key === Qt.Key_End || text === "G") { guildCursor = guildRows.length - 1; guildList.positionViewAtEnd() }
+      else if (key === Qt.Key_Home || text === "g") { setGuildCursor(0); guildList.positionViewAtBeginning() }
+      else if (key === Qt.Key_End || text === "G") { setGuildCursor(guildRows.length - 1); guildList.positionViewAtEnd() }
       else if (key === Qt.Key_Return || key === Qt.Key_Enter || key === Qt.Key_Right
           || text === "l") enterChannels()
       else if (text === "r") { if (service) service.refresh() }
@@ -223,7 +258,10 @@ Item {
 
   Component.onDestruction: {
     tokenField.clear()
-    if (service) service.setUiVisible("full-panel", false)
+    if (service) {
+      service.setUiVisible("full-panel", false)
+      service.panelScreenName = ""
+    }
   }
 
   FloatingWindow {
@@ -238,6 +276,7 @@ Item {
     onVisibleChanged: {
       if (!visible && root.opened && !root.closingFromHost) root.requestClose()
     }
+    onScreenChanged: root.publishScreen()
 
     FocusScope {
       id: focusScope
@@ -292,11 +331,13 @@ Item {
             Button {
               visible: root.ready
               text: "Log out"
+              focusable: true
               foreground: root.foreground
               onClicked: if (root.service) root.service.logout()
             }
             Button {
               text: "Close"
+              focusable: true
               foreground: root.foreground
               onClicked: root.requestClose()
             }
@@ -334,6 +375,7 @@ Item {
                 if (!root.service.daemon.runtimeChecked) return "Checking the backend install."
                 if (root.service.daemon.setupBusy) return "Installing the bundled backend."
                 if (!root.service.daemon.runtimeAvailable) return "The backend is not installed. Run scripts/setup.sh from the plugin directory."
+                if (!root.service.daemon.running) return "The backend is stopped. Press r or Start backend."
                 if (!root.connected) return "Waiting for the backend socket. Press r to retry."
                 return "Connecting to Discord."
               }
@@ -346,6 +388,7 @@ Item {
               visible: !!(root.service && root.service.daemon.runtimeAvailable
                 && !root.service.daemon.running)
               text: "Start backend"
+              focusable: true
               foreground: root.foreground
               onClicked: if (root.service) root.service.startBackend()
             }
@@ -385,6 +428,7 @@ Item {
               spacing: Style.spacing.controlGap
               Button {
                 text: root.service && root.service.loginBusy ? "Logging in" : "Log in"
+                focusable: true
                 foreground: root.foreground
                 enabled: !(root.service && root.service.loginBusy)
                 onClicked: root.submitToken()
@@ -492,7 +536,7 @@ Item {
                         hoverEnabled: true
                         onClicked: {
                           root.zone = "guilds"
-                          root.guildCursor = guildRow.index
+                          root.setGuildCursor(guildRow.index)
                           root.enterChannels()
                         }
                       }
@@ -649,6 +693,15 @@ Item {
           }
           Text {
             width: parent.width
+            visible: !!(root.service && root.service.notice !== "")
+            wrapMode: Text.WordWrap
+            text: root.service ? root.service.notice : ""
+            color: Color.muted
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+          Text {
+            width: parent.width
             visible: root.service && root.service.statusMessage !== ""
             text: root.service ? root.service.statusMessage : ""
             color: root.accent
@@ -660,9 +713,10 @@ Item {
             elide: Text.ElideRight
             text: root.ready
               ? (root.zone === "guilds"
-                ? "j/k or arrows move · Enter/l opens channels · r refreshes · Esc closes"
-                : "j/k or arrows move · h/Esc back to servers · r reloads")
-              : "Esc closes"
+                ? "j/k or arrows move · Enter/l opens channels · r refreshes · Tab reaches buttons · Esc closes"
+                : "j/k or arrows move · h/Esc back to servers · r reloads · Tab reaches buttons")
+              : (root.showLogin ? "Enter logs in · Tab reaches buttons · Esc closes"
+                : "r retries · Tab reaches buttons · Esc closes")
             color: Color.muted
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption

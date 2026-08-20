@@ -142,8 +142,10 @@ func (s *Server) handle(ctx context.Context, nc net.Conn) {
 	defer c.close()
 	go c.writer()
 
-	// Register and enqueue the snapshot atomically with respect to Broadcast so
-	// a client never observes an event older than its snapshot.
+	// Register and enqueue the snapshot while holding the same lock Broadcast
+	// takes, so no event can interleave the snapshot's lines or reach this
+	// client before them. (Events already queued upstream may still arrive after
+	// the snapshot; clients resolve that with the generation stamp.)
 	s.mu.Lock()
 	s.conns[c] = struct{}{}
 	for _, ev := range s.backend.Snapshot() {
@@ -165,8 +167,10 @@ func (s *Server) handle(ctx context.Context, nc net.Conn) {
 		}
 		req, perr := protocol.DecodeRequest(line)
 		if perr != nil {
+			// Echo the id whenever the line parsed; only an unparseable line
+			// gets id 0.
 			var id int64
-			if req != nil && perr.Code == protocol.CodeUnsupportedVersion {
+			if req != nil {
 				id = req.ID
 			}
 			c.send(protocol.MustEncode(id, protocol.ErrResponse(id, perr)))

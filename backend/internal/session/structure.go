@@ -232,9 +232,9 @@ func wireChannel(n *ningen.State, ch discord.Channel) protocol.Channel {
 		Unread:        unreadString(n.ChannelIsUnread(ch.ID, unreadOpts)),
 		MentionCount:  mentionCount(n, ch.ID),
 		Muted:         n.ChannelIsMuted(ch.ID, unreadOpts),
+		Recipients:    make([]protocol.User, 0, len(ch.DMRecipients)),
 	}
 	if ch.Type == discord.DirectMessage || ch.Type == discord.GroupDM {
-		c.Recipients = make([]protocol.User, 0, len(ch.DMRecipients))
 		names := make([]string, 0, len(ch.DMRecipients))
 		for _, u := range ch.DMRecipients {
 			c.Recipients = append(c.Recipients, wireUser(u))

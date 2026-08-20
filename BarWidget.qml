@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell
 import qs.Commons
 import qs.Ui
 
@@ -12,7 +13,13 @@ BarWidget {
   readonly property var discord: bar && bar.shell
     ? bar.shell.serviceFor("quickshell.discord") : null
   readonly property color foreground: bar ? bar.foreground : Color.foreground
-  readonly property bool online: !!(discord && discord.ready)
+  readonly property var hostWindow: QsWindow.window
+  readonly property string screenName: hostWindow && hostWindow.screen
+    ? String(hostWindow.screen.name || "") : ""
+  // The open panel lives on this bar's monitor (or we cannot tell).
+  readonly property bool panelOnThisScreen: !discord || !discord.panelScreenName
+    || !screenName || discord.panelScreenName === screenName
+  readonly property bool online: !!(discord && discord.showStructure)
   readonly property int mentionCount: discord ? discord.totalMentionCount : 0
   readonly property bool showMentionCount:
     String(root.setting("showMentionCount", "On")) !== "Off"
@@ -33,8 +40,10 @@ BarWidget {
     if (!bar || !bar.shell) return
     var encoded = JSON.stringify(payload || ({}))
     var host = bar.shell
+    // A plain click toggles the panel when it is on this monitor; from
+    // another monitor it falls through and remaps the panel here instead.
     if (typeof host.isPluginOpen === "function" && host.isPluginOpen(moduleName)
-        && !payload && typeof host.hide === "function") {
+        && !payload && panelOnThisScreen && typeof host.hide === "function") {
       host.hide(moduleName)
       return
     }

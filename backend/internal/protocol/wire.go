@@ -62,7 +62,9 @@ type Channel struct {
 	Unread        string  `json:"unread"`
 	MentionCount  int     `json:"mention_count"`
 	Muted         bool    `json:"muted"`
-	Recipients    []User  `json:"recipients,omitempty"`
+	// Recipients is always an array: the DM/group-DM members, empty for guild
+	// channels.
+	Recipients []User `json:"recipients"`
 }
 
 // Request parameter shapes.
@@ -88,6 +90,9 @@ type (
 	EmptyResult struct{}
 	LoginResult struct {
 		User User `json:"user"`
+		// KeyringStored is false when the token could not be persisted; the
+		// session is still live for this process.
+		KeyringStored bool `json:"keyring_stored"`
 	}
 	ListGuildsResult struct {
 		Guilds []Guild `json:"guilds"`
@@ -105,8 +110,11 @@ type (
 	}
 	GuildsSyncedEvent struct {
 		EventHeader
-		Guilds []Guild   `json:"guilds"`
-		DMs    []Channel `json:"dms"`
+		// Generation is the session state generation at which this structure
+		// was taken; clients discard structure older than what they have seen.
+		Generation int64     `json:"generation"`
+		Guilds     []Guild   `json:"guilds"`
+		DMs        []Channel `json:"dms"`
 	}
 )
 
@@ -117,14 +125,14 @@ func NewStateChanged(s State) StateChangedEvent {
 
 // NewGuildsSynced wraps a structure snapshot in its event envelope. Nil slices
 // are normalized to empty arrays so QML never sees null.
-func NewGuildsSynced(guilds []Guild, dms []Channel) GuildsSyncedEvent {
+func NewGuildsSynced(generation int64, guilds []Guild, dms []Channel) GuildsSyncedEvent {
 	if guilds == nil {
 		guilds = []Guild{}
 	}
 	if dms == nil {
 		dms = []Channel{}
 	}
-	return GuildsSyncedEvent{EventHeader: header("guilds_synced"), Guilds: guilds, DMs: dms}
+	return GuildsSyncedEvent{EventHeader: header("guilds_synced"), Generation: generation, Guilds: guilds, DMs: dms}
 }
 
 // Hello is the canonical hello result.

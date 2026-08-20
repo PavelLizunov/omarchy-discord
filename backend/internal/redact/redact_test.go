@@ -1,6 +1,7 @@
 package redact
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -30,5 +31,26 @@ func TestRedact(t *testing.T) {
 	plain := `{"type":"event","v":1,"event":"state_changed","state":{"lifecycle":"ready"}}`
 	if Redact(plain) != plain {
 		t.Errorf("plain line altered: %q", Redact(plain))
+	}
+}
+
+// The rules are JSON-safe: even when (mis)applied to a serialized line they
+// never consume quotes or escape backslashes, so the result stays valid JSON.
+func TestRedactKeepsJSONValid(t *testing.T) {
+	lines := []string{
+		`{"name":"Authorization Team","topic":"x"}`,
+		`{"name":"Authorization: Bearer abc","topic":"x"}`,
+		`{"topic":"token=abc\"","x":1}`,
+		`{"topic":"password=a\\b","x":1}`,
+		`{"token":"a\"b","x":1}`,
+	}
+	for _, l := range lines {
+		got := Redact(l)
+		if !json.Valid([]byte(got)) {
+			t.Errorf("Redact(%q) = %q is not valid JSON", l, got)
+		}
+	}
+	if got := Redact(`{"name":"Authorization Team","topic":"x"}`); !strings.Contains(got, `"topic":"x"`) {
+		t.Errorf("authorization rule ran past the field: %q", got)
 	}
 }

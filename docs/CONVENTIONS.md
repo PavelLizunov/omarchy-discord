@@ -221,7 +221,10 @@ strings passed through the redact helper (§7).
 
 ### Socket client (copy spotify BackendClient.qml wholesale)
 
-- Path: `(Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/omarchy-discord/backend.sock"`.
+- Path: `$XDG_RUNTIME_DIR/omarchy-discord/backend.sock`, the single location the
+  backend binds (its own fallback is `/run/user/<uid>`; never `/tmp`). QML cannot
+  learn the uid, so when `XDG_RUNTIME_DIR` is unset the client leaves the path
+  empty, never connects, and surfaces a clear `lastError`.
 - Quickshell `Socket` **cannot reconnect in place** after a failed connect — wrap in
   `Component` + `Loader` and toggle `active` each retry. Backoff:
   `Math.min(1500, 180 + attempt * 120)`, cap attempt at 12, reset on connect.

@@ -50,6 +50,15 @@ type Manager struct {
 	kr     Keyring
 	events chan any
 
+	// opMu serializes session replacement (login, logout, stop), which spans
+	// several mu critical sections with a blocking close in between. mu only
+	// guards the fields below and is never held across that close.
+	opMu sync.Mutex
+
+	// runLoop starts the connect loop for a freshly installed session. Tests
+	// replace it to avoid the network.
+	runLoop func(ctx context.Context, n *ningen.State, done chan struct{})
+
 	mu         sync.Mutex
 	lifecycle  string
 	user       *protocol.User
@@ -68,7 +77,9 @@ type Manager struct {
 
 // New creates a manager in the `starting` lifecycle.
 func New(kr Keyring) *Manager {
-	return &Manager{kr: kr, events: make(chan any, 1024), lifecycle: protocol.LifecycleStarting, generation: 1}
+	m := &Manager{kr: kr, events: make(chan any, 1024), lifecycle: protocol.LifecycleStarting, generation: 1}
+	m.runLoop = m.loop
+	return m
 }
 
 // Events yields state_changed / guilds_synced events in the order they were
@@ -122,6 +133,8 @@ func (m *Manager) setLifecycleLocked(lc, errText string) {
 // Start resolves the keyring token and connects if one exists.
 func (m *Manager) Start(ctx context.Context) {
 	tok, err := m.kr.Lookup(ctx)
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	switch {
@@ -139,6 +152,8 @@ func (m *Manager) Start(ctx context.Context) {
 
 // Stop closes the gateway and waits for the connect loop.
 func (m *Manager) Stop() {
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
 	m.mu.Lock()
 	n, done := m.teardownLocked()
 	m.mu.Unlock()
@@ -169,14 +184,19 @@ func closeAndWait(n *ningen.State, done chan struct{}) {
 }
 
 // connectLocked installs n as the live session and starts the connect loop.
+// Per-session state (user, presence, counts) is reset so a replaced session
+// never shows the previous account's data; the state_changed is always sent
+// even when the lifecycle was already `connecting`.
 func (m *Manager) connectLocked(n *ningen.State, token string) {
 	m.n, m.token, m.everReady = n, token, false
+	m.user, m.presence, m.mentions, m.unreadDM = nil, "", 0, nil
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	m.loopDone = make(chan struct{})
 	m.installHandlers(n)
-	m.setLifecycleLocked(protocol.LifecycleConnecting, "")
-	go m.loop(ctx, n, m.loopDone)
+	m.lifecycle, m.errText = protocol.LifecycleConnecting, ""
+	m.bump()
+	go m.runLoop(ctx, n, m.loopDone)
 }
 
 func (m *Manager) installHandlers(n *ningen.State) {
@@ -244,6 +264,8 @@ func (m *Manager) installHandlers(n *ningen.State) {
 	n.AddSyncHandler(func(*gateway.GuildDeleteEvent) { resync() })
 }
 
+// pushStructureLocked bumps the generation (structure changed) and queues a
+// guilds_synced stamped with it. Caller holds mu.
 func (m *Manager) pushStructureLocked(n *ningen.State) {
 	guilds, err := Guilds(n)
 	if err != nil {
@@ -253,7 +275,8 @@ func (m *Manager) pushStructureLocked(n *ningen.State) {
 	if err != nil {
 		redact.Logf("session: dms: %v", err)
 	}
-	m.push(protocol.NewGuildsSynced(guilds, dms))
+	m.generation++
+	m.push(protocol.NewGuildsSynced(m.generation, guilds, dms))
 }
 
 // loop opens the gateway and keeps it open until ctx is cancelled or the
@@ -314,17 +337,34 @@ func (m *Manager) reauth(n *ningen.State, cause error) {
 }
 
 // Login validates the token with REST /users/@me, stores it, and connects.
-func (m *Manager) Login(ctx context.Context, token string) (protocol.User, *protocol.Error) {
+func (m *Manager) Login(ctx context.Context, token string) (protocol.LoginResult, *protocol.Error) {
 	n := ningen.New(token)
 	me, err := n.WithContext(ctx).Me()
 	if err != nil {
-		return protocol.User{}, protocol.Errorf(protocol.CodeLoginFailed, "token rejected: %v", err)
+		return protocol.LoginResult{}, protocol.Errorf(protocol.CodeLoginFailed, "token rejected: %v", err)
 	}
+	return m.finishLogin(ctx, n, token, wireUser(*me)), nil
+}
+
+// finishLogin persists the validated token and installs the session. A keyring
+// failure is not fatal — the in-memory session is valid for this process — but
+// is reported in the result so the client can warn the user.
+func (m *Manager) finishLogin(ctx context.Context, n *ningen.State, token string, user protocol.User) protocol.LoginResult {
+	stored := true
 	if err := m.kr.Store(ctx, token); err != nil {
-		// Still usable for this process; the user will have to log in again
-		// after a restart.
-		redact.Logf("session: keyring store failed: %v", err)
+		stored = false
+		redact.Logf("session: keyring store failed (login will not survive a restart): %v", err)
 	}
+	m.replaceSession(n, token)
+	return protocol.LoginResult{User: user, KeyringStored: stored}
+}
+
+// replaceSession closes any live session and installs n. Serialized by opMu so
+// two concurrent logins cannot each tear down and then both install, which
+// would orphan a live gateway connection.
+func (m *Manager) replaceSession(n *ningen.State, token string) {
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
 	m.mu.Lock()
 	old, done := m.teardownLocked()
 	m.mu.Unlock()
@@ -333,11 +373,12 @@ func (m *Manager) Login(ctx context.Context, token string) (protocol.User, *prot
 	m.mu.Lock()
 	m.connectLocked(n, token)
 	m.mu.Unlock()
-	return wireUser(*me), nil
 }
 
 // Logout disconnects, drops the token, and clears the keyring.
 func (m *Manager) Logout(ctx context.Context) *protocol.Error {
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
 	m.mu.Lock()
 	if m.n == nil {
 		m.mu.Unlock()
@@ -363,7 +404,7 @@ func (m *Manager) Snapshot() []any {
 		off := m.n.Offline()
 		guilds, _ := Guilds(off)
 		dms, _ := DMs(off)
-		evs = append(evs, protocol.NewGuildsSynced(guilds, dms))
+		evs = append(evs, protocol.NewGuildsSynced(m.generation, guilds, dms))
 	}
 	return evs
 }
@@ -383,11 +424,11 @@ func (m *Manager) Handle(ctx context.Context, req *protocol.Request) (any, *prot
 		if p.Token == "" {
 			return nil, protocol.Errorf(protocol.CodeInvalidArgument, "token is required")
 		}
-		u, e := m.Login(ctx, p.Token)
+		res, e := m.Login(ctx, p.Token)
 		if e != nil {
 			return nil, e
 		}
-		return protocol.LoginResult{User: u}, nil
+		return res, nil
 	case "logout":
 		if e := m.Logout(ctx); e != nil {
 			return nil, e

@@ -23,13 +23,20 @@ Item {
   property var pending: ({})
   property int reconnectAttempt: 0
 
+  // Same location the backend binds. QML cannot learn the uid, so without
+  // XDG_RUNTIME_DIR there is no trustworthy fallback (never world-writable
+  // /tmp): the path stays empty and the client refuses to connect.
   readonly property string socketPath: {
-    var runtime = Quickshell.env("XDG_RUNTIME_DIR")
-    return String(runtime || "/tmp") + "/omarchy-discord/backend.sock"
+    var runtime = String(Quickshell.env("XDG_RUNTIME_DIR") || "")
+    return runtime ? runtime + "/omarchy-discord/backend.sock" : ""
   }
+  readonly property bool socketPathAvailable: socketPath !== ""
+  readonly property string configurationError: socketPathAvailable ? ""
+    : "XDG_RUNTIME_DIR is not set, so the Discord backend socket cannot be located"
 
   signal stateReceived(var state)
   signal eventReceived(string name, var message)
+  signal configurationFailed(string reason)
 
   function resetPending(reason) {
     var waiters = pending
@@ -91,16 +98,24 @@ Item {
   }
 
   onWantedChanged: {
-    if (wanted) return
+    if (wanted) {
+      if (!socketPathAvailable) configurationFailed(configurationError)
+      return
+    }
     reconnectTimer.stop()
+    resetPending("The Discord backend stopped")
     socketLoader.active = false
     lifecycle = ""
     lastState = null
     reconnectAttempt = 0
-    resetPending("The Discord backend stopped")
   }
 
-  onConnectedChanged: if (connected) reconnectAttempt = 0
+  onConnectedChanged: {
+    if (connected) reconnectAttempt = 0
+    // A backend restart drops the socket while `wanted` stays true; fail every
+    // in-flight request so callers can clear their busy state.
+    else resetPending("The Discord backend disconnected")
+  }
 
   Component {
     id: socketComponent
@@ -131,7 +146,7 @@ Item {
     interval: Math.min(1500, 180 + root.reconnectAttempt * 120)
     repeat: true
     triggeredOnStart: true
-    running: root.wanted && !root.connected
+    running: root.wanted && root.socketPathAvailable && !root.connected
     onTriggered: {
       root.reconnectAttempt = Math.min(12, root.reconnectAttempt + 1)
       socketLoader.active = false

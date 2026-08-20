@@ -23,8 +23,12 @@ scripts/install-local.sh          # --section left|center|right
 `~/.config/systemd/user/`, copies the checkout into
 `~/.config/omarchy/plugins/quickshell.discord/` (a copy, not a symlink, because
 `omarchy plugin validate` refuses symlinks), rescans, and enables the widget.
-Re-run it after every change. A bundled binary under `backend/dist/$(uname -m)/`
+Re-run it after every change; the backend is rebuilt whenever a file under
+`backend/` is newer than the installed binary (`scripts/setup.sh
+--reinstall-backend` forces it). A bundled binary under `backend/dist/$(uname -m)/`
 is used when present; otherwise the script builds with Go, outside the plugin tree.
+Setting `OMARCHY_DISCORD_RUNTIME_DIR` relocates the binary; setup rewrites the
+installed unit's `ExecStart` to match.
 
 The backend unit is never enabled at login. The enabled plugin starts it and keeps
 it connected while the `stayConnected` setting is On (the default).
@@ -65,7 +69,8 @@ environment summary.
 | `Enter` / `l` / Right | Load and focus the selected server's channels |
 | `h` / Left / `Esc` | Back to the server list |
 | `g` / `G`, Home / End | First / last row |
-| `r` | Refresh |
+| `r` | Refresh (starts the backend if it is stopped) |
+| `Tab` / `Shift+Tab`, `Enter` | Move between buttons and press them |
 | `Esc` (server list) | Close the panel |
 
 ## Settings

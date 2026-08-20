@@ -1,1 +1,1 @@
-{"type":"response","v":1,"id":4,"ok":true,"result":{"user":{"id":"183627919046737920","username":"m","display_name":"m","avatar_url":"https://cdn.discordapp.com/avatars/183627919046737920/a.png"}}}
+{"type":"response","v":1,"id":4,"ok":true,"result":{"user":{"id":"183627919046737920","username":"m","display_name":"m","avatar_url":"https://cdn.discordapp.com/avatars/183627919046737920/a.png"},"keyring_stored":true}}

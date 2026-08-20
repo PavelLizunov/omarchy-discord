@@ -39,13 +39,26 @@ unit_file="$unit_dir/$unit_name"
 runtime_dir=${OMARCHY_DISCORD_RUNTIME_DIR:-"$HOME/.local/lib/omarchy-discord"}
 backend_binary="$runtime_dir/omarchy-discord-backend"
 
+# True when any backend source (or a bundled prebuilt) is newer than the
+# installed binary, so re-running setup picks up upgrades.
+backend_stale() {
+  [[ -x $backend_binary ]] || return 0
+  local newer
+  newer=$(find "$source_root/backend" -type f -newer "$backend_binary" \
+    -not -path '*/testdata/*' -not -path '*/target/*' -print -quit 2>/dev/null)
+  [[ -n $newer ]]
+}
+
 backend_ready=0
-if [[ -x $backend_binary && $force_reinstall -eq 0 ]]; then
+if [[ -x $backend_binary && $force_reinstall -eq 0 ]] && ! backend_stale; then
   backend_ready=1
-elif (( ! skip_backend_build )); then
-  if "$source_root/scripts/build-backend.sh"; then
+elif (( skip_backend_build )); then
+  if [[ -x $backend_binary ]]; then
+    echo "setup.sh: backend sources are newer than $backend_binary; keeping it (--skip-backend-build)" >&2
     backend_ready=1
   fi
+elif "$source_root/scripts/build-backend.sh"; then
+  backend_ready=1
 fi
 
 if (( ! backend_ready )); then
@@ -55,7 +68,16 @@ if (( ! backend_ready )); then
 fi
 
 install -d -m 700 -- "$unit_dir"
-install -m 644 -- "$source_root/systemd/$unit_name" "$unit_file"
+if [[ -n ${OMARCHY_DISCORD_RUNTIME_DIR:-} ]]; then
+  # The repo unit hard-codes the default %h path; point the installed copy at
+  # the custom runtime dir so ExecStart matches where the binary went.
+  sed -e "s|^ExecStart=.*|ExecStart=$backend_binary|" \
+    -- "$source_root/systemd/$unit_name" > "$unit_file.tmp"
+  install -m 644 -- "$unit_file.tmp" "$unit_file"
+  rm -f -- "$unit_file.tmp"
+else
+  install -m 644 -- "$source_root/systemd/$unit_name" "$unit_file"
+fi
 systemctl --user daemon-reload
 
 unit_state=$(systemctl --user is-enabled "$unit_name" 2>/dev/null || true)

@@ -49,6 +49,11 @@ Item {
   readonly property string lifecycle: backendState ? String(backendState.lifecycle || "") : ""
   readonly property bool connected: backendClient.connected
   readonly property bool ready: connected && lifecycle === "ready"
+  // A transient gateway reconnect surfaces as `connecting`; keep the browser
+  // up for a short grace (BACKEND_PROTOCOL state notes) before tearing down.
+  property bool reconnectGraceActive: false
+  readonly property bool showStructure: connected && (lifecycle === "ready"
+    || (lifecycle === "connecting" && reconnectGraceActive))
   readonly property bool loggedOut: connected
     && (lifecycle === "logged_out" || lifecycle === "reauth_needed")
   readonly property var user: backendState && backendState.user ? backendState.user : null
@@ -64,10 +69,17 @@ Item {
   property var channelsLoading: ({})
   property bool structureBusy: false
   property bool loginBusy: false
+  // Highest `generation` seen on state / guilds_synced; stale ones are dropped.
+  property double lastGeneration: -1
 
   property string lastError: ""
   property string statusMessage: ""
+  // Persistent, non-fatal note (e.g. keyring unavailable); cleared on logout.
+  property string notice: ""
   signal operationFailed(string reason)
+
+  // Monitor name hosting the open full panel ("" when closed); set by Panel.qml.
+  property string panelScreenName: ""
 
   // --- UI visibility refcount ---
   property var visibleSurfaces: ({})
@@ -131,11 +143,13 @@ Item {
   }
 
   function persistSettings(values) {
-    var merged = Api.assign(Api.shallowCopy(configuredEntry() || {}), values || {})
-    var next = normalizedSettings(merged)
+    var entry = Api.shallowCopy(configuredEntry() || {})
+    var next = normalizedSettings(Api.assign(Api.shallowCopy(entry), values || {}))
     applySettings(next)
+    // updateEntryInline replaces the entry wholesale, so carry unknown
+    // (shell-managed) keys forward instead of dropping them.
     if (shell && typeof shell.updateEntryInline === "function")
-      shell.updateEntryInline(pluginId, next)
+      shell.updateEntryInline(pluginId, Api.assign(entry, next))
   }
 
   function configuredEntry() {
@@ -200,8 +214,15 @@ Item {
     lastError = ""
     backendClient.sendCommand("login", { token: value }, function(ok, result, error) {
       loginBusy = false
-      if (ok) succeed("Logged in")
-      else fail(error || "Discord rejected the token")
+      if (!ok) {
+        fail(error || "Discord rejected the token")
+        return
+      }
+      succeed("Logged in")
+      // Non-fatal: the session works, it just will not survive a restart.
+      notice = result && result.keyring_stored === false
+        ? "Logged in, but the token could not be saved to the keyring; you'll need to log in again after a restart"
+        : ""
     })
     value = ""
     return true
@@ -213,6 +234,7 @@ Item {
         guilds = []
         dms = []
         channelsByGuild = ({})
+        notice = ""
         succeed("Logged out")
       }
     })
@@ -270,14 +292,33 @@ Item {
   }
 
   // --- event handling ---
+  // Returns false (and ignores the payload) when `generation` is older than
+  // the newest one seen. Messages without a generation always pass.
+  function acceptGeneration(generation) {
+    if (generation === undefined || generation === null) return true
+    var value = Number(generation)
+    if (!isFinite(value)) return true
+    if (value < lastGeneration) return false
+    lastGeneration = value
+    return true
+  }
+
   function applyState(next) {
     if (!next || typeof next !== "object") return
+    if (!acceptGeneration(next.generation)) return
     var previous = backendState
-    if (previous && Number(next.generation) < Number(previous.generation)) return
-    backendState = next
-    if (next.error) lastError = Api.redact(String(next.error))
     var was = previous ? String(previous.lifecycle || "") : ""
     var now = String(next.lifecycle || "")
+    // Arm the grace before the lifecycle flips so showStructure never blips.
+    if (now === "connecting" && was === "ready") {
+      reconnectGraceActive = true
+      reconnectGraceTimer.restart()
+    } else if (now !== "connecting") {
+      reconnectGraceTimer.stop()
+      reconnectGraceActive = false
+    }
+    backendState = next
+    if (next.error) lastError = Api.redact(String(next.error))
     if (now === "ready" && was !== "ready") refreshStructure()
     if (now !== "ready" && was === "ready" && now !== "connecting") {
       guilds = []
@@ -288,11 +329,25 @@ Item {
 
   function handleEvent(name, message) {
     switch (name) {
-      case "guilds_synced":
+      case "guilds_synced": {
+        if (!acceptGeneration(message.generation)) break
         if (Array.isArray(message.guilds)) guilds = message.guilds
         if (Array.isArray(message.dms)) dms = message.dms
-        channelsByGuild = ({})
+        // Drop channel lists for guilds that went away and reload the rest in
+        // place, so an open channel list survives the resync.
+        var present = ({})
+        for (var g = 0; g < guilds.length; g++) present[String(guilds[g].id || "")] = true
+        var kept = ({})
+        var reload = []
+        for (var loaded in channelsByGuild) {
+          if (!present[loaded]) continue
+          kept[loaded] = channelsByGuild[loaded]
+          reload.push(loaded)
+        }
+        channelsByGuild = kept
+        for (var r = 0; r < reload.length; r++) loadChannels(reload[r], true)
         break
+      }
       case "channel_update": {
         var channel = message.channel || {}
         var guildId = String(channel.guild_id || "")
@@ -365,6 +420,12 @@ Item {
   }
 
   Timer {
+    id: reconnectGraceTimer
+    interval: 3000
+    onTriggered: root.reconnectGraceActive = false
+  }
+
+  Timer {
     id: statusClearTimer
     interval: 4500
     onTriggered: root.statusMessage = ""
@@ -415,9 +476,13 @@ Item {
     target: backendClient
     function onStateReceived(state) { root.applyState(state) }
     function onEventReceived(name, message) { root.handleEvent(name, message) }
+    function onConfigurationFailed(reason) { root.fail(reason) }
     function onConnectedChanged() {
       if (!backendClient.connected) {
         root.backendState = null
+        root.lastGeneration = -1
+        reconnectGraceTimer.stop()
+        root.reconnectGraceActive = false
         daemonManager.refreshStatus()
       }
     }

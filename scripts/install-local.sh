@@ -44,6 +44,8 @@ done
 
 omarchy plugin validate "$source_root"
 "$source_root/scripts/setup.sh"
+# Pick up a rebuilt backend: only restarts when the unit is already active.
+systemctl --user try-restart omarchy-discord.service 2>/dev/null || true
 
 plugins_root="${XDG_CONFIG_HOME:-"$HOME/.config"}/omarchy/plugins"
 target="$plugins_root/$plugin_id"
