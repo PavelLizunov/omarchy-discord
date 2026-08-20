@@ -139,3 +139,168 @@ func NewGuildsSynced(generation int64, guilds []Guild, dms []Channel) GuildsSync
 func Hello() HelloResult {
 	return HelloResult{ProtocolVersion: Version, BackendVersion: BackendVersion, Engine: Engine}
 }
+
+// MessageAuthor is the author object on a message.
+type MessageAuthor struct {
+	ID          string `json:"id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name"`
+	AvatarURL   string `json:"avatar_url"`
+	Bot         bool   `json:"bot"`
+}
+
+// ReplyTo describes the message a reply references.
+type ReplyTo struct {
+	MessageID         string `json:"message_id"`
+	AuthorDisplayName string `json:"author_display_name"`
+	Preview           string `json:"preview"`
+}
+
+// Attachment is a file attached to a message.
+type Attachment struct {
+	ID          string `json:"id"`
+	Filename    string `json:"filename"`
+	ContentType string `json:"content_type"`
+	Size        uint64 `json:"size"`
+	URL         string `json:"url"`
+	ProxyURL    string `json:"proxy_url"`
+	Width       uint   `json:"width"`
+	Height      uint   `json:"height"`
+	Spoiler     bool   `json:"spoiler"`
+}
+
+// Embed is the rendering subset of a Discord embed.
+type Embed struct {
+	Type         string `json:"type"`
+	Title        string `json:"title"`
+	Description  string `json:"description"`
+	URL          string `json:"url"`
+	ImageURL     string `json:"image_url"`
+	ThumbnailURL string `json:"thumbnail_url"`
+	// Color is the 0xRRGGBB integer, 0 when the embed has none.
+	Color int `json:"color"`
+}
+
+// Reaction is one emoji's reaction summary.
+type Reaction struct {
+	// Emoji is the unicode emoji or "name:id" for custom emoji.
+	Emoji string `json:"emoji"`
+	Count int    `json:"count"`
+	Me    bool   `json:"me"`
+}
+
+// Message is the wire shape of a message.
+type Message struct {
+	ID              string        `json:"id"`
+	ChannelID       string        `json:"channel_id"`
+	GuildID         *string       `json:"guild_id"`
+	Author          MessageAuthor `json:"author"`
+	Content         string        `json:"content"`
+	Timestamp       string        `json:"timestamp"`
+	EditedTimestamp *string       `json:"edited_timestamp"`
+	Nonce           string        `json:"nonce"`
+	ReplyTo         *ReplyTo      `json:"reply_to"`
+	Attachments     []Attachment  `json:"attachments"`
+	Embeds          []Embed       `json:"embeds"`
+	Reactions       []Reaction    `json:"reactions"`
+	MentionsSelf    bool          `json:"mentions_self"`
+	System          bool          `json:"system"`
+}
+
+// Message command parameter shapes.
+type (
+	OpenChannelParams struct {
+		ChannelID string `json:"channel_id"`
+	}
+	CloseChannelParams struct {
+		ChannelID string `json:"channel_id"`
+	}
+	HistoryParams struct {
+		ChannelID string `json:"channel_id"`
+		BeforeID  string `json:"before_id"`
+		Limit     int    `json:"limit"`
+	}
+	AckParams struct {
+		ChannelID string `json:"channel_id"`
+		MessageID string `json:"message_id"`
+	}
+)
+
+// Message command result shapes.
+type (
+	OpenChannelResult struct {
+		Channel  Channel   `json:"channel"`
+		Messages []Message `json:"messages"`
+		HasMore  bool      `json:"has_more"`
+	}
+	HistoryResult struct {
+		Messages []Message `json:"messages"`
+		HasMore  bool      `json:"has_more"`
+	}
+)
+
+// Message and read-state event shapes.
+type (
+	MessageCreateEvent struct {
+		EventHeader
+		ChannelID   string  `json:"channel_id"`
+		GuildID     *string `json:"guild_id"`
+		Message     Message `json:"message"`
+		Notify      bool    `json:"notify"`
+		ChannelName string  `json:"channel_name"`
+	}
+	MessageUpdateEvent struct {
+		EventHeader
+		ChannelID string  `json:"channel_id"`
+		GuildID   *string `json:"guild_id"`
+		Message   Message `json:"message"`
+	}
+	MessageDeleteEvent struct {
+		EventHeader
+		ChannelID string  `json:"channel_id"`
+		GuildID   *string `json:"guild_id"`
+		MessageID string  `json:"message_id"`
+	}
+	TypingStartEvent struct {
+		EventHeader
+		ChannelID   string  `json:"channel_id"`
+		GuildID     *string `json:"guild_id"`
+		UserID      string  `json:"user_id"`
+		DisplayName string  `json:"display_name"`
+		Timestamp   string  `json:"timestamp"`
+	}
+	ReadStateChangedEvent struct {
+		EventHeader
+		ChannelID         string  `json:"channel_id"`
+		GuildID           *string `json:"guild_id"`
+		Unread            bool    `json:"unread"`
+		MentionCount      int     `json:"mention_count"`
+		LastReadMessageID *string `json:"last_read_message_id"`
+		TotalMentionCount int     `json:"total_mention_count"`
+	}
+)
+
+// NewMessageCreate wraps a message in its event envelope.
+func NewMessageCreate(m Message, notify bool, channelName string) MessageCreateEvent {
+	return MessageCreateEvent{EventHeader: header("message_create"), ChannelID: m.ChannelID, GuildID: m.GuildID, Message: m, Notify: notify, ChannelName: channelName}
+}
+
+// NewMessageUpdate wraps a full updated message in its event envelope.
+func NewMessageUpdate(m Message) MessageUpdateEvent {
+	return MessageUpdateEvent{EventHeader: header("message_update"), ChannelID: m.ChannelID, GuildID: m.GuildID, Message: m}
+}
+
+// NewMessageDelete builds a message_delete event.
+func NewMessageDelete(channelID string, guildID *string, messageID string) MessageDeleteEvent {
+	return MessageDeleteEvent{EventHeader: header("message_delete"), ChannelID: channelID, GuildID: guildID, MessageID: messageID}
+}
+
+// NewTypingStart builds a typing_start event.
+func NewTypingStart(channelID string, guildID *string, userID, displayName, timestamp string) TypingStartEvent {
+	return TypingStartEvent{EventHeader: header("typing_start"), ChannelID: channelID, GuildID: guildID, UserID: userID, DisplayName: displayName, Timestamp: timestamp}
+}
+
+// NewReadStateChanged builds a read_state_changed event.
+func NewReadStateChanged(channelID string, guildID *string, unread bool, mentions int, lastRead *string, total int) ReadStateChangedEvent {
+	return ReadStateChangedEvent{EventHeader: header("read_state_changed"), ChannelID: channelID, GuildID: guildID, Unread: unread, MentionCount: mentions, LastReadMessageID: lastRead, TotalMentionCount: total}
+}

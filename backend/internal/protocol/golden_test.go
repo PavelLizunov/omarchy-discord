@@ -71,7 +71,54 @@ var goldens = []struct {
 			Recipients: []User{{ID: "2000000000000000001", Username: "ada", DisplayName: "ada", AvatarURL: ""}}}},
 	), &GuildsSyncedEvent{}},
 	{"event_guilds_synced_empty", NewGuildsSynced(3, nil, nil), &GuildsSyncedEvent{}},
+	{"response_open_channel", OKResponse(20, OpenChannelResult{
+		Channel:  Channel{ID: "1049931213073821696", GuildID: str("1000000000000000001"), Type: "text", Name: "general", Topic: "chat", ParentID: str("1000000000000000010"), Position: 0, LastMessageID: str("1049931339989602304"), Unread: UnreadRead, MentionCount: 0, Muted: false, Recipients: []User{}},
+		Messages: []Message{sampleReply, sampleMessage},
+		HasMore:  true,
+	}), &typedResponse[OpenChannelResult]{}},
+	{"response_close_channel", OKResponse(21, EmptyResult{}), &typedResponse[EmptyResult]{}},
+	{"response_history", OKResponse(22, HistoryResult{Messages: []Message{sampleSystem}, HasMore: false}), &typedResponse[HistoryResult]{}},
+	{"response_history_empty", OKResponse(22, HistoryResult{Messages: []Message{}, HasMore: false}), &typedResponse[HistoryResult]{}},
+	{"response_ack", OKResponse(23, EmptyResult{}), &typedResponse[EmptyResult]{}},
+	{"response_empty_dm_refused", ErrResponse(24, &Error{Code: CodeEmptyDMRefused, Message: "refusing to open a DM with no history; send a message from the official client first"}), &typedResponse[struct{}]{}},
+	{"event_message_create", NewMessageCreate(sampleMessage, true, "general"), &MessageCreateEvent{}},
+	{"event_message_create_own_echo", NewMessageCreate(sampleOwn, false, "general"), &MessageCreateEvent{}},
+	{"event_message_update", NewMessageUpdate(sampleMessage), &MessageUpdateEvent{}},
+	{"event_message_delete", NewMessageDelete("1049931213073821696", str("1000000000000000001"), "1049931339989602304"), &MessageDeleteEvent{}},
+	{"event_message_delete_dm", NewMessageDelete("1049931213073821696", nil, "1049931339989602304"), &MessageDeleteEvent{}},
+	{"event_typing_start", NewTypingStart("1049931213073821696", str("1000000000000000001"), "2000000000000000001", "ada", "2026-08-20T14:03:22.000Z"), &TypingStartEvent{}},
+	{"event_read_state_changed", NewReadStateChanged("1049931213073821696", str("1000000000000000001"), true, 2, str("1049931302442426390"), 5), &ReadStateChangedEvent{}},
+	{"event_read_state_changed_dm_ack", NewReadStateChanged("1049931213073821696", nil, false, 0, str("1049931339989602304"), 0), &ReadStateChangedEvent{}},
 }
+
+var (
+	sampleAuthor = MessageAuthor{ID: "2000000000000000001", Username: "ada", DisplayName: "Ada", AvatarURL: "https://cdn.discordapp.com/avatars/2000000000000000001/b.png?size=64", Bot: false}
+	sampleReply  = Message{
+		ID: "1049931302442426390", ChannelID: "1049931213073821696", GuildID: str("1000000000000000001"), Author: sampleAuthor,
+		Content: "shall we?", Timestamp: "2026-08-20T14:03:10.004Z", EditedTimestamp: nil, Nonce: "", ReplyTo: nil,
+		Attachments: []Attachment{}, Embeds: []Embed{}, Reactions: []Reaction{}, MentionsSelf: false, System: false,
+	}
+	sampleMessage = Message{
+		ID: "1049931339989602304", ChannelID: "1049931213073821696", GuildID: str("1000000000000000001"), Author: sampleAuthor,
+		Content: "on my way <@183627919046737920> **now**", Timestamp: "2026-08-20T14:03:22.117Z", EditedTimestamp: str("2026-08-20T14:04:01.000Z"), Nonce: "",
+		ReplyTo:      &ReplyTo{MessageID: "1049931302442426390", AuthorDisplayName: "Ada", Preview: "shall we?"},
+		Attachments:  []Attachment{{ID: "1049931339989602305", Filename: "SPOILER_shot-1.png", ContentType: "image/png", Size: 1048576, URL: "https://cdn.discordapp.com/attachments/1049931213073821696/1049931339989602305/SPOILER_shot-1.png", ProxyURL: "https://media.discordapp.net/attachments/1049931213073821696/1049931339989602305/SPOILER_shot-1.png", Width: 1920, Height: 1080, Spoiler: true}},
+		Embeds:       []Embed{{Type: "link", Title: "Omarchy", Description: "An opinionated Arch/Hyprland setup", URL: "https://omarchy.org", ImageURL: "", ThumbnailURL: "https://omarchy.org/logo.png", Color: 0x5865F2}},
+		Reactions:    []Reaction{{Emoji: "👍", Count: 2, Me: true}, {Emoji: "omarchy:1000000000000000099", Count: 1, Me: false}},
+		MentionsSelf: true, System: false,
+	}
+	sampleOwn = Message{
+		ID: "1049931401540221011", ChannelID: "1049931213073821696", GuildID: str("1000000000000000001"),
+		Author:  MessageAuthor{ID: "183627919046737920", Username: "m", DisplayName: "m", AvatarURL: "https://cdn.discordapp.com/avatars/183627919046737920/a.png?size=64", Bot: false},
+		Content: "on my way", Timestamp: "2026-08-20T14:05:00.250Z", EditedTimestamp: nil, Nonce: "a1b2c3d4", ReplyTo: nil,
+		Attachments: []Attachment{}, Embeds: []Embed{}, Reactions: []Reaction{}, MentionsSelf: false, System: false,
+	}
+	sampleSystem = Message{
+		ID: "1049931200000000000", ChannelID: "1049931213073821696", GuildID: str("1000000000000000001"), Author: sampleAuthor,
+		Content: "Ada joined the server.", Timestamp: "2026-08-19T09:00:00.000Z", EditedTimestamp: nil, Nonce: "", ReplyTo: nil,
+		Attachments: []Attachment{}, Embeds: []Embed{}, Reactions: []Reaction{}, MentionsSelf: false, System: true,
+	}
+)
 
 func TestGoldenEncodeDecode(t *testing.T) {
 	for _, g := range goldens {
@@ -138,6 +185,36 @@ func TestGoldenRequests(t *testing.T) {
 			}
 		}},
 		{"request_list_dms", 8, "list_dms", nil},
+		{"request_open_channel", 20, "open_channel", func(t *testing.T, r *Request) {
+			var p OpenChannelParams
+			if e := r.Params(&p); e != nil || p.ChannelID != "1049931213073821696" {
+				t.Fatalf("open_channel params: %v %+v", e, p)
+			}
+		}},
+		{"request_close_channel", 21, "close_channel", func(t *testing.T, r *Request) {
+			var p CloseChannelParams
+			if e := r.Params(&p); e != nil || p.ChannelID != "1049931213073821696" {
+				t.Fatalf("close_channel params: %v %+v", e, p)
+			}
+		}},
+		{"request_history", 22, "history", func(t *testing.T, r *Request) {
+			var p HistoryParams
+			if e := r.Params(&p); e != nil || p.ChannelID != "1049931213073821696" || p.BeforeID != "1049931302442426390" || p.Limit != 50 {
+				t.Fatalf("history params: %v %+v", e, p)
+			}
+		}},
+		{"request_history_default_limit", 22, "history", func(t *testing.T, r *Request) {
+			var p HistoryParams
+			if e := r.Params(&p); e != nil || p.Limit != 0 {
+				t.Fatalf("history params: %v %+v", e, p)
+			}
+		}},
+		{"request_ack", 23, "ack", func(t *testing.T, r *Request) {
+			var p AckParams
+			if e := r.Params(&p); e != nil || p.ChannelID != "1049931213073821696" || p.MessageID != "1049931339989602304" {
+				t.Fatalf("ack params: %v %+v", e, p)
+			}
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

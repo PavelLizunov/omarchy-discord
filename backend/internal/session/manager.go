@@ -58,6 +58,10 @@ type Manager struct {
 	// runLoop starts the connect loop for a freshly installed session. Tests
 	// replace it to avoid the network.
 	runLoop func(ctx context.Context, n *ningen.State, done chan struct{})
+	// fetchTail / fetchBefore load messages for open_channel / history. Tests
+	// replace them to avoid the network.
+	fetchTail   func(ctx context.Context, n *ningen.State, chID discord.ChannelID, limit uint) ([]discord.Message, error)
+	fetchBefore func(ctx context.Context, n *ningen.State, chID discord.ChannelID, before discord.MessageID, limit uint) ([]discord.Message, error)
 
 	mu         sync.Mutex
 	lifecycle  string
@@ -79,6 +83,7 @@ type Manager struct {
 func New(kr Keyring) *Manager {
 	m := &Manager{kr: kr, events: make(chan any, 1024), lifecycle: protocol.LifecycleStarting, generation: 1}
 	m.runLoop = m.loop
+	m.fetchTail, m.fetchBefore = fetchTail, fetchBefore
 	return m
 }
 
@@ -238,7 +243,7 @@ func (m *Manager) installHandlers(n *ningen.State) {
 			m.setLifecycleLocked(protocol.LifecycleConnecting, "")
 		}
 	})
-	n.AddSyncHandler(func(*read.UpdateEvent) {
+	n.AddSyncHandler(func(ev *read.UpdateEvent) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		if m.n != n || m.lifecycle != protocol.LifecycleReady {
@@ -246,12 +251,16 @@ func (m *Manager) installHandlers(n *ningen.State) {
 		}
 		off := n.Offline()
 		mentions, dm := off.ReadState.TotalMentionCount(), UnreadDM(off)
+		m.push(protocol.NewReadStateChanged(
+			ev.ChannelID.String(), optSnowflake(discord.Snowflake(ev.GuildID)),
+			ev.Unread, ev.MentionCount, optSnowflake(discord.Snowflake(ev.LastMessageID)), mentions))
 		if mentions == m.mentions && ptrEq(dm, m.unreadDM) {
 			return
 		}
 		m.mentions, m.unreadDM = mentions, dm
 		m.bump()
 	})
+	m.installMessageHandlers(n)
 	resync := func() {
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -471,6 +480,14 @@ func (m *Manager) Handle(ctx context.Context, req *protocol.Request) (any, *prot
 			chs = []protocol.Channel{}
 		}
 		return protocol.ListChannelsResult{Channels: chs}, nil
+	case "open_channel":
+		return m.openChannel(ctx, req)
+	case "close_channel":
+		return m.closeChannel(ctx, req)
+	case "history":
+		return m.history(ctx, req)
+	case "ack":
+		return m.ack(req)
 	case "list_dms":
 		n, e := m.cachedSession()
 		if e != nil {

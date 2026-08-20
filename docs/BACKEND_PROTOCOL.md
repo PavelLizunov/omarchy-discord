@@ -55,6 +55,8 @@ Rules:
 - All `error.message` strings and the state `error` field are redacted at the point
   they are built; user content (names, topics, message text) is never altered by
   redaction. Internal sequencing fields never appear on the wire.
+- The golden fixtures in `backend/internal/protocol/testdata/` are the canonical,
+  byte-exact examples of every request, response, and event shape below.
 
 ## Versioning
 
@@ -160,17 +162,19 @@ is the recipient display name (group DMs: joined names or set name).
 | `id` | string | |
 | `channel_id` | string | |
 | `guild_id` | string\|null | |
-| `author` | object | `{id, username, display_name, avatar_url, bot}` |
+| `author` | object | `{id, username, display_name, avatar_url, bot}` — `display_name` is guild nick > global display name > username, resolved from the cache (a guild member not yet cached falls back to the global name); `avatar_url` is the CDN URL with `?size=64` appended |
 | `content` | string | raw Discord markdown; QML renders it |
-| `timestamp` | string | RFC 3339 |
+| `timestamp` | string | RFC 3339 UTC with milliseconds |
 | `edited_timestamp` | string\|null | |
-| `nonce` | string | `""` unless present; echo-dedup key for own optimistic sends |
-| `reply_to` | object\|null | `{message_id, author_display_name, preview}` — preview is flattened plain text, `""` when the referenced message is unknown |
-| `attachments` | array | `[{id, filename, content_type, size, url, proxy_url, width, height, spoiler}]` — `url` is the CDN URL; fetch through `fetch_media` |
-| `embeds` | array | `[{type, title, description, url, image_url, thumbnail_url, color}]` (subset; enough to render) |
-| `reactions` | array | `[{emoji (string — unicode or "name:id"), count, me (bool)}]` |
-| `mentions_self` | bool | ningen `MessageMentions` has `MessageMentions` |
-| `system` | bool | join/pin/boost/call etc.; `content` holds a rendered plain-text line |
+| `nonce` | string | `""` unless present. Official clients also send nonces, so other people's messages carry one too — dedup own optimistic rows by matching against the nonces *you* sent, never by mere presence |
+| `reply_to` | object\|null | `{message_id, author_display_name, preview}` — null unless the message is an inline reply (forwards are not replies). `preview` is the referenced message's content collapsed to one line (≤120 runes; attachment filenames / `[embed]` / `[sticker]` when it has no text). When the referenced message is unknown (deleted or uncached) `message_id` is still set and `author_display_name`/`preview` are `""` |
+| `attachments` | array | `[{id, filename, content_type, size, url, proxy_url, width, height, spoiler}]` — `url` is the CDN URL; fetch through `fetch_media`. `width`/`height` are 0 for non-images; `spoiler` is derived from the `SPOILER_` filename prefix |
+| `embeds` | array | `[{type, title, description, url, image_url, thumbnail_url, color}]` (subset; enough to render). Absent parts are `""`; `color` is the 0xRRGGBB integer, 0 when unset |
+| `reactions` | array | `[{emoji (string — unicode or "name:id"), count, me (bool)}]` — always an array (possibly empty) |
+| `mentions_self` | bool | ningen `MessageMentions` has `MessageMentions` (explicit mention or unsuppressed `@everyone`; role mentions are not implemented by ningen) |
+| `system` | bool | join/pin/boost/call/thread/stage etc. (every type other than default, inline reply, and slash/context commands). `content` is replaced by a rendered plain-text line that **includes the actor's display name** (e.g. `"Ada joined the server."`, `"Ada pinned a message."`, `"Ada added lin to the group."`), so QML renders system rows as a single line without the author header. Unknown types render `"<name> sent a system message (type N)."` |
+
+`attachments`, `embeds`, and `reactions` are never null.
 
 ---
 
@@ -275,12 +279,18 @@ enables guild TypingStart), fetches the last ~50 messages (cache-aware), and sta
 streaming `message_*` / `typing_start` events for this channel.
 - Request: `{channel_id: string}`
 - Result: `{channel: channel, messages: [message] (ascending by id, i.e.
-  oldest→newest), has_more: bool}`
-- Errors: `not_logged_in`, `unknown_channel`, `forbidden`, `empty_dm_refused`
-  (DM with zero history — send one from the official client first),
-  `gateway_unavailable`.
-- Multiple channels may be open concurrently; opening an open channel re-sends the
-  current tail (idempotent).
+  oldest→newest, at most 50), has_more: bool}` — `has_more` is true when a full
+  50 were returned (a channel with exactly 50 messages reports `true` and the next
+  `history` page comes back empty with `has_more: false`).
+- Errors: `invalid_argument` (non-snowflake id), `not_logged_in`,
+  `gateway_unavailable` (before the first READY), `unknown_channel`, `forbidden`
+  (guild channel without View Channel), `empty_dm_refused` (1:1 DM with zero
+  history — send one from the official client first; empty group DMs open fine),
+  `discord_error` / `rate_limited` (the REST history fetch failed).
+- The open set is **per connection**: each socket client tracks its own open
+  channels, and they are all closed when that connection drops. Multiple channels
+  may be open concurrently; opening an open channel re-sends the current tail
+  (idempotent).
 
 ```json
 {"v":1,"id":20,"command":"open_channel","channel_id":"1049931213073821696"}
@@ -291,15 +301,20 @@ streaming `message_*` / `typing_start` events for this channel.
 Stops event streaming for the channel (read-state tracking continues globally; the
 guild subscription is retained).
 - Request: `{channel_id: string}`. Result: `{}`.
-- Errors: `channel_not_open`.
+- Errors: `invalid_argument`, `channel_not_open` (not open on *this* connection).
 
 #### `history`
-Page older messages. Serves from cache when possible, else REST `MessagesBefore`
-(deep pages bypass the 100-message cache deliberately).
-- Request: `{channel_id: string, before_id: string, limit?: int (default 50, max 100)}`
-- Result: `{messages: [message] (ascending), has_more: bool}` — `has_more:false`
-  means start of channel history.
-- Errors: `channel_not_open`, `unknown_channel`, `discord_error`.
+Page older messages. Serves from cache when it holds a full page older than
+`before_id`, else REST `MessagesBefore` (deep pages bypass the 100-message cache
+deliberately).
+- Request: `{channel_id: string, before_id: string, limit?: int (default 50, max 100;
+  out-of-range values are clamped)}`
+- Result: `{messages: [message] (ascending), has_more: bool}` — `has_more` is
+  `len(messages) == limit`; `false` means start of channel history (the page may
+  still be non-empty — it is the last one).
+- Errors: `invalid_argument`, `channel_not_open` (this connection must have opened
+  it), `not_logged_in`, `gateway_unavailable`, `unknown_channel`, `forbidden`,
+  `rate_limited`, `discord_error`.
 
 #### `send`
 - Request: `{channel_id: string, content: string, reply_to?: string (message id),
@@ -344,10 +359,16 @@ QML may call freely on keystrokes.
 
 #### `ack`
 Mark a channel read up to a message. Calls ningen `ReadState.MarkRead` (dedupes;
-sends the REST ack only for cached, non-self messages — ack after `open_channel`).
+sends the REST ack only for non-self messages). The message **must be in the
+backend's cache** — i.e. it arrived via `open_channel`'s tail or a `message_create`
+— otherwise the command is refused rather than silently moving only the local
+marker. Does not require the channel to be open on this connection.
 - Request: `{channel_id: string, message_id: string}`
-- Result: `{}` — the resulting change arrives as `read_state_changed`.
-- Errors: `not_logged_in`, `unknown_channel`.
+- Result: `{}` — the resulting change arrives as `read_state_changed` (and a
+  `state_changed` if `total_mention_count` changed). Acking an already-read message
+  is a no-op that produces no event.
+- Errors: `invalid_argument`, `not_logged_in`, `gateway_unavailable`,
+  `unknown_channel`, `unknown_message` (not cached — open the channel first).
 
 ### Media
 
@@ -409,34 +430,54 @@ meaningful for `delete`). Fires from gateway Channel*/Thread* events.
 ### `message_create`
 `{channel_id, guild_id (string|null), message: message, notify: bool,
 channel_name: string}`
-Fires for (a) every new message in an **open** channel, and (b) any message anywhere
-whose ningen `MessageMentions` flags include `MessageNotifies` — so Service.qml can
-raise a desktop notification (`notify: true`, with `channel_name` and
-`message.author` supplying the notification title) without every channel being open.
-The plugin-level All/Mentions/Off filter and open-channel suppression are applied in
-QML before `notify-send`. Own sent messages echo here with `nonce` set — re-key the
-optimistic row, don't append.
+Fires for (a) every new message in a channel **this connection has open**, and (b)
+any message anywhere whose ningen `MessageMentions` flags include `MessageNotifies`
+(delivered to every connection) — so Service.qml can raise a desktop notification
+(`notify: true`, with `channel_name` and `message.author` supplying the notification
+title) without every channel being open. `notify` follows Discord's own
+notification settings as ningen evaluates them: DMs, explicit mentions, unsuppressed
+`@everyone`, **and every message in a guild/channel set to "All messages"**; muted
+channels/guilds and "Nothing" never notify; own messages never notify. A message
+that is both in an open channel and notifying arrives exactly once with
+`notify: true`. The plugin-level All/Mentions/Off filter and open-channel
+suppression are applied in QML before `notify-send` (use `message.mentions_self` to
+tell a mention apart from an "All messages" notify). `channel_name` is the sidebar
+name (DMs: the recipient's display name). Own sent messages echo here with `nonce`
+set — re-key the optimistic row, don't append (match on your own pending nonces;
+other people's messages carry nonces too).
 
 ### `message_update`
 `{channel_id, guild_id, message: message}` — edits, embed resolution, and reaction
-changes for open channels. The `message` is the full updated object; replace in place.
+changes (add / remove / remove-all / remove-emoji are folded into this event) for
+open channels. The `message` is the full updated object rebuilt from the cache;
+replace in place. A partial MESSAGE_UPDATE for a message that is no longer cached
+(older than the 100-message cache) is dropped; reactions on uncached messages are
+likewise dropped.
 
 ### `message_delete`
 `{channel_id, guild_id, message_id: string}` — open channels only. Remove the row.
+A bulk delete arrives as one `message_delete` per id.
 
 ### `typing_start`
 `{channel_id, guild_id (string|null), user_id: string, display_name: string,
 timestamp: string}` — open channels only. Guild channels emit this only because
-`open_channel` subscribed the guild. QML expires typers after 10 s and clears a typer
-on their `message_create`.
+`open_channel` subscribed the guild. `display_name` is resolved from the event's
+member, the member cache, or the DM recipient list and is `""` when unknown.
+`timestamp` is the RFC 3339 start time. QML expires typers after 10 s and clears a
+typer on their `message_create`.
 
 ### `read_state_changed`
 `{channel_id, guild_id (string|null), unread: bool, mention_count: int,
 last_read_message_id: string|null, total_mention_count: int}`
-Fires on every ningen `read.UpdateEvent`: new messages, local `ack`, and acks from
-other devices (MESSAGE_ACK). The bar badge is a pure reduction of these
-(`total_mention_count` is precomputed for convenience and matches
-`state.total_mention_count`).
+Fires on every ningen `read.UpdateEvent` (delivered to every connection, regardless
+of open channels): new messages anywhere, local `ack`, and acks from other devices
+(MESSAGE_ACK). `unread: true` with `mention_count: 0` is a plain unread; the
+"mentioned" indication is `mention_count > 0`. The bar badge is a pure reduction of
+these (`total_mention_count` is precomputed for convenience and matches
+`state.total_mention_count`); a `state_changed` follows **only** when the total
+actually changed. Because ningen raises these on its own goroutine, a
+`read_state_changed` for a new message may arrive before or after that message's
+`message_create`.
 
 ### `media_ready`
 `{url: string, ok: bool, path: string ("" on failure), error: string ("" on
@@ -484,7 +525,7 @@ fresh code.
 | `state_changed` | `ningen.ConnectedEvent` / `DisconnectedEvent` (fatal-code check via `IsLoggedOut()`), login/logout, `SetStatus`, `TotalMentionCount` deltas |
 | `guilds_synced` | ningen post-READY (`Open` returned / `ConnectedEvent`), GuildCreate/Delete |
 | `channel_update` | `ChannelCreateEvent`/`ChannelUpdateEvent`/`ChannelDeleteEvent`, `ThreadCreateEvent` etc. |
-| `message_create/update/delete` | `MessageCreateEvent`/`MessageUpdateEvent`/`MessageDeleteEvent` + `MessageReaction*` (folded into `message_update`) |
+| `message_create/update/delete` | `MessageCreateEvent`/`MessageUpdateEvent`/`MessageDeleteEvent`/`MessageDeleteBulkEvent` + `MessageReaction{Add,Remove,RemoveAll,RemoveEmoji}` (folded into `message_update` from the cache); per-connection routing in the socket layer (`socket.Routed`) |
 | `typing_start` | `TypingStartEvent` (guilds require the Op 14 subscribe from `open_channel`) |
 | `read_state_changed` | ningen `read.UpdateEvent` (async goroutine — serialized into the writer) |
 | `media_ready` / `upload_progress` | backend media cache / counting reader |

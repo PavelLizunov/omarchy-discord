@@ -26,6 +26,41 @@ type Backend interface {
 	Handle(ctx context.Context, req *protocol.Request) (result any, err *protocol.Error)
 }
 
+// Client is the per-connection view handed to Backend.Handle through its
+// context: the set of channels this client has opened with open_channel.
+// Routed events (see Routed) are only delivered to clients that have the
+// channel open; the set dies with the connection.
+type Client interface {
+	OpenChannel(id string)
+	// CloseChannel reports whether the channel was open.
+	CloseChannel(id string) bool
+	HasOpen(id string) bool
+}
+
+type clientKey struct{}
+
+// WithClient attaches a Client to ctx (the server does this per connection;
+// tests use it to drive Backend.Handle directly).
+func WithClient(ctx context.Context, c Client) context.Context {
+	return context.WithValue(ctx, clientKey{}, c)
+}
+
+// ClientFromContext returns the Client attached by WithClient, or nil.
+func ClientFromContext(ctx context.Context) Client {
+	c, _ := ctx.Value(clientKey{}).(Client)
+	return c
+}
+
+// Routed wraps an event that is delivered only to clients with ChannelID
+// open. When All is set it is also delivered to every other client (a
+// message_create that should notify). Routed itself never hits the wire —
+// only Event is encoded.
+type Routed struct {
+	ChannelID string
+	All       bool
+	Event     any
+}
+
 // DefaultPath computes $XDG_RUNTIME_DIR/omarchy-discord/backend.sock.
 func DefaultPath() string {
 	dir := os.Getenv("XDG_RUNTIME_DIR")
@@ -118,29 +153,68 @@ func (s *Server) Serve(ctx context.Context) error {
 }
 
 // Broadcast queues an event to every connected client, preserving order
-// relative to other broadcasts and to connect-time snapshots.
+// relative to other broadcasts and to connect-time snapshots. A Routed event
+// goes only to clients with its channel open (plus everyone when All is set).
 func (s *Server) Broadcast(ev any) {
+	r, routed := ev.(Routed)
+	if routed {
+		ev = r.Event
+	}
 	line := protocol.MustEncode(0, ev)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for c := range s.conns {
+		if routed && !r.All && !c.hasOpenLocked(r.ChannelID) {
+			continue
+		}
 		c.send(line)
 	}
 }
 
 type conn struct {
-	nc    net.Conn
-	out   chan []byte
-	done  chan struct{}
-	once  sync.Once
-	srv   *Server
-	label string
+	nc   net.Conn
+	out  chan []byte
+	done chan struct{}
+	once sync.Once
+	srv  *Server
+
+	// open is guarded by srv.mu so Broadcast's filter and open/close_channel
+	// never race.
+	open map[string]struct{}
+}
+
+func (c *conn) OpenChannel(id string) {
+	c.srv.mu.Lock()
+	defer c.srv.mu.Unlock()
+	c.open[id] = struct{}{}
+}
+
+func (c *conn) CloseChannel(id string) bool {
+	c.srv.mu.Lock()
+	defer c.srv.mu.Unlock()
+	_, ok := c.open[id]
+	delete(c.open, id)
+	return ok
+}
+
+func (c *conn) HasOpen(id string) bool {
+	c.srv.mu.Lock()
+	defer c.srv.mu.Unlock()
+	_, ok := c.open[id]
+	return ok
+}
+
+// hasOpenLocked is HasOpen for callers already holding srv.mu.
+func (c *conn) hasOpenLocked(id string) bool {
+	_, ok := c.open[id]
+	return ok
 }
 
 func (s *Server) handle(ctx context.Context, nc net.Conn) {
-	c := &conn{nc: nc, out: make(chan []byte, queueDepth), done: make(chan struct{}), srv: s}
+	c := &conn{nc: nc, out: make(chan []byte, queueDepth), done: make(chan struct{}), srv: s, open: map[string]struct{}{}}
 	defer c.close()
 	go c.writer()
+	ctx = WithClient(ctx, c)
 
 	// Register and enqueue the snapshot while holding the same lock Broadcast
 	// takes, so no event can interleave the snapshot's lines or reach this

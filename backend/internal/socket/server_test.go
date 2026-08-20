@@ -33,12 +33,29 @@ func (f *fakeBackend) Snapshot() []any {
 	return evs
 }
 
-func (f *fakeBackend) Handle(_ context.Context, req *protocol.Request) (any, *protocol.Error) {
+func (f *fakeBackend) Handle(ctx context.Context, req *protocol.Request) (any, *protocol.Error) {
 	switch req.Command {
 	case "get_state":
 		return protocol.State{ProtocolVersion: 1, BackendVersion: protocol.BackendVersion, Lifecycle: protocol.LifecycleLoggedOut, Generation: 1}, nil
 	case "slow":
 		time.Sleep(100 * time.Millisecond)
+		return protocol.EmptyResult{}, nil
+	case "open_channel", "close_channel":
+		var p protocol.OpenChannelParams
+		if e := req.Params(&p); e != nil {
+			return nil, e
+		}
+		c := ClientFromContext(ctx)
+		if c == nil {
+			return nil, protocol.Errorf(protocol.CodeInternalError, "no client in context")
+		}
+		if req.Command == "open_channel" {
+			c.OpenChannel(p.ChannelID)
+			return protocol.OpenChannelResult{Channel: protocol.Channel{ID: p.ChannelID, Recipients: []protocol.User{}}, Messages: []protocol.Message{}}, nil
+		}
+		if !c.CloseChannel(p.ChannelID) {
+			return nil, protocol.Errorf(protocol.CodeChannelNotOpen, "not open")
+		}
 		return protocol.EmptyResult{}, nil
 	}
 	return nil, protocol.Errorf(protocol.CodeUnknownCommand, "unknown command %q", req.Command)
@@ -249,4 +266,81 @@ func TestSnapshotNotInterleavedByBroadcasts(t *testing.T) {
 	}
 	close(stop)
 	wg.Wait()
+}
+
+// Routed events reach only the clients that opened the channel; a notify
+// (All) routed event reaches everyone; closing the channel stops delivery.
+func TestRoutedEventsFollowOpenChannels(t *testing.T) {
+	srv, _ := startServer(t, &fakeBackend{})
+	a, sa := dial(t, srv)
+	b, sb := dial(t, srv)
+	next(t, sa) // snapshots
+	next(t, sb)
+
+	fmt.Fprintln(a, `{"v":1,"id":1,"command":"open_channel","channel_id":"77"}`)
+	if r := next(t, sa); r["ok"] != true {
+		t.Fatalf("open: %v", r)
+	}
+
+	msg := func(id string) protocol.Message {
+		return protocol.Message{ID: id, ChannelID: "77", Attachments: []protocol.Attachment{}, Embeds: []protocol.Embed{}, Reactions: []protocol.Reaction{}}
+	}
+	srv.Broadcast(Routed{ChannelID: "77", Event: protocol.NewMessageCreate(msg("1"), false, "general")})
+	srv.Broadcast(Routed{ChannelID: "78", Event: protocol.NewMessageCreate(msg("2"), false, "other")})
+	srv.Broadcast(Routed{ChannelID: "78", All: true, Event: protocol.NewMessageCreate(msg("3"), true, "other")})
+	srv.Broadcast(protocol.NewReadStateChanged("77", nil, true, 0, nil, 0))
+
+	// A: message 1 (open), then 3 (notify), then read state; never 2.
+	if ev := next(t, sa); ev["event"] != "message_create" || ev["message"].(map[string]any)["id"] != "1" {
+		t.Fatalf("a first: %v", ev)
+	}
+	if ev := next(t, sa); ev["event"] != "message_create" || ev["message"].(map[string]any)["id"] != "3" || ev["notify"] != true {
+		t.Fatalf("a second: %v", ev)
+	}
+	if ev := next(t, sa); ev["event"] != "read_state_changed" {
+		t.Fatalf("a third: %v", ev)
+	}
+	// B: only the notify message and the read state.
+	if ev := next(t, sb); ev["event"] != "message_create" || ev["message"].(map[string]any)["id"] != "3" {
+		t.Fatalf("b first: %v", ev)
+	}
+	if ev := next(t, sb); ev["event"] != "read_state_changed" {
+		t.Fatalf("b second: %v", ev)
+	}
+	// Close: A stops receiving; a second close is channel_not_open.
+	fmt.Fprintln(a, `{"v":1,"id":2,"command":"close_channel","channel_id":"77"}`)
+	if r := next(t, sa); r["ok"] != true {
+		t.Fatalf("close: %v", r)
+	}
+	fmt.Fprintln(a, `{"v":1,"id":3,"command":"close_channel","channel_id":"77"}`)
+	if r := next(t, sa); r["ok"] != false || r["error"].(map[string]any)["code"] != protocol.CodeChannelNotOpen {
+		t.Fatalf("second close: %v", r)
+	}
+	srv.Broadcast(Routed{ChannelID: "77", Event: protocol.NewMessageDelete("77", nil, "1")})
+	fmt.Fprintln(a, `{"v":1,"id":4,"command":"ping"}`)
+	if r := next(t, sa); r["type"] != "response" || r["id"] != float64(4) {
+		t.Fatalf("after close, expected only the ping response, got %v", r)
+	}
+	// B still gets nothing for 77 either.
+	fmt.Fprintln(b, `{"v":1,"id":5,"command":"ping"}`)
+	if r := next(t, sb); r["id"] != float64(5) {
+		t.Fatalf("b: %v", r)
+	}
+	// Open-channel state is per connection: B opening 77 now gets deletes, A does not.
+	fmt.Fprintln(b, `{"v":1,"id":6,"command":"open_channel","channel_id":"77"}`)
+	next(t, sb)
+	srv.Broadcast(Routed{ChannelID: "77", Event: protocol.NewMessageDelete("77", nil, "9")})
+	if ev := next(t, sb); ev["event"] != "message_delete" || ev["message_id"] != "9" {
+		t.Fatalf("b delete: %v", ev)
+	}
+	fmt.Fprintln(a, `{"v":1,"id":7,"command":"ping"}`)
+	if r := next(t, sa); r["id"] != float64(7) {
+		t.Fatalf("a leaked delete: %v", r)
+	}
+}
+
+func TestClientFromContextNil(t *testing.T) {
+	if ClientFromContext(context.Background()) != nil {
+		t.Fatal("expected nil client")
+	}
 }

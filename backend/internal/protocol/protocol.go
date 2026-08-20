@@ -31,6 +31,11 @@ const (
 	CodeGatewayUnavailable = "gateway_unavailable"
 	CodeUnknownGuild       = "unknown_guild"
 	CodeUnknownChannel     = "unknown_channel"
+	CodeUnknownMessage     = "unknown_message"
+	CodeChannelNotOpen     = "channel_not_open"
+	CodeForbidden          = "forbidden"
+	CodeRateLimited        = "rate_limited"
+	CodeEmptyDMRefused     = "empty_dm_refused"
 	CodeDiscordError       = "discord_error"
 	CodeInternalError      = "internal_error"
 )
