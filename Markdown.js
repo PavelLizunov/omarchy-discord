@@ -126,9 +126,10 @@ function codeStyle(ctx) {
   return style
 }
 
-var URL_RE = /https?:\/\/[^\s<>"'()\[\]]+[^\s<>"'()\[\].,;:!?]/g
+// `|` is excluded so a spoilered link (||https://…||) keeps its cover.
+var URL_RE = /https?:\/\/[^\s<>"'()\[\]|]+[^\s<>"'()\[\]|.,;:!?]/g
 // Same pattern against escaped text (quotes already turned into &quot;).
-var URL_ESCAPED_RE = /https?:\/\/[^\s<>()\[\]&]+(?:&amp;[^\s<>()\[\]&]+)*/g
+var URL_ESCAPED_RE = /https?:\/\/[^\s<>()\[\]&|]+(?:&amp;[^\s<>()\[\]&|]+)*/g
 
 function trimUrl(url) {
   return url.replace(/[.,;:!?]+$/, "")
@@ -180,7 +181,18 @@ function protectInline(text, ctx, stash, plain) {
   return text
 }
 
-function formatInline(text, ctx, plain) {
+// Force the spoiler colour onto every styled fragment inside a spoiler
+// (mentions, links, inline code carry their own color/background-color,
+// which would otherwise show through the cover).
+function forceSpoilerColor(html, color) {
+  return html.replace(/style="([^"]*)"/g, function(_, style) {
+    var kept = style.replace(/(?:background-)?color:[^;"]*;?/g, "")
+    if (kept && !/;$/.test(kept)) kept += ";"
+    return "style=\"" + kept + "background-color:" + color + ";color:" + color + "\""
+  })
+}
+
+function formatInline(text, ctx, stash, plain) {
   if (plain) {
     return text
       .replace(/\|\|([\s\S]+?)\|\|/g, "$1")
@@ -195,8 +207,16 @@ function formatInline(text, ctx, plain) {
     ? "background-color:" + ctx.spoilerColor + ";color:" + ctx.spoilerColor
     : ""
   text = text.replace(/\|\|([\s\S]+?)\|\|/g, function(_, inner) {
-    return spoiler ? span(spoiler, inner) : "<s>" + inner + "</s>"
+    if (!spoiler) return "<s>" + inner + "</s>"
+    // Restore what the spoiler wraps now so its colours can be overridden,
+    // then stash the whole cover so later inline passes leave it alone.
+    var covered = forceSpoilerColor(stash.restore(formatMarks(inner)), ctx.spoilerColor)
+    return stash.put(span(spoiler, covered))
   })
+  return formatMarks(text)
+}
+
+function formatMarks(text) {
   text = text.replace(/\*\*\*([\s\S]+?)\*\*\*/g, "<b><i>$1</i></b>")
   text = text.replace(/\*\*([\s\S]+?)\*\*/g, "<b>$1</b>")
   text = text.replace(/__([\s\S]+?)__/g, "<u>$1</u>")
@@ -261,7 +281,7 @@ function convert(content, ctx, plain) {
   var stash = new Stash()
   text = blocks(text, ctx, stash, plain)
   text = protectInline(text, ctx, stash, plain)
-  text = formatInline(text, ctx, plain)
+  text = formatInline(text, ctx, stash, plain)
   if (!plain) text = text.replace(/\n/g, "<br>")
   text = stash.restore(text)
   return text

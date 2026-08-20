@@ -62,6 +62,9 @@ type Channel struct {
 	Unread        string  `json:"unread"`
 	MentionCount  int     `json:"mention_count"`
 	Muted         bool    `json:"muted"`
+	// LastReadMessageID is the account's read marker for the channel (null
+	// when it has none), so the client can place the unread divider on open.
+	LastReadMessageID *string `json:"last_read_message_id"`
 	// Recipients is always an array: the DM/group-DM members, empty for guild
 	// channels.
 	Recipients []User `json:"recipients"`

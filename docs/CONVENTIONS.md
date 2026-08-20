@@ -529,7 +529,7 @@ the cache dir.
 No library exists — port discordo's ~300-line flow as our own `internal/` package:
 dial `wss://remote-auth-gateway.discord.gg/?v=2` (browser UA + Origin) → `hello`
 (heartbeat every `heartbeat_interval`) → send `init` with base64 SPKI of a fresh
-RSA-2048 key → `nonce_proof` (RSA-OAEP-SHA256 decrypt, reply base64url) →
+RSA-2048 key → `nonce_proof` (RSA-OAEP-SHA256 decrypt the nonce, reply the base64url of the RAW decrypted nonce — NOT a digest; see internal/remoteauth) →
 `pending_remote_init` gives the fingerprint; QR content is
 `https://discord.com/ra/<fingerprint>` → `pending_ticket` (decrypt user payload
 `id:discriminator:avatarHash:username`) → `pending_login` gives the ticket → close WS →

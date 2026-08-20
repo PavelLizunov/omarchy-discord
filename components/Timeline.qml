@@ -59,10 +59,31 @@ FocusScope {
     scrollToBottom()
   }
 
-  function ensureCursor() {
+  // Keep the cursor on a real row. When its message vanished (delete, a
+  // reload that replaced the window) and the view is scrolled up, move to
+  // the nearest surviving neighbour from the previous order (`previousIds`)
+  // instead of the newest row, which would be off-screen and make the next
+  // j/k fling to the bottom (and ack).
+  function ensureCursor(previousIds) {
     if (!rows.length) { cursorMessageId = ""; return }
-    if (indexOfId(cursorMessageId) < 0)
-      cursorMessageId = String(rows[rows.length - 1].id || "")
+    if (indexOfId(cursorMessageId) >= 0) return
+    var next = pinned ? "" : neighbourId(previousIds, cursorMessageId)
+    cursorMessageId = next || String(rows[rows.length - 1].id || "")
+  }
+
+  // Nearest id to `id` in `oldIds` (later first, then earlier) that is still
+  // present in `rows`; "" when none.
+  function neighbourId(oldIds, id) {
+    if (!Array.isArray(oldIds) || !id) return ""
+    var at = oldIds.indexOf(id)
+    if (at < 0) return ""
+    var present = ({})
+    for (var i = 0; i < ids.length; i++) present[ids[i]] = true
+    for (var d = 1; d < oldIds.length; d++) {
+      if (at + d < oldIds.length && present[oldIds[at + d]]) return oldIds[at + d]
+      if (at - d >= 0 && present[oldIds[at - d]]) return oldIds[at - d]
+    }
+    return ""
   }
 
   // --- internals ---
@@ -188,6 +209,7 @@ FocusScope {
       if (nextIds.length) idModel.append(idRows(nextIds, 0, nextIds.length))
       if (!nextIds.length) pinned = true
     }
+    ensureCursor(oldIds)
     Qt.callLater(restoreAnchor)
   }
 
@@ -384,10 +406,7 @@ FocusScope {
   Keys.priority: Keys.BeforeItem
   Keys.onPressed: function(event) { handleKey(event) }
 
-  onMessagesChanged: {
-    syncModel(Array.isArray(messages) ? messages : [])
-    ensureCursor()
-  }
+  onMessagesChanged: syncModel(Array.isArray(messages) ? messages : [])
   Component.onCompleted: {
     if (!ids.length) syncModel(Array.isArray(messages) ? messages : [])
     ensureCursor()

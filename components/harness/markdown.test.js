@@ -56,6 +56,22 @@ test("spoilers", () => {
   assert.equal(p("||x||"), "x")
 })
 
+test("spoilers cover what they wrap", () => {
+  const cover = (inner) => `<span style="background-color:#s;color:#s">${inner}</span>`
+  // mention, link, inline code keep their markup but take the spoiler colour
+  assert.equal(r("||<@1>||"), cover("<span style=\"background-color:#s;color:#s\"><b>@ada</b></span>"))
+  assert.equal(r("||[t](https://x.y)||"), cover("<a href=\"https://x.y\" style=\"background-color:#s;color:#s\">t</a>"))
+  assert.equal(r("||https://x.y/a||"), cover("<a href=\"https://x.y/a\" style=\"background-color:#s;color:#s\">https://x.y/a</a>"))
+  assert.equal(r("||`c`||"), cover("<code style=\"font-family:'mono';background-color:#s;color:#s\">c</code>"))
+  // the colour override is not applied outside the spoiler
+  assert.equal(r("<@1> ||x||"), "<span style=\"color:#m;background-color:#mb;\"><b>@ada</b></span> " + cover("x"))
+  // markup inside and around a spoiler still formats; code inside stays literal
+  assert.equal(r("**||a||**"), "<b>" + cover("a") + "</b>")
+  assert.equal(r("||**a**||"), cover("<b>a</b>"))
+  assert.equal(r("||`**x**`||"), cover("<code style=\"font-family:'mono';background-color:#s;color:#s\">**x**</code>"))
+  assert.equal(p("||<@1> [t](https://x.y)||"), "@ada t")
+})
+
 test("mentions and emoji", () => {
   const chip = (t) => `<span style="color:#m;background-color:#mb;"><b>${t}</b></span>`
   assert.equal(r("<@1>"), chip("@ada"))

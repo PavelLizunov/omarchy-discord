@@ -53,7 +53,7 @@ var goldens = []struct {
 	}}), &typedResponse[ListGuildsResult]{}},
 	{"response_list_channels", OKResponse(7, ListChannelsResult{Channels: []Channel{
 		{ID: "1000000000000000010", GuildID: str("1000000000000000001"), Type: "category", Name: "General", Topic: "", ParentID: nil, Position: 0, LastMessageID: nil, Unread: UnreadRead, MentionCount: 0, Muted: false, Recipients: []User{}},
-		{ID: "1000000000000000011", GuildID: str("1000000000000000001"), Type: "text", Name: "general", Topic: "chat", ParentID: str("1000000000000000010"), Position: 0, LastMessageID: str("1000000000000000099"), Unread: UnreadMentioned, MentionCount: 2, Muted: false, Recipients: []User{}},
+		{ID: "1000000000000000011", GuildID: str("1000000000000000001"), Type: "text", Name: "general", Topic: "chat", ParentID: str("1000000000000000010"), Position: 0, LastMessageID: str("1000000000000000099"), Unread: UnreadMentioned, MentionCount: 2, Muted: false, Recipients: []User{}, LastReadMessageID: str("1000000000000000090")},
 	}}), &typedResponse[ListChannelsResult]{}},
 	{"response_list_dms", OKResponse(8, ListChannelsResult{Channels: []Channel{
 		{ID: "1049931213073821696", GuildID: nil, Type: "dm", Name: "ada", Topic: "", ParentID: nil, Position: 0, LastMessageID: str("1049931302442426390"), Unread: UnreadUnread, MentionCount: 0, Muted: false,
@@ -68,11 +68,11 @@ var goldens = []struct {
 	{"event_guilds_synced", NewGuildsSynced(7,
 		[]Guild{{ID: "1000000000000000001", Name: "Omarchy", IconURL: nil, Unread: UnreadUnread, MentionCount: 0, Position: 0}},
 		[]Channel{{ID: "1049931213073821696", GuildID: nil, Type: "dm", Name: "ada", Topic: "", ParentID: nil, Position: 0, LastMessageID: str("1049931302442426390"), Unread: UnreadRead, MentionCount: 0, Muted: false,
-			Recipients: []User{{ID: "2000000000000000001", Username: "ada", DisplayName: "ada", AvatarURL: ""}}}},
+			Recipients: []User{{ID: "2000000000000000001", Username: "ada", DisplayName: "ada", AvatarURL: ""}}, LastReadMessageID: str("1049931302442426390")}},
 	), &GuildsSyncedEvent{}},
 	{"event_guilds_synced_empty", NewGuildsSynced(3, nil, nil), &GuildsSyncedEvent{}},
 	{"response_open_channel", OKResponse(20, OpenChannelResult{
-		Channel:  Channel{ID: "1049931213073821696", GuildID: str("1000000000000000001"), Type: "text", Name: "general", Topic: "chat", ParentID: str("1000000000000000010"), Position: 0, LastMessageID: str("1049931339989602304"), Unread: UnreadRead, MentionCount: 0, Muted: false, Recipients: []User{}},
+		Channel:  Channel{ID: "1049931213073821696", GuildID: str("1000000000000000001"), Type: "text", Name: "general", Topic: "chat", ParentID: str("1000000000000000010"), Position: 0, LastMessageID: str("1049931339989602304"), Unread: UnreadRead, MentionCount: 0, Muted: false, Recipients: []User{}, LastReadMessageID: str("1049931339989602304")},
 		Messages: []Message{sampleReply, sampleMessage},
 		HasMore:  true,
 	}), &typedResponse[OpenChannelResult]{}},

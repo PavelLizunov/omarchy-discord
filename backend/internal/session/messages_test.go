@@ -585,3 +585,103 @@ func TestReadStateChangedFunnel(t *testing.T) {
 		t.Fatalf("remote ack: %+v", rs)
 	}
 }
+
+// TestOpenChannelRegistersBeforeFetch: the open is registered before the tail
+// fetch so a message arriving mid-fetch is routed to the connection; a failed
+// open rolls the registration back, but never closes an already-open channel.
+func TestOpenChannelRegistersBeforeFetch(t *testing.T) {
+	m, n := readyManager(t)
+	fillCache(m, n, chGeneral, guildOmar, 0, 5)
+	drain(m)
+	client := newFakeClient()
+	ctx := socket.WithClient(context.Background(), client)
+	const id = "300000000000000002"
+
+	var openDuringFetch bool
+	m.fetchTail = func(ctx context.Context, n *ningen.State, chID discord.ChannelID, limit uint) ([]discord.Message, error) {
+		openDuringFetch = client.HasOpen(id)
+		// A message lands while the REST round trip is in flight.
+		dispatch(n, &gateway.MessageCreateEvent{Message: guildMsg(10, "mid-fetch")})
+		return n.Cabinet.Messages(chID)
+	}
+	res, e := m.Handle(ctx, req(t, `{"v":1,"id":1,"command":"open_channel","channel_id":"`+id+`"}`))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if !openDuringFetch {
+		t.Fatal("channel must be registered open before the tail fetch")
+	}
+	r := routed(t, m)
+	if r.ChannelID != id || r.Event.(protocol.MessageCreateEvent).Message.Content != "mid-fetch" {
+		t.Fatalf("mid-fetch message not routed: %+v", r)
+	}
+	// The same message is also in the tail (cache was filled by the event); the client dedupes by id.
+	msgs := res.(protocol.OpenChannelResult).Messages
+	if msgs[len(msgs)-1].ID != (msgBase + 10).String() {
+		t.Fatalf("tail should end with the mid-fetch message, got %s", msgs[len(msgs)-1].ID)
+	}
+	drain(m)
+
+	// A failed reopen of an open channel leaves it open.
+	m.fetchTail = func(context.Context, *ningen.State, discord.ChannelID, uint) ([]discord.Message, error) {
+		return nil, errors.New("dial tcp: network unreachable")
+	}
+	if _, e := m.Handle(ctx, req(t, `{"v":1,"id":2,"command":"open_channel","channel_id":"`+id+`"}`)); e == nil || e.Code != protocol.CodeDiscordError {
+		t.Fatalf("rest failure: %v", e)
+	}
+	if !client.HasOpen(id) {
+		t.Fatal("failed reopen must not close an open channel")
+	}
+	// A failed first open is rolled back: REST error and virgin-DM refusal.
+	if _, e := m.Handle(ctx, req(t, `{"v":1,"id":3,"command":"open_channel","channel_id":"300000000000000003"}`)); e == nil || e.Code != protocol.CodeDiscordError {
+		t.Fatalf("rest failure: %v", e)
+	}
+	if client.HasOpen("300000000000000003") {
+		t.Fatal("failed open left the channel open")
+	}
+	m.fetchTail = func(context.Context, *ningen.State, discord.ChannelID, uint) ([]discord.Message, error) {
+		return nil, nil
+	}
+	if _, e := m.Handle(ctx, req(t, `{"v":1,"id":4,"command":"open_channel","channel_id":"400000000000000001"}`)); e == nil || e.Code != protocol.CodeEmptyDMRefused {
+		t.Fatalf("virgin dm: %v", e)
+	}
+	if client.HasOpen("400000000000000001") {
+		t.Fatal("refused DM left open")
+	}
+}
+
+// TestOpenChannelTailCapped: the cache-aware fetch may hand back more than
+// openTail (arikawa returns a "tiny" channel's whole store); the tail is
+// capped to the newest openTail and has_more reflects the cap.
+func TestOpenChannelTailCapped(t *testing.T) {
+	m, n := readyManager(t)
+	fillCache(m, n, chGeneral, guildOmar, 0, 70)
+	drain(m)
+	m.fetchTail = func(ctx context.Context, n *ningen.State, chID discord.ChannelID, limit uint) ([]discord.Message, error) {
+		return n.Cabinet.Messages(chID) // all 70, newest first
+	}
+	ctx := socket.WithClient(context.Background(), newFakeClient())
+	res, e := m.Handle(ctx, req(t, `{"v":1,"id":1,"command":"open_channel","channel_id":"300000000000000002"}`))
+	if e != nil {
+		t.Fatal(e)
+	}
+	r := res.(protocol.OpenChannelResult)
+	if len(r.Messages) != openTail || !r.HasMore {
+		t.Fatalf("got %d messages has_more=%v", len(r.Messages), r.HasMore)
+	}
+	if r.Messages[0].ID != (msgBase+20).String() || r.Messages[openTail-1].ID != (msgBase+69).String() {
+		t.Fatalf("must keep the newest 50: %s … %s", r.Messages[0].ID, r.Messages[openTail-1].ID)
+	}
+	// A short tail reports has_more=false.
+	m.fetchTail = func(ctx context.Context, n *ningen.State, chID discord.ChannelID, limit uint) ([]discord.Message, error) {
+		all, _ := n.Cabinet.Messages(chID)
+		return all[:3], nil
+	}
+	res, e = m.Handle(ctx, req(t, `{"v":1,"id":2,"command":"open_channel","channel_id":"300000000000000002"}`))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if r := res.(protocol.OpenChannelResult); len(r.Messages) != 3 || r.HasMore {
+		t.Fatalf("short tail: %d has_more=%v", len(r.Messages), r.HasMore)
+	}
+}

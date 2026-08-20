@@ -85,11 +85,13 @@ column or timeline carries the focus border.
 | `Esc` (timeline) | Mark the channel read and return to the sidebar |
 | `Esc` (channel list) | Back to the rail |
 | `Esc` (rail) | Close the panel |
-| `Tab` / `Shift+Tab` | Reach the Log out / Close buttons |
+| `Tab` / `Shift+Tab` | Cycle rail → channel list → timeline → Log out → Close; `Esc` on a button returns to the last zone |
 
 Reaching the bottom of the timeline while it is focused marks the channel read
 (debounced); scrolling back up never acks. Middle-clicking the bar mark opens the
-most recent unread DM.
+most recent unread DM. The open channel keeps a rolling window of the newest 500
+messages while you are at the bottom (older rows become pageable history again);
+nothing is trimmed while you are scrolled up.
 
 ## Settings
 

@@ -91,10 +91,21 @@ Item {
   // backend on every reconnect). Replaced wholesale.
   property var openChannels: []
   // channelId -> { channel, messages (ascending), hasMore, loading, oldestId,
-  // unreadMarkerId }. The map is replaced wholesale on every change; the
-  // `messages` array is always a new array whose elements are the same object
-  // references for unchanged rows (Timeline diffs by id and keeps delegates).
+  // unreadMarkerId, opened }. `opened` flips once an open_channel response
+  // has landed (message_create may race ahead of it, so a non-empty
+  // `messages` does not mean the channel was opened before). The map is
+  // replaced wholesale on every change; the `messages` array is always a new
+  // array whose elements are the same object references for unchanged rows
+  // (Timeline diffs by id and keeps delegates).
   property var channelData: ({})
+  // Live traffic in the open channel is kept to a rolling window: once the
+  // array passes the cap it is trimmed from the top (to cap - windowSlack,
+  // so the trim is not repeated on every arrival) and the dropped rows
+  // become pageable history again. Never trimmed while the panel's
+  // timeline is scrolled up (`timelinePinned`, maintained by Panel.qml).
+  readonly property int messageWindowCap: 500
+  readonly property int messageWindowSlack: 100
+  property bool timelinePinned: true
   // channelId -> { unread, mention_count, last_read_message_id } from
   // read_state_changed events (never from snapshots: the structure mirror is
   // the display truth; this map is what ack/unread-marker logic consults).
@@ -415,9 +426,8 @@ Item {
     if (!isOpen(id)) openChannels = openChannels.concat([id])
     var existing = channelEntry(id)
     if (!existing) {
-      var marker = readState[id] ? String(readState[id].last_read_message_id || "") : ""
       setChannelEntry(id, { channel: null, messages: [], hasMore: false, loading: true,
-        oldestId: "", unreadMarkerId: marker })
+        oldestId: "", unreadMarkerId: readMarker(id, null), opened: false })
     } else if (!existing.loading) patchChannelEntry(id, { loading: true })
     if (!ready) return
     send("open_channel", { channel_id: id }, function(ok, result) {
@@ -430,17 +440,25 @@ Item {
       var channel = result && result.channel ? result.channel : null
       root.noteAuthors(rows)
       var entry = root.channelEntry(id) || ({})
-      // A re-open (reconnect) re-sends the tail; merge it over what is loaded
-      // so history already paged in survives and live rows are not duplicated.
-      var merged = root.mergeTail(entry.messages || [], rows)
+      var loaded = entry.messages || []
+      // A re-open (reconnect) re-sends the tail. When it overlaps the loaded
+      // window, merge it in so paged history survives and live rows are not
+      // duplicated, keeping the paging state already established. When the
+      // whole tail is newer than anything loaded (long disconnect) the gap
+      // between them could never be filled, so the old window is dropped and
+      // the tail adopted with the response's own paging state.
+      var reopened = !!entry.opened
+      var adoptTail = reopened && loaded.length && rows.length
+        && Api.compareIds(rows[0].id, loaded[loaded.length - 1].id) > 0
+      var merged = adoptTail ? rows.slice() : root.mergeTail(loaded, rows)
       root.setChannelEntry(id, {
         channel: channel,
         messages: merged,
-        // A re-open keeps the paging state already established for the window.
-        hasMore: (entry.messages && entry.messages.length) ? !!entry.hasMore : !!(result && result.has_more),
+        hasMore: reopened && !adoptTail ? !!entry.hasMore : !!(result && result.has_more),
         loading: false,
         oldestId: merged.length ? String(merged[0].id || "") : "",
-        unreadMarkerId: entry.unreadMarkerId || ""
+        unreadMarkerId: entry.unreadMarkerId || root.readMarker(id, channel),
+        opened: true
       })
       if (channel && root.currentChannelId === id) {
         var guildId = channel.guild_id ? String(channel.guild_id) : "dms"
@@ -450,19 +468,32 @@ Item {
     })
   }
 
+  // Unread marker for a channel being opened: the last read_state_changed
+  // seen for it, else the read marker the backend put on the channel object.
+  function readMarker(channelId, channel) {
+    var state = readState[channelId]
+    if (state && state.last_read_message_id) return String(state.last_read_message_id)
+    return channel && channel.last_read_message_id ? String(channel.last_read_message_id) : ""
+  }
+
   // Merge a fresh newest-page over the loaded window: rows already loaded
-  // keep their object identity (Timeline diffing), unknown rows are added,
-  // result stays ascending by id.
+  // keep their object identity (Timeline diffing) unless the wire content
+  // changed (an edit or reaction made while disconnected), unknown rows are
+  // added, result stays ascending by id.
   function mergeTail(loaded, tail) {
     if (!loaded.length) return tail.slice()
     if (!tail.length) return loaded.slice()
-    var byId = ({})
-    for (var i = 0; i < loaded.length; i++) byId[String(loaded[i].id || "")] = true
+    var indexById = ({})
+    for (var i = 0; i < loaded.length; i++) indexById[String(loaded[i].id || "")] = i
     var out = loaded.slice()
     var added = false
     for (var j = 0; j < tail.length; j++) {
       var tid = String(tail[j].id || "")
-      if (byId[tid]) continue
+      var at = indexById[tid]
+      if (at !== undefined) {
+        if (JSON.stringify(out[at]) !== JSON.stringify(tail[j])) out[at] = tail[j]
+        continue
+      }
       out.push(tail[j])
       added = true
     }
@@ -579,8 +610,14 @@ Item {
     var next = rows.concat([row])
     if (rows.length && Api.compareIds(rows[rows.length - 1].id, id) > 0)
       next.sort(function(a, b) { return Api.compareIds(a.id, b.id) })
-    patchChannelEntry(channelId, { messages: next,
-      oldestId: next.length ? String(next[0].id || "") : "" })
+    var fields = { messages: next }
+    var viewed = channelId === currentChannelId && !timelinePinned
+    if (next.length > messageWindowCap && !viewed) {
+      fields.messages = next.slice(next.length - (messageWindowCap - messageWindowSlack))
+      fields.hasMore = true
+    }
+    fields.oldestId = fields.messages.length ? String(fields.messages[0].id || "") : ""
+    patchChannelEntry(channelId, fields)
   }
 
   function applyMessageUpdate(message) {
@@ -803,6 +840,7 @@ Item {
     channelData = ({})
     readState = ({})
     typers = ({})
+    knownUsers = ({})
     typerTimer.running = false
   }
 

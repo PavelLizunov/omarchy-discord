@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -50,6 +51,11 @@ func (f *fakeBackend) Handle(ctx context.Context, req *protocol.Request) (any, *
 			return nil, protocol.Errorf(protocol.CodeInternalError, "no client in context")
 		}
 		if req.Command == "open_channel" {
+			if strings.HasPrefix(p.ChannelID, "slow") {
+				// Models a cold tail fetch; the registration itself is late
+				// so only the per-channel lane keeps a racing close correct.
+				time.Sleep(100 * time.Millisecond)
+			}
 			c.OpenChannel(p.ChannelID)
 			return protocol.OpenChannelResult{Channel: protocol.Channel{ID: p.ChannelID, Recipients: []protocol.User{}}, Messages: []protocol.Message{}}, nil
 		}
@@ -343,4 +349,51 @@ func TestClientFromContextNil(t *testing.T) {
 	if ClientFromContext(context.Background()) != nil {
 		t.Fatal("expected nil client")
 	}
+}
+
+// TestOpenCloseSameChannelOrdered: open_channel and close_channel for one
+// channel run in arrival order even though each request has its own
+// goroutine, so a close sent right after a slow open lands after it and the
+// channel ends closed. Other channels are not held up by the slow open.
+func TestOpenCloseSameChannelOrdered(t *testing.T) {
+	srv, _ := startServer(t, &fakeBackend{})
+	a, sa := dial(t, srv)
+	next(t, sa)
+
+	fmt.Fprintln(a, `{"v":1,"id":1,"command":"open_channel","channel_id":"slow1"}`)
+	fmt.Fprintln(a, `{"v":1,"id":2,"command":"close_channel","channel_id":"slow1"}`)
+	fmt.Fprintln(a, `{"v":1,"id":3,"command":"open_channel","channel_id":"77"}`)
+	// 77 opens without waiting for slow1.
+	if r := next(t, sa); r["id"] != float64(3) || r["ok"] != true {
+		t.Fatalf("independent channel blocked: %v", r)
+	}
+	if r := next(t, sa); r["id"] != float64(1) || r["ok"] != true {
+		t.Fatalf("open: %v", r)
+	}
+	if r := next(t, sa); r["id"] != float64(2) || r["ok"] != true {
+		t.Fatalf("close must follow the open and succeed: %v", r)
+	}
+	srv.Broadcast(Routed{ChannelID: "slow1", Event: protocol.NewMessageDelete("slow1", nil, "1")})
+	srv.Broadcast(Routed{ChannelID: "77", Event: protocol.NewMessageDelete("77", nil, "2")})
+	if ev := next(t, sa); ev["event"] != "message_delete" || ev["message_id"] != "2" {
+		t.Fatalf("slow1 leaked after close, or 77 not open: %v", ev)
+	}
+	// Lanes are released: a fresh open/close pair works, and the lane map drains.
+	fmt.Fprintln(a, `{"v":1,"id":4,"command":"open_channel","channel_id":"slow1"}`)
+	fmt.Fprintln(a, `{"v":1,"id":5,"command":"close_channel","channel_id":"slow1"}`)
+	if r := next(t, sa); r["id"] != float64(4) || r["ok"] != true {
+		t.Fatalf("reopen: %v", r)
+	}
+	if r := next(t, sa); r["id"] != float64(5) || r["ok"] != true {
+		t.Fatalf("reclose: %v", r)
+	}
+	srv.mu.Lock()
+	for c := range srv.conns {
+		c.lanesMu.Lock()
+		if len(c.lanes) != 0 {
+			t.Errorf("lanes not drained: %d", len(c.lanes))
+		}
+		c.lanesMu.Unlock()
+	}
+	srv.mu.Unlock()
 }

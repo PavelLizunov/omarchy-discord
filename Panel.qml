@@ -43,8 +43,13 @@ Item {
   readonly property string errorText: service ? Api.redact(service.lastError) : ""
 
   // --- zones: "sidebar" (columns "rail" | "channels") and "timeline" ---
+  // `zone` is the last keyboard zone; the header buttons sit outside the
+  // zones, so while one of them owns focus `focusedZone` is "" and no pane
+  // paints a focus border. Esc (or Tab around) hands focus back to `zone`.
   property string zone: "sidebar"
   property string column: "rail"
+  readonly property bool buttonFocused: logoutButton.activeFocus || closeButton.activeFocus
+  readonly property string focusedZone: buttonFocused ? "" : zone
   // Roving cursors keyed by id so a resync/reorder keeps the same row.
   property string guildCursorId: "dms"
   property string channelCursorId: ""
@@ -142,6 +147,7 @@ Item {
       service.refresh()
     }
     publishScreen()
+    publishPinned()
     restoreView()
     if (requested && service) {
       service.showChannel(requested, guildIdForChannel(requested))
@@ -159,7 +165,15 @@ Item {
     tokenField.clear()
     if (service) service.setUiVisible("full-panel", false)
     publishScreen()
+    publishPinned()
     closingFromHost = false
+  }
+
+  // Tell the service whether the timeline is scrolled up, so it never trims
+  // the rolling message window out from under the user (nobody is looking
+  // while the panel is closed).
+  function publishPinned() {
+    if (service) service.timelinePinned = !opened || timelineView.pinned
   }
 
   // Tell the bar widgets which monitor hosts the panel, so a click on the
@@ -334,8 +348,8 @@ Item {
   // from the open channel and open the neighbour.
   function stepChannel(delta, unreadOnly) {
     var from = indexOfId(channelRows, currentChannelId)
-    if (from < 0) from = channelCursor
-    if (from < 0) from = delta > 0 ? -1 : 0
+    // Open channel not in this list: the cursor row itself is the first candidate.
+    if (from < 0) from = channelCursor >= 0 ? channelCursor - delta : (delta > 0 ? -1 : 0)
     var accept = unreadOnly
       ? function(row) { return Api.isOpenableChannel(row) && Api.isUnread(row) }
       : Api.isOpenableChannel
@@ -347,6 +361,34 @@ Item {
   function focusZone() {
     if (zone === "timeline") timelineView.forceActiveFocus()
     else sidebarFocus.forceActiveFocus()
+  }
+
+  // Tab order: rail -> channels -> timeline -> Log out -> Close -> rail.
+  // Stops that cannot take focus right now (no open channel, hidden button)
+  // are skipped.
+  function cycleFocus(delta) {
+    var stops = ["rail", "channels", "timeline", "logout", "close"]
+    var current = buttonFocused ? (closeButton.activeFocus ? "close" : "logout")
+      : (zone === "timeline" ? "timeline" : column)
+    var index = stops.indexOf(current)
+    for (var step = 0; step < stops.length; step++) {
+      index = clampCursor(index + delta, stops.length)
+      var stop = stops[index]
+      if (stop === "timeline" && !currentChannelId) continue
+      if (stop === "logout" && !logoutButton.visible) continue
+      focusStop(stop)
+      return
+    }
+  }
+
+  function focusStop(stop) {
+    hint = ""
+    if (stop === "logout") { logoutButton.forceActiveFocus(); return }
+    if (stop === "close") { closeButton.forceActiveFocus(); return }
+    if (stop === "channels") { enterChannels(); return }
+    if (stop === "timeline") zone = "timeline"
+    else { zone = "sidebar"; column = "rail" }
+    focusZone()
   }
 
   // `r` while the browser is down: start the backend if it is not running,
@@ -391,7 +433,13 @@ Item {
       else if (text === "r") { retry(); event.accepted = true }
       return
     }
-    if (alt && key === Qt.Key_Down) stepChannel(1, shift)
+    if (key === Qt.Key_Tab || key === Qt.Key_Backtab) cycleFocus(key === Qt.Key_Backtab || shift ? -1 : 1)
+    else if (buttonFocused) {
+      // The button handles Enter/Space itself; Esc returns to the zone.
+      if (key !== Qt.Key_Escape) return
+      focusZone()
+    }
+    else if (alt && key === Qt.Key_Down) stepChannel(1, shift)
     else if (alt && key === Qt.Key_Up) stepChannel(-1, shift)
     else if (alt && key === Qt.Key_H) moveZone("left")
     else if (alt && key === Qt.Key_L) moveZone("right")
@@ -432,7 +480,7 @@ Item {
   // Synthesized-key entry point for offscreen harnesses (mirrors the focus
   // chain: the timeline first when it owns the zone, then the panel).
   function dispatchKey(event) {
-    if (zone === "timeline" && ready && !textInputFocused()) timelineView.handleKey(event)
+    if (zone === "timeline" && ready && !textInputFocused() && !buttonFocused) timelineView.handleKey(event)
     if (!event.accepted) handleKey(event)
     return event.accepted
   }
@@ -440,13 +488,20 @@ Item {
   onGuildRowsChanged: ensureCursors()
   onChannelRowsChanged: ensureCursors()
   onShowLoginChanged: if (showLogin && opened) Qt.callLater(function() { tokenField.forceActiveFocus() })
-  onReadyChanged: if (!ready) { zone = "sidebar"; column = "rail" }
+  // Losing the session hides the panes; put the zone and the keyboard focus
+  // back on the rail together (the timeline would otherwise keep focus while
+  // the zone says "rail", and reclaim it when the panes reappear).
+  onReadyChanged: {
+    if (!ready) { zone = "sidebar"; column = "rail" }
+    if (opened) focusZone()
+  }
 
   Component.onDestruction: {
     tokenField.clear()
     if (service) {
       service.setUiVisible("full-panel", false)
       service.panelScreenName = ""
+      service.timelinePinned = true
     }
   }
 
@@ -457,7 +512,7 @@ Item {
     id: ackTimer
     interval: 500
     onTriggered: {
-      if (!root.opened || root.zone !== "timeline" || !root.currentChannelId) return
+      if (!root.opened || root.focusedZone !== "timeline" || !root.currentChannelId) return
       if (!timelineView.pinned || !root.service) return
       root.service.markChannelRead(root.currentChannelId)
     }
@@ -468,9 +523,9 @@ Item {
     visible: root.opened
     title: "Omarchy Discord"
     color: root.background
-    implicitWidth: 1040
-    implicitHeight: 680
-    minimumSize: Qt.size(640, 420)
+    implicitWidth: Style.space(1040)
+    implicitHeight: Style.space(680)
+    minimumSize: Qt.size(Style.space(640), Style.space(420))
 
     onVisibleChanged: {
       if (!visible && root.opened && !root.closingFromHost) root.requestClose()
@@ -535,16 +590,23 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             spacing: Style.spacing.controlGap
 
+            // Both header buttons are reached through the panel's own Tab
+            // cycle (cycleFocus); Qt's tab chain would otherwise capture Tab
+            // while a button has focus and bounce between the two.
             Button {
+              id: logoutButton
               visible: root.ready
               text: "Log out"
               focusable: true
+              activeFocusOnTab: false
               foreground: root.foreground
               onClicked: if (root.service) root.service.logout()
             }
             Button {
+              id: closeButton
               text: "Close"
               focusable: true
+              activeFocusOnTab: false
               foreground: root.foreground
               onClicked: root.requestClose()
             }
@@ -663,7 +725,7 @@ Item {
               height: parent.height
               radius: Style.cornerRadius
               color: Color.popups.background
-              borderSpec: root.zone === "sidebar" && root.column === "rail"
+              borderSpec: root.focusedZone === "sidebar" && root.column === "rail"
                 ? Border.controlSpec("focus", root.foreground, root.accent)
                 : root.panelBorderSpec
               padding: Style.spacing.sm
@@ -685,7 +747,7 @@ Item {
                   required property int index
                   readonly property var row: root.guildRows[index] || ({})
                   readonly property bool isDms: String(row.id) === "dms"
-                  readonly property bool hasCursor: root.zone === "sidebar" && root.column === "rail"
+                  readonly property bool hasCursor: root.focusedZone === "sidebar" && root.column === "rail"
                     && index === root.guildCursor
                   readonly property bool selected: String(row.id) === root.selectedGuildId
                   readonly property int mentions: Number(row.mention_count) || 0
@@ -762,6 +824,7 @@ Item {
                       root.column = "rail"
                       root.setGuildCursor(guildRow.index)
                       root.enterChannels()
+                      root.focusZone()
                     }
                   }
 
@@ -780,7 +843,7 @@ Item {
               height: parent.height
               radius: Style.cornerRadius
               color: Color.popups.background
-              borderSpec: root.zone === "sidebar" && root.column === "channels"
+              borderSpec: root.focusedZone === "sidebar" && root.column === "channels"
                 ? Border.controlSpec("focus", root.foreground, root.accent)
                 : root.panelBorderSpec
               padding: Style.spacing.sm
@@ -828,7 +891,7 @@ Item {
                     readonly property var row: root.channelRows[index] || ({})
                     readonly property string type: String(row.type || "")
                     readonly property bool category: type === "category"
-                    readonly property bool hasCursor: root.zone === "sidebar" && root.column === "channels"
+                    readonly property bool hasCursor: root.focusedZone === "sidebar" && root.column === "channels"
                       && index === root.channelCursor && !category
                     readonly property bool open: String(row.id || "") === root.currentChannelId
                     readonly property bool unread: Api.isUnread(row)
@@ -922,6 +985,9 @@ Item {
                           root.zone = "sidebar"
                           root.column = "channels"
                           root.activateChannel(channelRow.index)
+                          // A thread/forum row only sets a hint; the zone
+                          // must still take the keyboard.
+                          root.focusZone()
                         }
                       }
                     }
@@ -979,7 +1045,7 @@ Item {
                 channelId: root.currentChannelId
                 selfId: root.service ? root.service.selfId : ""
                 lastReadMessageId: root.currentEntry ? String(root.currentEntry.unreadMarkerId || "") : ""
-                active: root.zone === "timeline" && root.ready
+                active: root.focusedZone === "timeline" && root.ready
                 ctx: root.service ? root.service.markdownCtx : ({})
 
                 onRequestHistory: function(beforeId) {
@@ -989,8 +1055,9 @@ Item {
                 onMoveZone: function(direction) { root.moveZone(direction) }
                 onOpenLink: function(url) { Quickshell.execDetached(["xdg-open", String(url)]) }
                 onCopied: if (root.service) root.service.succeed("Copied to clipboard")
-                onReachedBottom: if (root.zone === "timeline" && root.opened) ackTimer.restart()
+                onReachedBottom: if (root.focusedZone === "timeline" && root.opened) ackTimer.restart()
                 onActiveFocusChanged: if (activeFocus && root.zone !== "timeline") root.zone = "timeline"
+                onPinnedChanged: root.publishPinned()
               }
 
               Text {
@@ -1077,11 +1144,14 @@ Item {
               if (!root.ready)
                 return root.showLogin ? "Enter logs in · Tab reaches buttons · Esc closes"
                   : "r retries · Tab reaches buttons · Esc closes"
+              if (root.buttonFocused)
+                return "Enter activates · Tab/Shift+Tab cycle · Esc back to " + (root.zone === "timeline" ? "timeline" : "sidebar")
               if (root.zone === "timeline")
-                return "j/k move · gg/G top/newest · PgUp pages history · Y copies · O opens link · Alt+↑/↓ channel (Shift: unread) · Esc marks read, back to sidebar"
+                return "j/k move · gg/G top/newest · PgUp pages history · Y copies · O opens link · Alt+↑/↓ channel (Shift: unread) · Tab buttons · Esc marks read, back to sidebar"
+              var timelineHint = root.currentChannelId ? " · Alt+l timeline" : ""
               if (root.column === "rail")
-                return "j/k move · Enter/l opens channels · Alt+l timeline · r reloads · Esc closes"
-              return "j/k move · Enter opens channel · h/Esc servers · Alt+↑/↓ channel (Shift: unread) · Alt+l timeline · r reloads"
+                return "j/k move · Enter/l opens channels · r reloads · Tab buttons · Esc closes"
+              return "j/k move · Enter opens channel · h/Esc servers · Alt+↑/↓ channel (Shift: unread)" + timelineHint + " · r reloads · Tab buttons"
             }
             color: Color.muted
             font.family: root.fontFamily

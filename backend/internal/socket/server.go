@@ -181,6 +181,68 @@ type conn struct {
 	// open is guarded by srv.mu so Broadcast's filter and open/close_channel
 	// never race.
 	open map[string]struct{}
+
+	// lanes serializes open_channel/close_channel per channel id, in the order
+	// the requests were read. Without it a close could commit before a
+	// concurrent open's registration and leave the channel open.
+	lanesMu sync.Mutex
+	lanes   map[string]*ticket
+}
+
+// ticket is one place in a per-channel FIFO: run after prev, release next.
+type ticket struct {
+	id   string
+	prev *ticket
+	done chan struct{}
+}
+
+// channelParams is the subset of open_channel/close_channel parameters the
+// socket layer needs to pick a lane.
+type channelParams struct {
+	ChannelID string `json:"channel_id"`
+}
+
+// enqueue takes a place in the lane for req's channel. It is called on the
+// reader goroutine so lane order equals arrival order; nil when the request
+// is not a channel-state command.
+func (c *conn) enqueue(req *protocol.Request) *ticket {
+	if req.Command != "open_channel" && req.Command != "close_channel" {
+		return nil
+	}
+	var p channelParams
+	if req.Params(&p) != nil || p.ChannelID == "" {
+		return nil // the handler reports invalid_argument
+	}
+	c.lanesMu.Lock()
+	defer c.lanesMu.Unlock()
+	t := &ticket{id: p.ChannelID, prev: c.lanes[p.ChannelID], done: make(chan struct{})}
+	c.lanes[p.ChannelID] = t
+	return t
+}
+
+// wait blocks until every earlier ticket in the lane has released, or the
+// connection is gone.
+func (t *ticket) wait(c *conn) {
+	if t == nil || t.prev == nil {
+		return
+	}
+	select {
+	case <-t.prev.done:
+	case <-c.done:
+	}
+}
+
+// release lets the next ticket run and drops the lane when it is the last.
+func (t *ticket) release(c *conn) {
+	if t == nil {
+		return
+	}
+	close(t.done)
+	c.lanesMu.Lock()
+	defer c.lanesMu.Unlock()
+	if c.lanes[t.id] == t {
+		delete(c.lanes, t.id)
+	}
 }
 
 func (c *conn) OpenChannel(id string) {
@@ -211,7 +273,7 @@ func (c *conn) hasOpenLocked(id string) bool {
 }
 
 func (s *Server) handle(ctx context.Context, nc net.Conn) {
-	c := &conn{nc: nc, out: make(chan []byte, queueDepth), done: make(chan struct{}), srv: s, open: map[string]struct{}{}}
+	c := &conn{nc: nc, out: make(chan []byte, queueDepth), done: make(chan struct{}), srv: s, open: map[string]struct{}{}, lanes: map[string]*ticket{}}
 	defer c.close()
 	go c.writer()
 	ctx = WithClient(ctx, c)
@@ -251,15 +313,20 @@ func (s *Server) handle(ctx context.Context, nc net.Conn) {
 			continue
 		}
 		// Each request is answered on its own goroutine so a slow command never
-		// blocks ping; the writer serializes the output.
-		go c.dispatch(ctx, req)
+		// blocks ping; the writer serializes the output. Channel-state commands
+		// additionally queue per channel, in arrival order.
+		go c.dispatch(ctx, req, c.enqueue(req))
 	}
 	if err := sc.Err(); err != nil && ctx.Err() == nil {
 		redact.Logf("socket: read: %v", err)
 	}
 }
 
-func (c *conn) dispatch(ctx context.Context, req *protocol.Request) {
+func (c *conn) dispatch(ctx context.Context, req *protocol.Request, t *ticket) {
+	if t != nil {
+		t.wait(c)
+		defer t.release(c)
+	}
 	var result any
 	var perr *protocol.Error
 	switch req.Command {

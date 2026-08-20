@@ -336,20 +336,41 @@ func (m *Manager) openChannel(ctx context.Context, req *protocol.Request) (any, 
 		}
 		n.MemberState.Subscribe(ch.GuildID)
 	}
+	// Register the open before fetching the tail so a message that lands
+	// during the fetch is routed to this connection rather than lost; the
+	// client dedupes by id if it also shows up in the tail. A failed open
+	// rolls the registration back unless the channel was already open.
+	c := socket.ClientFromContext(ctx)
+	wasOpen := false
+	if c != nil {
+		wasOpen = c.HasOpen(p.ChannelID)
+		c.OpenChannel(p.ChannelID)
+	}
+	rollback := func() {
+		if c != nil && !wasOpen {
+			c.CloseChannel(p.ChannelID)
+		}
+	}
 	msgs, err := m.fetchTail(ctx, n, chID, openTail)
 	if err != nil {
+		rollback()
 		return nil, discordError(err)
 	}
 	if len(msgs) == 0 && ch.Type == discord.DirectMessage {
+		rollback()
 		return nil, protocol.Errorf(protocol.CodeEmptyDMRefused, "refusing to open a DM with no history; send a message from the official client first")
 	}
-	if c := socket.ClientFromContext(ctx); c != nil {
-		c.OpenChannel(p.ChannelID)
+	// The cache-aware fetch can return more than asked for (a "tiny" channel
+	// hands back its whole store); keep the newest openTail so has_more keeps
+	// meaning "a full page came back".
+	if len(msgs) > openTail {
+		sort.SliceStable(msgs, func(i, j int) bool { return msgs[i].ID > msgs[j].ID })
+		msgs = msgs[:openTail]
 	}
 	return protocol.OpenChannelResult{
 		Channel:  wireChannel(off, *ch),
 		Messages: wireMessages(off, msgs),
-		HasMore:  len(msgs) >= openTail,
+		HasMore:  len(msgs) == openTail,
 	}, nil
 }
 

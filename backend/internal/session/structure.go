@@ -87,6 +87,15 @@ func mentionCount(n *ningen.State, chID discord.ChannelID) int {
 	return 0
 }
 
+// lastReadMessageID reads the account's read marker from ningen's read state;
+// nil when the channel has none.
+func lastReadMessageID(n *ningen.State, chID discord.ChannelID) *string {
+	if rs := n.ReadState.ReadState(chID); rs != nil {
+		return optSnowflake(discord.Snowflake(rs.LastMessageID))
+	}
+	return nil
+}
+
 // Guilds lists the account's guilds in the user's configured order (guild
 // folders, then legacy positions, then anything unlisted by name).
 func Guilds(n *ningen.State) ([]protocol.Guild, error) {
@@ -233,6 +242,8 @@ func wireChannel(n *ningen.State, ch discord.Channel) protocol.Channel {
 		MentionCount:  mentionCount(n, ch.ID),
 		Muted:         n.ChannelIsMuted(ch.ID, unreadOpts),
 		Recipients:    make([]protocol.User, 0, len(ch.DMRecipients)),
+
+		LastReadMessageID: lastReadMessageID(n, ch.ID),
 	}
 	if ch.Type == discord.DirectMessage || ch.Type == discord.GroupDM {
 		names := make([]string, 0, len(ch.DMRecipients))

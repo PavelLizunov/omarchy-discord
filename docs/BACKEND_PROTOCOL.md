@@ -149,7 +149,13 @@ mention_count (int), position (int)}`
 ("text"|"announcement"|"category"|"thread"|"forum"|"voice"|"dm"|"group_dm"),
 name, topic (string), parent_id (string|null), position (int),
 last_message_id (string|null), unread ("read"|"unread"|"mentioned"),
-mention_count (int), muted (bool)}`
+mention_count (int), muted (bool), last_read_message_id (string|null)}`
+
+`last_read_message_id` is the account's read marker (ningen `ReadState.LastMessageID`),
+null when the channel has no read state; it lets QML place the "new messages"
+divider from the `open_channel` result alone. It is a snapshot at the time the
+channel object was built — `read_state_changed` is the live source afterwards.
+(Additive field, introduced after the first goldens; absent means null.)
 
 `recipients` (`[{id, username, display_name, avatar_url}]`) is always present: the
 members for `dm`/`group_dm` (possibly empty), `[]` for guild channels. For DMs, `name`
@@ -291,6 +297,19 @@ streaming `message_*` / `typing_start` events for this channel.
   channels, and they are all closed when that connection drops. Multiple channels
   may be open concurrently; opening an open channel re-sends the current tail
   (idempotent).
+- The channel is registered as open **before** the tail is fetched, so nothing
+  that arrives during the fetch is lost. Consequently a `message_create` /
+  `message_update` / `message_delete` / `typing_start` for the channel **may
+  arrive before the `open_channel` response**, and a `message_create` delivered
+  this way may also appear in the tail — clients dedupe rows by `message.id`
+  (apply events to the timeline as they come; when the response lands, merge the
+  tail by id rather than replacing). A failed open (any error above) leaves the
+  channel closed unless it was already open on this connection.
+- `open_channel` and `close_channel` for the **same channel on one connection**
+  are processed in the order sent, even though other commands may overlap them:
+  an `open_channel` immediately followed by `close_channel` ends closed, and the
+  close's response follows the open's. Different channels are not serialized
+  against each other.
 
 ```json
 {"v":1,"id":20,"command":"open_channel","channel_id":"1049931213073821696"}
