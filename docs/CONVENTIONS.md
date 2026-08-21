@@ -138,6 +138,18 @@ From `qs.Commons` singletons:
 
 Light themes flow through the same tokens automatically — never branch on light/dark.
 
+**Secondary text is `Api.secondaryColor(Color.muted, Color.foreground, Color.background)`**,
+exposed as `muted` on every surface root (and `Service.secondaryColor` for the
+markdown context) — never `Color.muted` directly. The shell itself never paints text
+with `muted`, and on several bundled themes (rose-pine, catppuccin-latte,
+flexoki-light, tokyo-night, everforest, …) it sits at a 1.5–2.5 contrast ratio against
+the background. The helper keeps the theme's `muted` when it clears 3:1 and otherwise
+uses the foreground at 60 % alpha (the shell's own placeholder construction). It is
+a legibility guard, not a light/dark branch. Rich-text covers that are both ink and
+background (the spoiler) take the opaque `Api.blend` of it, since a translucent
+colour would show the text through. Status dots: online = `Color.accent`, idle =
+`muted`, dnd = `Color.urgent`, offline = `Util.alpha(Color.foreground, 0.35)`.
+
 ### Settings access
 
 - **Bar widget** reads injected `settings` via `setting(name, fallback)`
@@ -322,7 +334,8 @@ strings passed through the redact helper (§7).
 
 ## 3. Keyboard & focus conventions
 
-Three focus zones — **sidebar**, **timeline**, **composer** — each with a roving
+Three focus zones — **sidebar**, **timeline**, **composer** — plus a fourth,
+**members**, that exists only while the member pane is shown; each with a roving
 cursor. The implementation patterns to copy are spotify's, verbatim:
 
 - **Roving cursor** (spotify BarWidget.qml mini-player): a
@@ -352,6 +365,43 @@ cursor. The implementation patterns to copy are spotify's, verbatim:
   message actions, `↑` edit-last in empty composer, Ctrl+/ cheatsheet). `Enter` on a
   timeline row reveals its covered spoiler images first, then activates; `O` opens an
   attachment from its cached local path when the cache has it.
+- **Threads** (`t`): the flat channel list never shows thread rows —
+  `list_channels` carries every active thread the cache knows (hundreds on a busy
+  guild), so `Api.visibleChannels` hides `type: "thread"` and `Panel.threadCounts`
+  reduces them to a per-parent count for the muted "⌥ N threads" affordance. `t` on
+  a text / announcement / forum row (or on the open channel from the timeline)
+  toggles `Panel.expandedThreads[parentId]` and calls `Service.listThreads(parent)`;
+  `Panel.channelRows` splices `Service.threadsFor(parent)` — the `list_threads`
+  mirror, or until it answers the thread rows from the channel list sorted newest
+  first — beneath the parent as indented rows. `Enter` on a thread opens it like any
+  channel (header: "#parent › thread"); `Enter` on a forum only expands it (a forum
+  is not openable). Expansion state is panel-local (reset with the guild). Thread
+  rows take `read_state_changed` like channels (`applyReadState` patches
+  `threadsByParent` too).
+- **channel_update bursts**: THREAD_LIST_SYNC arrives as one `create` per active
+  thread (749 on one real guild, usually before the `open_channel` response) and the
+  backend drops a client that falls behind. `Service.noteChannelUpdate` therefore only
+  marks the guild / thread parent dirty and `structureFlushTimer` (300 ms) issues one
+  `list_channels` per guild and one `list_threads` per *loaded* parent — never one
+  request per event.
+- **Member pane** (`components/MemberList.qml`): toggled with `m` outside text inputs,
+  `Alt+m` everywhere (the composer claims it on its TextArea and emits
+  `membersRequested`, else the TextArea would type an "m"), and the header Members
+  button. The toggle (`Service.membersWanted`) lives in the service so a re-summoned
+  panel keeps it; `Service.syncMembers()` subscribes the current channel while the
+  pane is wanted **and** the full panel is registered visible, and unsubscribes on
+  channel change, toggle off, panel close / destruction (`setUiVisible("full-panel",
+  false)`); subscriptions are per socket connection, so a disconnect clears
+  `membersChannelId` and the next `ready` re-subscribes. `member_list_update` is a
+  full replacement (`memberList`), `presence_update` patches every row of that user
+  in a copy. "Loading members…" until the first list; `membersTimer` (15 s) flips
+  `membersTimedOut` → "No member list for this channel". Rows come from
+  `Api.memberRows` (every group as a header with Discord's total count, members
+  beneath in wire order). Keys: `j/k` (headers skipped), `g/G`, `Y` copies
+  `@username`, `Esc` / `Alt+h` back to the composer; `Alt+l` from the composer enters
+  it; the Tab cycle is rail → channels → timeline → composer → members → Members
+  button → Log out → Close. When the pane disappears while it is the zone, the zone
+  falls back to the composer.
 - **One key table.** `Keymap.js` holds every binding once (`ENTRIES`, grouped by
   `ZONES`); the panel footer renders `Keymap.footer(state, …)` over `FOOTER` id lists
   and the cheatsheet renders `Keymap.sections()`, so hints and cheatsheet cannot drift.
@@ -407,11 +457,20 @@ cursor. The implementation patterns to copy are spotify's, verbatim:
 - Same overlay shape, opened by `E` on a timeline row (`Panel.openPicker`): the search
   field owns the keyboard; arrows / `Ctrl+h/j/k/l` / `Tab` move, `Enter` picks, `Esc`
   clears the filter then closes. The model is `Emoji.sections(reactions, frequent,
-  server, catalog, query)` → `[{id, title, cells}]` in the order **reactions**
-  ("Toggle", `me` marks ours) → **frequent** → **server** (custom emoji, `list_emoji`
-  next wave — shown when `Service.serverEmoji` is non-empty) → **all**; `Emoji.move`
-  navigates the flattened grid (rows within a section, crossing into the neighbour at
-  the edge, keeping the column).
+  server, catalog, query, limit, currentGuildId)` → `[{id, title, cells}]` in the
+  order **reactions** ("Toggle", `me` marks ours) → **frequent** → **server** (one
+  section per guild, id `server:<guild_id>`, the selected guild first) → **all**;
+  `Emoji.move` navigates the flattened grid (rows within a section, crossing into the
+  neighbour at the edge, keeping the column).
+- Server emoji come from `list_emoji` (loaded on `ready` and again on
+  `guilds_synced`; `Service.serverEmoji` is the guilds array), each cell an `<img>`
+  through the media cache (`emojiPath`, size 32, PNG even for animated); `Enter`
+  reacts with `name:id`. Two guards, both learned on a real account with ~1,500
+  custom emoji: the picker's `sections` are `[]` while hidden (its Repeater is not
+  virtualized — every cell would be instantiated, and every image requested, the
+  moment `list_emoji` lands), and each guild section is capped (`Emoji.SERVER_CAP`
+  48 without a filter, 200 with one). Typing `:name:` shortcodes in the composer is
+  out of scope.
 - `picked(emoji)` is wire form (unicode or `name:id`). `Service.toggleReaction` sends
   `unreact` when the loaded message already carries our reaction, else `react` and
   bumps `frequentEmoji` (`Emoji.bumpFrequent`, cap 16, persisted as a JSON string under

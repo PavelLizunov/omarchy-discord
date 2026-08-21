@@ -4,6 +4,8 @@ import QtQuick.Controls
 import qs.Commons
 import qs.Ui
 
+import "../Api.js" as Api
+
 import "../Emoji.js" as Emoji
 import "../Keymap.js" as Keymap
 
@@ -12,8 +14,9 @@ import "../Keymap.js" as Keymap
 // Ctrl+h/j/k/l, since plain letters type into the filter), Enter picks,
 // Esc clears the filter then closes. Sections, in order: the message's own
 // reactions ("Toggle" — picking one you already reacted with removes it),
-// frequently used (persisted by the service), server emoji (list_emoji,
-// next wave; shown when the service has any), then the unicode catalogue.
+// frequently used (persisted by the service), server emoji (list_emoji, one
+// section per guild, the selected guild first; rendered through the media
+// cache), then the unicode catalogue.
 // Emits picked(emoji) in wire form; the caller decides react vs unreact.
 FocusScope {
   id: root
@@ -32,9 +35,14 @@ FocusScope {
   signal picked(string emoji)
   signal closeRequested()
 
-  readonly property var sections: Emoji.sections(reactions, frequent, serverEmoji, catalog, query, gridLimit)
+  // Empty while hidden: the grid's Repeater would otherwise instantiate every
+  // cell (and request every custom emoji image) the moment list_emoji lands.
+  readonly property var sections: shown
+    ? Emoji.sections(reactions, frequent, serverEmoji, catalog, query, gridLimit, service ? service.selectedGuildId : "")
+    : []
   readonly property var flat: Emoji.flatten(sections)
   readonly property color foreground: Color.popups.text
+  readonly property color muted: Api.secondaryColor(Color.muted, Color.foreground, Color.background)
   readonly property string fontFamily: Style.font.family
   readonly property int cellSize: Math.max(Style.space(40), Style.font.heading + Style.spacing.md)
   readonly property int columns: Math.max(1, Math.floor(gridWidth / cellSize))
@@ -170,7 +178,7 @@ FocusScope {
           anchors.centerIn: parent
           visible: root.flat.length === 0
           text: root.query ? "No emoji matches “" + root.query + "”." : "No emoji available."
-          color: Color.muted
+          color: root.muted
           font.family: root.fontFamily
           font.pixelSize: Style.font.body
         }
@@ -211,9 +219,14 @@ FocusScope {
                     id: cellItem
                     required property int index
                     readonly property var cell: sectionColumn.section.cells[index] || ({})
+                    // Sections shrink under a filter while stale delegates
+                    // are still being torn down: guard the lookup.
                     readonly property int flatIndex: {
                       var base = 0
-                      for (var s = 0; s < sectionColumn.index; s++) base += root.sections[s].cells.length
+                      for (var s = 0; s < sectionColumn.index; s++) {
+                        var sec = root.sections[s]
+                        if (sec) base += sec.cells.length
+                      }
                       return base + index
                     }
                     readonly property bool hasCursor: flatIndex === root.cursor
@@ -260,7 +273,7 @@ FocusScope {
                       anchors.bottom: parent.bottom
                       anchors.margins: Style.spacing.xxs
                       text: String(cellItem.cell.count || 0)
-                      color: Color.muted
+                      color: root.muted
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.caption
                     }
@@ -285,7 +298,7 @@ FocusScope {
         width: parent.width
         elide: Text.ElideRight
         text: (root.cursorLabel ? root.cursorLabel + " · " : "") + Keymap.footer("picker")
-        color: Color.muted
+        color: root.muted
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
       }

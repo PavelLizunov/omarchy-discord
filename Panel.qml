@@ -29,12 +29,14 @@ Item {
   readonly property alias composer: composerView
   readonly property alias cheatsheet: cheatsheetView
   readonly property alias picker: pickerView
+  readonly property alias members: membersView
   // A modal overlay (cheatsheet / emoji picker) owns the keyboard.
   readonly property bool overlayShown: cheatsheetView.shown || pickerView.shown
 
   readonly property string pluginId: manifest && manifest.id
     ? String(manifest.id) : "quickshell.discord"
   readonly property color foreground: Color.foreground
+  readonly property color muted: Api.secondaryColor(Color.muted, Color.foreground, Color.background)
   readonly property color background: Color.background
   readonly property color accent: Color.accent
   readonly property string fontFamily: Style.font.family
@@ -65,13 +67,19 @@ Item {
   // The panel window owns keyboard focus (notification suppression).
   readonly property bool windowActive: opened && focusScope.Window.active
 
-  // --- zones: "sidebar" (columns "rail" | "channels"), "timeline", "composer" ---
+  // --- zones: "sidebar" (columns "rail" | "channels"), "timeline", "composer",
+  // "members" (only while the member pane is shown) ---
   // `zone` is the last keyboard zone; the header buttons sit outside the
   // zones, so while one of them owns focus `focusedZone` is "" and no pane
   // paints a focus border. Esc (or Tab around) hands focus back to `zone`.
   property string zone: "sidebar"
   property string column: "rail"
-  readonly property bool buttonFocused: logoutButton.activeFocus || closeButton.activeFocus
+  readonly property bool buttonFocused: logoutButton.activeFocus || closeButton.activeFocus || membersButton.activeFocus
+  // The member pane: toggle state lives in the service (survives a
+  // re-summon); it is a zone only while visible and a channel is open.
+  readonly property bool membersVisible: !!(service && service.membersWanted) && currentChannelId !== "" && ready
+  // Parent channel id -> true while its threads are listed beneath it.
+  property var expandedThreads: ({})
   readonly property string focusedZone: buttonFocused ? "" : zone
   // The composer's input or one of its chips owns the keyboard: plain keys
   // are text, only Alt chords and Tab are panel-level.
@@ -95,11 +103,25 @@ Item {
     return rows
   }
   readonly property bool dmsSelected: selectedGuildId === "dms"
+  // Active-thread counts per parent (from the raw channel list, which
+  // carries every thread the cache knows) — the "N threads" affordance.
+  readonly property var threadCounts: service && selectedGuildId && !dmsSelected
+    ? Api.threadCounts(service.channelsFor(selectedGuildId)) : ({})
   readonly property var channelRows: {
     if (!service) return []
     if (dmsSelected) return Array.isArray(service.dms) ? service.dms : []
     if (!selectedGuildId) return []
-    return Api.visibleChannels(service.channelsFor(selectedGuildId))
+    var visible = Api.visibleChannels(service.channelsFor(selectedGuildId))
+    var out = []
+    for (var i = 0; i < visible.length; i++) {
+      var row = visible[i]
+      out.push(row)
+      var id = String(row.id || "")
+      if (!expandedThreads[id] || !Api.hasThreads(row.type)) continue
+      var threads = service.threadsFor(id, selectedGuildId)
+      for (var t = 0; t < threads.length; t++) out.push(threads[t])
+    }
+    return out
   }
   readonly property int guildCursor: indexOfId(guildRows, guildCursorId)
   readonly property int channelCursor: indexOfId(channelRows, channelCursorId)
@@ -116,6 +138,7 @@ Item {
     if (!service || !currentChannelId) return null
     var lists = [service.dms]
     for (var gid in service.channelsByGuild) lists.push(service.channelsByGuild[gid])
+    for (var pid in service.threadsByParent) lists.push(service.threadsByParent[pid])
     for (var l = 0; l < lists.length; l++) {
       var list = Array.isArray(lists[l]) ? lists[l] : []
       for (var i = 0; i < list.length; i++)
@@ -123,8 +146,16 @@ Item {
     }
     return currentEntry ? currentEntry.channel : null
   }
-  readonly property string currentChannelTitle: currentChannel
-    ? Api.channelGlyph(currentChannel.type) + " " + String(currentChannel.name || "") : ""
+  // A thread's header reads "#parent › thread".
+  readonly property string currentChannelTitle: {
+    if (!currentChannel) return ""
+    var name = String(currentChannel.name || "")
+    if (String(currentChannel.type || "") === "thread" && currentChannel.parent_id) {
+      var parent = service ? String(service.channelNames[String(currentChannel.parent_id)] || "") : ""
+      if (parent) return "#" + parent + " › " + Api.channelGlyph("thread") + " " + name
+    }
+    return Api.channelGlyph(currentChannel.type) + " " + name
+  }
   readonly property string currentTopic: currentChannel
     ? String(currentChannel.topic || "").replace(/\s+/g, " ") : ""
   readonly property string typingText: {
@@ -442,12 +473,8 @@ Item {
   function activateChannel(index) {
     var row = channelRows[index]
     if (!row || !service) return
-    var type = String(row.type || "")
-    if (type === "thread" || type === "forum") {
-      hint = (type === "thread" ? "Threads" : "Forum channels") + " open in a later phase."
-      setChannelCursor(index)
-      return
-    }
+    // A forum is not a channel to read: Enter lists its threads instead.
+    if (String(row.type || "") === "forum") { toggleThreads(index); return }
     if (!Api.isOpenableChannel(row)) return
     hint = ""
     setChannelCursor(index)
@@ -455,6 +482,58 @@ Item {
     // Opening a channel focuses the composer (PLAN keyboard contract).
     timelineView.focusNewest()
     enterComposer()
+  }
+
+  // t on a channel (or a thread: its parent): list / hide the active
+  // threads beneath it. The list comes from list_threads (cached, refreshed
+  // on channel_update for that parent); until it answers the thread rows
+  // the channel list already carries stand in.
+  function toggleThreads(index) {
+    var row = channelRows[index]
+    if (!row || !service || dmsSelected) return
+    var id = String(row.id || "")
+    if (String(row.type || "") === "thread") id = String(row.parent_id || "")
+    if (!id) return
+    var next = Api.shallowCopy(expandedThreads)
+    if (next[id]) delete next[id]
+    else {
+      next[id] = true
+      service.listThreads(id)
+    }
+    expandedThreads = next
+    // The cursor is id-keyed: it stays on the row as the list reflows, or
+    // moves up to the parent when the row was one of the threads hidden.
+    channelCursorId = next[id] ? String(row.id || "") : id
+  }
+
+  // t from the timeline: the open channel's threads, cursor on it.
+  function toggleCurrentThreads() {
+    if (!currentChannelId) return
+    if (indexOfId(channelRows, currentChannelId) < 0) return
+    zone = "sidebar"
+    column = "channels"
+    toggleThreads(indexOfId(channelRows, currentChannelId))
+    focusZone()
+  }
+
+  // --- member pane ---
+  function toggleMembers() {
+    if (!service) return
+    service.setMembersWanted(!service.membersWanted)
+    hint = ""
+    if (!service.membersWanted && zone === "members") { zone = "composer"; focusZone() }
+  }
+
+  function enterMembers() {
+    if (!membersVisible) return
+    zone = "members"
+    hint = ""
+    focusZone()
+  }
+
+  function leaveMembers() {
+    zone = "composer"
+    focusZone()
   }
 
   function enterTimeline() {
@@ -501,9 +580,11 @@ Item {
       if (zone === "sidebar" && column === "rail") { enterChannels(); return }
       if (zone === "sidebar" && currentChannelId) enterTimeline()
       else if (zone === "timeline") enterComposer()
+      else if (zone === "composer" && membersVisible) enterMembers()
       return
     }
-    if (zone === "composer") leaveComposer(false)
+    if (zone === "members") leaveMembers()
+    else if (zone === "composer") leaveComposer(false)
     else if (zone === "timeline") leaveTimeline(false)
     else if (column === "channels") leaveChannels()
   }
@@ -523,27 +604,32 @@ Item {
   }
 
   function focusZone() {
+    if (zone === "members" && !membersVisible) zone = "composer"
     if ((zone === "timeline" || zone === "composer") && !currentChannelId) {
       zone = "sidebar"
       column = selectedGuildId ? "channels" : "rail"
     }
-    if (zone === "composer") composerView.focusInput()
+    if (zone === "members") membersView.forceActiveFocus()
+    else if (zone === "composer") composerView.focusInput()
     else if (zone === "timeline") timelineView.forceActiveFocus()
     else sidebarFocus.forceActiveFocus()
   }
 
   // Tab order: rail -> channels -> timeline -> composer (then its chips) ->
-  // Log out -> Close -> rail. Stops that cannot take focus right now (no
-  // open channel, hidden button) are skipped.
+  // member list -> Members -> Log out -> Close -> rail. Stops that cannot
+  // take focus right now (no open channel, hidden pane or button) are skipped.
   function cycleFocus(delta) {
-    var stops = ["rail", "channels", "timeline", "composer", "logout", "close"]
-    var current = buttonFocused ? (closeButton.activeFocus ? "close" : "logout")
+    var stops = ["rail", "channels", "timeline", "composer", "members", "membersButton", "logout", "close"]
+    var current = buttonFocused
+      ? (closeButton.activeFocus ? "close" : (membersButton.activeFocus ? "membersButton" : "logout"))
       : (zone === "sidebar" ? column : zone)
     var index = stops.indexOf(current)
     for (var step = 0; step < stops.length; step++) {
       index = clampCursor(index + delta, stops.length)
       var stop = stops[index]
       if ((stop === "timeline" || stop === "composer") && !currentChannelId) continue
+      if (stop === "members" && !membersVisible) continue
+      if (stop === "membersButton" && !membersButton.visible) continue
       if (stop === "logout" && !logoutButton.visible) continue
       focusStop(stop, delta)
       return
@@ -554,6 +640,8 @@ Item {
     hint = ""
     if (stop === "logout") { logoutButton.forceActiveFocus(); return }
     if (stop === "close") { closeButton.forceActiveFocus(); return }
+    if (stop === "membersButton") { membersButton.forceActiveFocus(); return }
+    if (stop === "members") { enterMembers(); return }
     if (stop === "channels") { enterChannels(); return }
     if (stop === "composer") {
       zone = "composer"
@@ -614,7 +702,8 @@ Item {
       return
     }
     if (composerFocused) {
-      // Everything but the channel-stepping chords is text (or chip keys).
+      // Everything but the channel-stepping chords is text (or chip keys);
+      // Alt+m is claimed by the composer itself (membersRequested).
       if (alt && key === Qt.Key_Down) stepChannel(1, shift)
       else if (alt && key === Qt.Key_Up) stepChannel(-1, shift)
       else return
@@ -631,7 +720,9 @@ Item {
     else if (alt && key === Qt.Key_Up) stepChannel(-1, shift)
     else if (alt && key === Qt.Key_H) moveZone("left")
     else if (alt && key === Qt.Key_L) moveZone("right")
+    else if (text === "m" || (alt && key === Qt.Key_M)) toggleMembers()
     else if (text === "r") reload()
+    else if (text === "t" && zone === "timeline") toggleCurrentThreads()
     else if (zone === "sidebar") {
       if (!handleSidebarKey(key, text)) return
     } else return
@@ -661,6 +752,7 @@ Item {
     else if (key === Qt.Key_Left || text === "h") leaveChannels()
     else if (key === Qt.Key_Right || text === "l") { if (currentChannelId) enterTimeline() }
     else if (key === Qt.Key_Return || key === Qt.Key_Enter) activateChannel(channelCursor)
+    else if (text === "t") toggleThreads(channelCursor)
     else return false
     return true
   }
@@ -673,6 +765,7 @@ Item {
     if (ready && !buttonFocused) {
       if (zone === "composer" && composerFocused) composerView.handleKey(event)
       else if (zone === "timeline" && !textInputFocused()) timelineView.handleKey(event)
+      else if (zone === "members" && membersVisible) membersView.handleKey(event)
     }
     if (!event.accepted) handleKey(event)
     return event.accepted
@@ -692,6 +785,9 @@ Item {
     if (!ready) { zone = "sidebar"; column = "rail" }
     if (opened) focusZone()
   }
+  onMembersVisibleChanged: if (!membersVisible && zone === "members" && opened) { zone = "composer"; focusZone() }
+  // A guild switch drops the expansion state with the rows it applied to.
+  onSelectedGuildIdChanged: expandedThreads = ({})
 
   Component.onDestruction: {
     tokenField.clear()
@@ -804,7 +900,7 @@ Item {
               text: root.service ? root.service.statusText
                 + (root.service.user ? " · " + String(root.service.user.display_name
                   || root.service.user.username || "") : "") : ""
-              color: Color.muted
+              color: root.muted
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall
             }
@@ -818,6 +914,17 @@ Item {
             // Both header buttons are reached through the panel's own Tab
             // cycle (cycleFocus); Qt's tab chain would otherwise capture Tab
             // while a button has focus and bounce between the two.
+            Button {
+              id: membersButton
+              visible: root.ready && root.currentChannelId !== ""
+              text: "Members"
+              active: root.membersVisible
+              focusable: true
+              activeFocusOnTab: false
+              foreground: root.foreground
+              tooltipText: "Show / hide the member list (m)"
+              onClicked: root.toggleMembers()
+            }
             Button {
               id: logoutButton
               visible: root.ready
@@ -873,7 +980,7 @@ Item {
                 if (!root.connected) return "Waiting for the backend socket. Press r to retry."
                 return "Connecting to Discord."
               }
-              color: Color.muted
+              color: root.muted
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
             }
@@ -934,7 +1041,7 @@ Item {
                     horizontalAlignment: Text.AlignHCenter
                     text: root.qr && root.qr.url && qrImage.status !== Image.Loading
                       ? String(root.qr.url) : (root.qrMissing ? "" : "Requesting a code…")
-                    color: Color.muted
+                    color: root.muted
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
                   }
@@ -969,7 +1076,7 @@ Item {
                       anchors.centerIn: parent
                       text: root.qr && root.qr.user && root.qr.user.username
                         ? String(root.qr.user.username).charAt(0).toUpperCase() : "?"
-                      color: Color.muted
+                      color: root.muted
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.subtitle
                       font.bold: true
@@ -1025,7 +1132,7 @@ Item {
                   ? "Code expires in " + Math.floor(root.qrSecondsLeft / 60) + ":"
                     + (root.qrSecondsLeft % 60 < 10 ? "0" : "") + (root.qrSecondsLeft % 60)
                   : "Code expiring…"
-                color: Color.muted
+                color: root.muted
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
               }
@@ -1067,7 +1174,7 @@ Item {
                   width: parent.parent.width - scanQrButton.width - parent.spacing
                   wrapMode: Text.WordWrap
                   text: "Shows a code to scan with the Discord mobile app. No password, no captcha."
-                  color: Color.muted
+                  color: root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
                 }
@@ -1076,7 +1183,7 @@ Item {
                 width: parent.width
                 wrapMode: Text.WordWrap
                 text: "Or paste a user token and press Enter. It goes straight to the backend and into the keyring; it is never written to disk or shown here."
-                color: Color.muted
+                color: root.muted
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
               }
@@ -1103,7 +1210,7 @@ Item {
                 Text {
                   anchors.verticalCenter: parent.verticalCenter
                   text: "Terminal alternative: omarchy-discord-backend login"
-                  color: Color.muted
+                  color: root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                 }
@@ -1186,7 +1293,7 @@ Item {
                       anchors.centerIn: parent
                       visible: !guildIconEffect.visible
                       text: guildRow.isDms ? "@" : Api.initials(guildRow.row.name)
-                      color: guildRow.unread || guildRow.selected ? root.foreground : Color.muted
+                      color: guildRow.unread || guildRow.selected ? root.foreground : root.muted
                       font.family: root.fontFamily
                       font.pixelSize: guildRow.isDms ? Style.font.title : Style.font.bodySmall
                       font.bold: guildRow.unread
@@ -1298,7 +1405,7 @@ Item {
                   text: !root.selectedGuildId ? "Pick a server with Enter or l."
                     : (root.channelsLoading ? "Loading channels"
                       : (root.dmsSelected ? "No direct messages." : "No text channels."))
-                  color: Color.muted
+                  color: root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
                   leftPadding: Style.spacing.rowPaddingX
@@ -1329,6 +1436,9 @@ Item {
                     readonly property bool unread: Api.isUnread(row)
                     readonly property int mentions: Number(row.mention_count) || 0
                     readonly property bool dim: !!row.muted || (!unread && !open)
+                    readonly property bool thread: type === "thread"
+                    readonly property int threadCount: Api.hasThreads(type) ? (Number(root.threadCounts[String(row.id || "")]) || 0) : 0
+                    readonly property bool expanded: threadCount > 0 && !!root.expandedThreads[String(row.id || "")]
                     width: channelList.width
                     height: category ? Style.spacing.controlHeight : Style.spacing.popupRowHeight
 
@@ -1357,25 +1467,40 @@ Item {
                         anchors.left: parent.left
                         anchors.leftMargin: Style.spacing.rowPaddingX
                           + (channelRow.row.parent_id && !root.dmsSelected ? Style.spacing.lg : 0)
+                          + (channelRow.thread ? Style.spacing.lg : 0)
                         anchors.verticalCenter: parent.verticalCenter
                         text: Api.channelGlyph(channelRow.type)
-                        color: channelRow.dim ? Color.muted : root.foreground
+                        color: channelRow.dim ? root.muted : root.foreground
                         font.family: root.fontFamily
                         font.pixelSize: Style.font.body
                       }
                       Text {
                         anchors.left: channelGlyph.right
-                        anchors.right: channelBadge.visible ? channelBadge.left
-                          : (channelDot.visible ? channelDot.left : parent.right)
+                        anchors.right: threadHint.visible ? threadHint.left : (channelBadge.visible ? channelBadge.left
+                          : (channelDot.visible ? channelDot.left : parent.right))
                         anchors.leftMargin: Style.spacing.sm
                         anchors.rightMargin: Style.spacing.sm
                         anchors.verticalCenter: parent.verticalCenter
                         text: String(channelRow.row.name || "")
                         elide: Text.ElideRight
-                        color: channelRow.dim ? Color.muted : root.foreground
+                        color: channelRow.dim ? root.muted : root.foreground
                         font.family: root.fontFamily
                         font.pixelSize: Style.font.body
                         font.bold: channelRow.unread
+                      }
+                      // "⌥ N threads" affordance (t lists them beneath).
+                      Text {
+                        id: threadHint
+                        anchors.right: channelBadge.visible ? channelBadge.left
+                          : (channelDot.visible ? channelDot.left : parent.right)
+                        anchors.rightMargin: Style.spacing.sm
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: channelRow.threadCount > 0
+                        text: (channelRow.expanded ? "▼ " : "⌥ ") + channelRow.threadCount
+                          + (channelRow.threadCount === 1 ? " thread" : " threads")
+                        color: root.muted
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
                       }
                       Rectangle {
                         id: channelDot
@@ -1417,8 +1542,8 @@ Item {
                           root.zone = "sidebar"
                           root.column = "channels"
                           root.activateChannel(channelRow.index)
-                          // A thread/forum row only sets a hint; the zone
-                          // must still take the keyboard.
+                          // A forum row only expands; the zone must still
+                          // take the keyboard.
                           root.focusZone()
                         }
                       }
@@ -1431,6 +1556,7 @@ Item {
             // Timeline column
             Column {
               width: parent.width - railPane.width - channelPane.width - parent.spacing * 2
+                - (membersView.visible ? membersView.width + parent.spacing : 0)
               height: parent.height
               spacing: Style.spacing.xs
 
@@ -1445,8 +1571,12 @@ Item {
                   anchors.left: parent.left
                   anchors.leftMargin: Style.spacing.sm
                   anchors.verticalCenter: parent.verticalCenter
+                  // Thread titles ("#parent › thread") can be long: elide
+                  // before the column edge, leaving the topic what is left.
+                  width: Math.min(implicitWidth, parent.width - Style.spacing.sm * 2)
+                  elide: Text.ElideRight
                   text: root.currentChannelTitle || "No channel open"
-                  color: root.currentChannelId ? root.foreground : Color.muted
+                  color: root.currentChannelId ? root.foreground : root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.title
                   font.bold: !!root.currentChannelId
@@ -1460,7 +1590,7 @@ Item {
                   visible: root.currentTopic !== ""
                   text: "· " + root.currentTopic
                   elide: Text.ElideRight
-                  color: Color.muted
+                  color: root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.bodySmall
                 }
@@ -1507,7 +1637,7 @@ Item {
                 verticalAlignment: Text.AlignVCenter
                 text: root.typingText
                 elide: Text.ElideRight
-                color: Color.muted
+                color: root.muted
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
                 font.italic: true
@@ -1528,8 +1658,29 @@ Item {
                 onCycleFocus: function(delta) { root.cycleFocus(delta) }
                 onSwitcherRequested: root.openSwitcher()
                 onCheatsheetRequested: root.toggleCheatsheet()
+                onMembersRequested: root.toggleMembers()
                 onActiveFocusChanged: if (activeFocus && root.zone !== "composer") root.zone = "composer"
               }
+            }
+
+            // Member pane (m): a zone only while visible.
+            Components.MemberList {
+              id: membersView
+              visible: root.membersVisible
+              width: Style.space(220)
+              height: parent.height
+              service: root.service
+              list: root.service && root.service.memberList
+                && String(root.service.memberList.channel_id || "") === root.currentChannelId
+                ? root.service.memberList : null
+              loading: !!(root.service && root.service.membersChannelId === root.currentChannelId
+                && root.service.memberList === null && !root.service.membersTimedOut)
+              timedOut: !!(root.service && root.service.membersTimedOut)
+              active: root.focusedZone === "members" && root.ready
+              onEscapeRequested: root.leaveMembers()
+              onMoveZone: function(direction) { root.moveZone(direction) }
+              onCopied: if (root.service) root.service.succeed("Copied @username to clipboard")
+              onActiveFocusChanged: if (activeFocus && root.zone !== "members") root.zone = "members"
             }
           }
         }
@@ -1554,7 +1705,7 @@ Item {
             visible: !!(root.service && root.service.notice !== "")
             wrapMode: Text.WordWrap
             text: root.service ? root.service.notice : ""
-            color: Color.muted
+            color: root.muted
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
           }
@@ -1562,7 +1713,7 @@ Item {
             width: parent.width
             visible: root.hint !== ""
             text: root.hint
-            color: Color.muted
+            color: root.muted
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
           }
@@ -1590,20 +1741,22 @@ Item {
               if (root.buttonFocused) {
                 // Esc goes where focusZone() goes: the last zone, unless it
                 // needs an open channel that is gone.
-                var back = (root.zone === "timeline" || root.zone === "composer") && !root.currentChannelId ? "sidebar"
-                  : (root.zone === "composer" ? "the composer" : root.zone)
+                var back = (root.zone === "timeline" || root.zone === "composer" || root.zone === "members") && !root.currentChannelId ? "sidebar"
+                  : (root.zone === "composer" ? "the composer" : (root.zone === "members" ? "the member list" : root.zone))
                 return Keymap.footer("global.activate", "global.tabCycle", { id: "global.escBack", hint: "back to " + back })
               }
               if (root.zone === "composer") {
                 if (root.composer.chipFocused) return Keymap.footer("chips")
                 if (root.composer.editing) return Keymap.footer("composerEdit")
-                return Keymap.footer("composer", root.composer.chips.length ? "composerChips" : "", "composerTail")
+                return Keymap.footer("composer", root.composer.chips.length ? "composerChips" : "",
+                  root.membersVisible ? "composerMembers" : "", "composerTail")
               }
+              if (root.zone === "members") return Keymap.footer("members")
               if (root.zone === "timeline") return Keymap.footer("timeline")
               if (root.column === "rail") return Keymap.footer("rail")
               return Keymap.footer("channels", root.currentChannelId ? "channelsTimeline" : "", "channelsTail")
             }
-            color: Color.muted
+            color: root.muted
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
           }

@@ -2,6 +2,8 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 
+import "../Api.js" as Api
+
 import "../Markdown.js" as Markdown
 
 // One staged attachment above the composer: thumbnail, filename + size, an
@@ -19,6 +21,7 @@ Item {
   signal clicked()
 
   readonly property color foreground: Color.foreground
+  readonly property color muted: Api.secondaryColor(Color.muted, Color.foreground, Color.background)
   readonly property color accent: Color.accent
   readonly property string fontFamily: Style.font.family
   readonly property string path: String(item && item.path || "")
@@ -71,7 +74,7 @@ Item {
     anchors.centerIn: thumb
     visible: thumb.status === Image.Error
     text: "image"
-    color: Color.muted
+    color: root.muted
     font.family: root.fontFamily
     font.pixelSize: Style.font.caption
   }
@@ -109,7 +112,7 @@ Item {
     text: root.filename + " · " + (root.uploading
       ? Math.round(root.progress * 100) + "%"
       : Markdown.formatSize(root.item ? root.item.size : 0))
-    color: Color.muted
+    color: root.muted
     font.family: root.fontFamily
     font.pixelSize: Style.font.caption
   }

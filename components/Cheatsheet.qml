@@ -4,6 +4,8 @@ import QtQuick.Controls
 import qs.Commons
 import qs.Ui
 
+import "../Api.js" as Api
+
 import "../Keymap.js" as Keymap
 
 // Ctrl+/ cheatsheet: a modal overlay inside the panel window listing the
@@ -19,6 +21,7 @@ FocusScope {
 
   readonly property var sections: Keymap.sections()
   readonly property color foreground: Color.popups.text
+  readonly property color muted: Api.secondaryColor(Color.muted, Color.foreground, Color.background)
   readonly property string fontFamily: Style.font.family
   readonly property int keyColumnWidth: Style.space(190)
 
@@ -108,7 +111,7 @@ FocusScope {
           anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
           text: "j/k scroll · Esc closes"
-          color: Color.muted
+          color: root.muted
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
         }
@@ -175,7 +178,7 @@ FocusScope {
                     anchors.top: parent.top
                     wrapMode: Text.WordWrap
                     text: String(keyRow.row.action || "")
-                    color: Color.muted
+                    color: root.muted
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.bodySmall
                   }

@@ -5,6 +5,8 @@ import Quickshell
 import qs.Commons
 import qs.Ui
 
+import "../Api.js" as Api
+
 import "../Markdown.js" as Markdown
 
 // Virtualized message timeline: one focus zone with a roving cursor keyed by
@@ -104,6 +106,7 @@ FocusScope {
 
   // --- internals ---
   readonly property color foreground: Color.foreground
+  readonly property color muted: Api.secondaryColor(Color.muted, Color.foreground, Color.background)
   readonly property color accent: Color.accent
   readonly property string fontFamily: Style.font.family
   readonly property int groupWindowMs: 10 * 60 * 1000
@@ -569,7 +572,7 @@ FocusScope {
           anchors.centerIn: parent
           visible: timeline.loading || (!timeline.hasMore && timeline.rows.length > 0)
           text: timeline.loading ? "Loading history" : "Beginning of conversation"
-          color: Color.muted
+          color: timeline.muted
           font.family: timeline.fontFamily
           font.pixelSize: Style.font.caption
         }
@@ -605,7 +608,7 @@ FocusScope {
             id: dayText
             anchors.centerIn: parent
             text: row.day
-            color: Color.muted
+            color: timeline.muted
             font.family: timeline.fontFamily
             font.pixelSize: Style.font.caption
             font.bold: true
@@ -678,7 +681,7 @@ FocusScope {
       anchors.centerIn: parent
       visible: !timeline.rows.length && !timeline.loading
       text: timeline.channelId ? "No messages yet." : "Pick a channel."
-      color: Color.muted
+      color: timeline.muted
       font.family: timeline.fontFamily
       font.pixelSize: Style.font.body
     }

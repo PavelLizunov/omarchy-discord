@@ -36,6 +36,7 @@ Item {
   readonly property int debounceMs: 80
   readonly property string fontFamily: Style.font.family
   readonly property color foreground: Color.popups.text
+  readonly property color muted: Api.secondaryColor(Color.muted, Color.foreground, Color.background)
   readonly property bool loggedOut: !!(service && service.loggedOut)
   readonly property bool offline: !service || !service.connected
   // Rows: backend entries, or a single "Log in" row while logged out.
@@ -247,7 +248,7 @@ Item {
           visible: root.emptyText !== ""
           wrapMode: Text.WordWrap
           text: root.emptyText
-          color: root.error ? Color.urgent : Color.muted
+          color: root.error ? Color.urgent : root.muted
           font.family: root.fontFamily
           font.pixelSize: Style.font.body
           leftPadding: Style.spacing.rowPaddingX
@@ -288,7 +289,7 @@ Item {
               anchors.verticalCenter: parent.verticalCenter
               width: Style.space(22)
               text: resultRow.login ? "" : Api.channelGlyph(resultRow.row.type)
-              color: resultRow.row.unread ? root.foreground : Color.muted
+              color: resultRow.row.unread ? root.foreground : root.muted
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
             }
@@ -309,7 +310,7 @@ Item {
                   text: resultRow.login ? "Log in to Discord" : String(resultRow.row.name || "")
                   elide: Text.ElideRight
                   width: Math.min(implicitWidth, parent.width)
-                  color: resultRow.row.muted && !resultRow.row.unread ? Color.muted : root.foreground
+                  color: resultRow.row.muted && !resultRow.row.unread ? root.muted : root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
                   font.bold: !!resultRow.row.unread
@@ -319,7 +320,7 @@ Item {
                   width: Math.max(0, parent.width - x)
                   text: resultRow.login ? "" : String(resultRow.row.guildName || "")
                   elide: Text.ElideRight
-                  color: Color.muted
+                  color: root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.bodySmall
                 }
@@ -329,7 +330,7 @@ Item {
                 visible: text !== ""
                 text: resultRow.login ? "The panel opens on the login screen" : String(resultRow.row.preview || "")
                 elide: Text.ElideRight
-                color: Color.muted
+                color: root.muted
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
               }
@@ -383,7 +384,7 @@ Item {
           width: parent.width
           elide: Text.ElideRight
           text: root.footerText
-          color: Color.muted
+          color: root.muted
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
         }

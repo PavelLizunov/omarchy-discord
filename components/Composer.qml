@@ -4,6 +4,8 @@ import QtQuick.Controls
 import qs.Commons
 import qs.Ui
 
+import "../Api.js" as Api
+
 // The composer zone: a wrapping multi-line input (grows to maxLines, then
 // scrolls), an optional mode line (reply / edit), and staged attachment
 // chips. State that must survive panel destruction (drafts, staged files)
@@ -53,8 +55,11 @@ FocusScope {
   // claimed here and handed to the panel.
   signal switcherRequested()
   signal cheatsheetRequested()
+  // Alt+m: the TextArea would otherwise type an "m".
+  signal membersRequested()
 
   readonly property color foreground: Color.foreground
+  readonly property color muted: Api.secondaryColor(Color.muted, Color.foreground, Color.background)
   readonly property color accent: Color.accent
   readonly property string fontFamily: Style.font.family
   readonly property int lineHeight: Math.ceil(metrics.height)
@@ -181,6 +186,7 @@ FocusScope {
     var ctrl = (mods & Qt.ControlModifier) !== 0
     if (alt && key === Qt.Key_H) moveZone("left")
     else if (alt && key === Qt.Key_L) moveZone("right")
+    else if (alt && key === Qt.Key_M) membersRequested()
     // Alt+Up/Down (channel stepping) belongs to the panel.
     else if (alt) return
     else if ((key === Qt.Key_Return || key === Qt.Key_Enter) && !shift) submit()
@@ -210,6 +216,7 @@ FocusScope {
     var alt = (event.modifiers & Qt.AltModifier) !== 0
     if (alt && key === Qt.Key_H) moveZone("left")
     else if (alt && key === Qt.Key_L) moveZone("right")
+    else if (alt && key === Qt.Key_M) membersRequested()
     else if (alt) return
     else if (key === Qt.Key_Escape) focusInput()
     else if ((event.modifiers & Qt.ControlModifier) && key === Qt.Key_K) switcherRequested()
@@ -277,7 +284,7 @@ FocusScope {
       leftPadding: Style.spacing.sm
       elide: Text.ElideRight
       text: composer.modeText
-      color: composer.editing ? composer.accent : Color.muted
+      color: composer.editing ? composer.accent : composer.muted
       font.family: composer.fontFamily
       font.pixelSize: Style.font.caption
     }
@@ -334,7 +341,7 @@ FocusScope {
           background: null
           placeholderText: composer.channelId
             ? "Message " + (composer.channelName || "this channel") : "Pick a channel"
-          placeholderTextColor: Color.muted
+          placeholderTextColor: composer.muted
           color: composer.foreground
           selectionColor: Style.selectionFillFor(composer.foreground, composer.accent)
           selectedTextColor: composer.foreground

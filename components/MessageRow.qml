@@ -35,6 +35,7 @@ Item {
   signal reactionClicked(string emoji)
 
   readonly property color foreground: Color.foreground
+  readonly property color muted: Api.secondaryColor(Color.muted, Color.foreground, Color.background)
   readonly property color accent: Color.accent
   readonly property string fontFamily: Style.font.family
   readonly property var author: message && message.author ? message.author : ({})
@@ -174,7 +175,7 @@ Item {
       Text {
         anchors.centerIn: parent
         text: root.initials
-        color: Color.muted
+        color: root.muted
         font.family: root.fontFamily
         font.pixelSize: Style.font.subtitle
         font.bold: true
@@ -230,7 +231,7 @@ Item {
         ? "↳ " + String(root.replyTo.author_display_name || "unknown") + ": "
           + (String(root.replyTo.preview || "") || "(message unavailable)")
         : ""
-      color: Color.muted
+      color: root.muted
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
     }
@@ -256,7 +257,7 @@ Item {
           visible: !!root.author.bot
           anchors.verticalCenter: parent.verticalCenter
           text: "BOT"
-          color: Color.muted
+          color: root.muted
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
         }
@@ -264,7 +265,7 @@ Item {
           id: timeLabel
           anchors.verticalCenter: parent.verticalCenter
           text: root.timeText
-          color: Color.muted
+          color: root.muted
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
 
@@ -289,8 +290,8 @@ Item {
       textFormat: root.system ? Text.PlainText : Text.RichText
       wrapMode: Text.Wrap
       text: root.system ? String(root.message.content || "")
-        : root.html + (root.edited ? " <span style=\"color:" + Color.muted + "\">(edited)</span>" : "")
-      color: root.system ? Color.muted : root.foreground
+        : root.html + (root.edited ? " <span style=\"color:" + root.muted + "\">(edited)</span>" : "")
+      color: root.system ? root.muted : root.foreground
       font.family: root.fontFamily
       font.pixelSize: Style.font.body
       font.italic: root.system
@@ -300,7 +301,7 @@ Item {
     Text {
       visible: root.edited && !root.system && root.html === ""
       text: "(edited)"
-      color: Color.muted
+      color: root.muted
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
     }
@@ -560,7 +561,7 @@ Item {
         Text {
           anchors.centerIn: parent
           text: preview.covered ? "SPOILER" : (previewImage.status === Image.Error ? "image unavailable" : "")
-          color: preview.covered ? root.foreground : Color.muted
+          color: preview.covered ? root.foreground : root.muted
           font.family: root.fontFamily
           font.pixelSize: preview.covered ? Style.font.bodySmall : Style.font.caption
           font.bold: preview.covered
@@ -571,7 +572,7 @@ Item {
           anchors.bottomMargin: Style.spacing.sm
           visible: preview.covered
           text: "Enter or click to reveal"
-          color: Color.muted
+          color: root.muted
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
         }

@@ -36,6 +36,9 @@ var FALLBACK = [
 ]
 
 var FREQUENT_CAP = 16
+// Server emoji shown per guild without / with a filter (see sections()).
+var SERVER_CAP = 48
+var SERVER_CAP_QUERY = 200
 
 function parseCatalog(raw) {
   try {
@@ -167,11 +170,11 @@ function matches(cell, needle, keywords) {
 // Picker model. Sections in display order, empty ones dropped:
 //   reactions — the message's existing reactions ("Toggle": me => unreact)
 //   frequent  — persisted frequently-used list
-//   server    — custom emoji of the guild (list_emoji, next wave)
+//   server    — custom emoji per guild (list_emoji), `currentGuildId` first
 //   all       — the unicode catalogue
 // Each cell: { emoji (wire form), label, custom (id or ""), toggle, me }.
 // `query` filters every section by name / keyword.
-function sections(reactions, frequent, server, catalog, query, limit) {
+function sections(reactions, frequent, server, catalog, query, limit, currentGuildId) {
   var needle = String(query || "").trim().toLowerCase()
   var keywords = keywordIndex(catalog)
   var out = []
@@ -200,14 +203,33 @@ function sections(reactions, frequent, server, catalog, query, limit) {
   }
   if (cells.length) out.push({ id: "frequent", title: "Frequently used", cells: cells })
 
-  cells = []
-  var sv = Array.isArray(server) ? server : []
-  for (var s = 0; s < sv.length; s++) {
-    if (!sv[s] || !sv[s].id || !sv[s].name) continue
-    var scell = { emoji: wire(sv[s]), label: ":" + String(sv[s].name) + ":", custom: String(sv[s].id), toggle: false, me: false, count: 0 }
-    if (matches(scell, needle, keywords)) cells.push(scell)
+  // Server emoji: one section per guild (list_emoji order), the selected
+  // guild hoisted to the front.
+  var guilds = Array.isArray(server) ? server.slice() : []
+  var current = String(currentGuildId || "")
+  if (current) {
+    for (var g = 0; g < guilds.length; g++) {
+      if (!guilds[g] || String(guilds[g].guild_id || "") !== current) continue
+      guilds.unshift(guilds.splice(g, 1)[0])
+      break
+    }
   }
-  if (cells.length) out.push({ id: "server", title: "Server emoji", cells: cells })
+  // Every cell is an <img> through the media cache, and the grid is not
+  // virtualized: accounts with a dozen emoji-heavy guilds would otherwise
+  // fetch a thousand images on open. Cap per guild; typing searches deeper.
+  var cap = needle ? SERVER_CAP_QUERY : SERVER_CAP
+  for (var gi = 0; gi < guilds.length; gi++) {
+    var guild = guilds[gi]
+    var sv = guild && Array.isArray(guild.emoji) ? guild.emoji : []
+    cells = []
+    for (var s = 0; s < sv.length && cells.length < cap; s++) {
+      if (!sv[s] || !sv[s].id || !sv[s].name) continue
+      var scell = { emoji: wire(sv[s]), label: ":" + String(sv[s].name) + ":", custom: String(sv[s].id), toggle: false, me: false, count: 0,
+        animated: !!sv[s].animated }
+      if (matches(scell, needle, keywords)) cells.push(scell)
+    }
+    if (cells.length) out.push({ id: "server:" + String(guild.guild_id || gi), title: String(guild.guild_name || "Server emoji"), cells: cells })
+  }
 
   cells = []
   var all = filter(catalog, needle, limit)

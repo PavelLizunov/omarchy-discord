@@ -72,6 +72,16 @@ Item {
   // guildId -> [channel]; replaced wholesale for reactivity.
   property var channelsByGuild: ({})
   property var channelsLoading: ({})
+  // parentId -> [thread channel] from list_threads (newest activity first);
+  // replaced wholesale. Filled on first expand, refreshed when a
+  // channel_update names a thread of a loaded parent.
+  property var threadsByParent: ({})
+  property var threadsLoading: ({})
+  // channel_update bursts (THREAD_LIST_SYNC: one create per active thread,
+  // hundreds on a busy guild) are coalesced: guild ids / thread parents
+  // touched since the last flush, mutated in place (nothing binds to them).
+  property var dirtyGuilds: ({})
+  property var dirtyThreadParents: ({})
   property bool structureBusy: false
   property bool loginBusy: false
   // Highest `generation` seen on state / guilds_synced; stale ones are dropped.
@@ -109,6 +119,9 @@ Item {
   property var mediaRetried: ({})
   readonly property int avatarSize: 64
   readonly property int emojiSize: 32
+  // Secondary text colour for every surface (Api.secondaryColor: the theme's
+  // muted when it reads against the background, else foreground at 60 %).
+  readonly property color secondaryColor: Api.secondaryColor(Color.muted, Color.foreground, Color.background)
 
   // --- notifications ---
   // notify-send argv builder; a harness substitutes a recorder. Only the
@@ -229,8 +242,9 @@ Item {
     mentionBg: Util.alpha(Color.accent, 0.18),
     linkColor: Color.accent,
     codeBg: Util.alpha(Color.foreground, 0.08),
-    spoilerColor: Color.muted,
-    mutedColor: Color.muted,
+    // The spoiler cover is both ink and background: it must be opaque.
+    spoilerColor: Api.blend(secondaryColor, Color.background, secondaryColor.a),
+    mutedColor: secondaryColor,
     monoFamily: Style.font.family,
     fontSize: Style.font.body,
     emojiSize: Math.round(Style.font.body * 1.4),
@@ -249,9 +263,23 @@ Item {
   // Unicode catalogue [{ e, k }], loaded lazily from the shell's data file.
   property var emojiCatalog: []
   property bool emojiCatalogRequested: false
-  // Custom emoji of the current guild [{ name, id, animated }] — filled by
-  // list_emoji in a later wave; the picker shows a section when non-empty.
+  // list_emoji result: [{ guild_id, guild_name, emoji: [{ id, name, animated, url }] }]
+  // in guild display order; the picker puts the selected guild first.
   property var serverEmoji: []
+  property bool serverEmojiBusy: false
+
+  // --- member list (subscribe_members) ---
+  // The pane toggle lives here so a re-summoned panel comes back with it.
+  property bool membersWanted: false
+  // Channel subscribed on this socket connection ("" = none). Subscriptions
+  // are per connection, so a reconnect re-subscribes (syncMembers).
+  property string membersChannelId: ""
+  // Last member_list_update for membersChannelId (FULL replacement each
+  // time; presence_update patches rows in a copy).
+  property var memberList: null
+  // No list within membersTimeoutMs of subscribing.
+  property bool membersTimedOut: false
+  readonly property int membersTimeoutMs: 15000
   property int quickSwitchSeq: 0
 
   // --- UI visibility refcount ---
@@ -283,6 +311,7 @@ Item {
     // (idleDisconnectMinutes) runs from the last surface closing.
     noteActivity()
     if (value) ensureBackend()
+    if (name === "full-panel") syncMembers()
   }
 
   // --- settings plumbing ---
@@ -419,6 +448,8 @@ Item {
         guilds = []
         dms = []
         channelsByGuild = ({})
+        threadsByParent = ({})
+        serverEmoji = []
         clearMessages()
         notice = ""
         succeed("Logged out")
@@ -474,6 +505,123 @@ Item {
       var next = Api.shallowCopy(root.channelsByGuild)
       next[id] = result.channels
       root.channelsByGuild = next
+    })
+  }
+
+  // --- threads ---
+  // Active threads of a parent: the list_threads mirror when it has
+  // answered, else the thread rows list_channels already carries (same
+  // objects, sorted newest first). Reading both maps keeps bindings live.
+  function threadsFor(parentId, guildId) {
+    var pid = String(parentId || "")
+    var known = threadsByParent[pid]
+    if (Array.isArray(known)) return known
+    return Api.threadsOf(channelsFor(guildId), pid)
+  }
+
+  function listThreads(parentId, force) {
+    var pid = String(parentId || "")
+    if (!pid || !ready) return
+    if (!force && (threadsByParent[pid] !== undefined || threadsLoading[pid])) return
+    threadsLoading[pid] = true
+    send("list_threads", { channel_id: pid }, function(ok, result) {
+      delete root.threadsLoading[pid]
+      if (!ok || !result || !Array.isArray(result.threads)) return
+      var next = Api.shallowCopy(root.threadsByParent)
+      next[pid] = result.threads
+      root.threadsByParent = next
+    })
+  }
+
+  // channel_update: a thread create/update/delete touches its parent's
+  // thread list and the guild's channel list (thread counts); everything is
+  // coalesced through structureFlushTimer so a THREAD_LIST_SYNC burst costs
+  // one list_channels per guild and one list_threads per loaded parent.
+  function noteChannelUpdate(channel) {
+    var guildId = String(channel.guild_id || "")
+    if (!guildId) {
+      send("list_dms", null, function(ok, result) {
+        if (ok && result && Array.isArray(result.channels)) root.dms = result.channels
+      })
+      return
+    }
+    if (channelsByGuild[guildId] !== undefined) dirtyGuilds[guildId] = true
+    if (String(channel.type || "") === "thread" && channel.parent_id) {
+      var pid = String(channel.parent_id)
+      if (threadsByParent[pid] !== undefined) dirtyThreadParents[pid] = true
+    }
+    if (!structureFlushTimer.running) structureFlushTimer.start()
+  }
+
+  function flushStructureUpdates() {
+    var guilds_ = dirtyGuilds
+    var parents = dirtyThreadParents
+    dirtyGuilds = ({})
+    dirtyThreadParents = ({})
+    for (var gid in guilds_) loadChannels(gid, true)
+    for (var pid in parents) listThreads(pid, true)
+  }
+
+  // --- member list ---
+  function setMembersWanted(value) {
+    membersWanted = !!value
+    syncMembers()
+  }
+
+  // Subscribe to the current channel while the pane is wanted and the full
+  // panel is up; unsubscribe otherwise. Idempotent; called on every input
+  // change (channel, toggle, panel visibility, connection).
+  function syncMembers() {
+    var want = membersWanted && visibleSurfaces["full-panel"] && currentChannelId ? currentChannelId : ""
+    if (want === membersChannelId) return
+    if (membersChannelId && connected)
+      backendClient.sendCommand("unsubscribe_members", { channel_id: membersChannelId }, null)
+    membersChannelId = want
+    memberList = null
+    membersTimedOut = false
+    membersTimer.stop()
+    if (!want) return
+    if (!ready) return
+    var id = want
+    send("subscribe_members", { channel_id: id }, function(ok) {
+      if (!ok && root.membersChannelId === id) root.membersTimedOut = true
+    })
+    membersTimer.restart()
+  }
+
+  function applyMemberListUpdate(message) {
+    if (String(message.channel_id || "") !== membersChannelId || !membersChannelId) return
+    memberList = { channel_id: membersChannelId, guild_id: message.guild_id ? String(message.guild_id) : null,
+      groups: Array.isArray(message.groups) ? message.groups : [],
+      members: Array.isArray(message.members) ? message.members : [] }
+    membersTimedOut = false
+    membersTimer.stop()
+  }
+
+  // presence_update carries no channel: patch every visible row of the user.
+  function applyPresenceUpdate(message) {
+    if (!memberList) return
+    var userId = String(message.user_id || "")
+    if (!userId) return
+    var list = memberList.members
+    var next = null
+    for (var i = 0; i < list.length; i++) {
+      var row = list[i]
+      if (!row || !row.user || String(row.user.id || "") !== userId) continue
+      if (!next) next = list.slice()
+      next[i] = Api.assign(Api.shallowCopy(row), { status: String(message.status || row.status || "offline"),
+        activity: message.activity !== undefined ? String(message.activity || "") : row.activity })
+    }
+    if (next) memberList = Api.assign(Api.shallowCopy(memberList), { members: next })
+  }
+
+  // --- server emoji (list_emoji) ---
+  function loadServerEmoji() {
+    if (!ready || serverEmojiBusy) return
+    serverEmojiBusy = true
+    backendClient.sendCommand("list_emoji", null, function(ok, result) {
+      root.serverEmojiBusy = false
+      if (ok && result && Array.isArray(result.guilds)) root.serverEmoji = result.guilds
     })
   }
 
@@ -1187,6 +1335,16 @@ Item {
     var guildUnread = marker
     var guildMentions = mentions
     var guildIndex = indexOfId(guilds, guildId)
+    // An expanded thread list mirrors its rows too.
+    for (var pid in threadsByParent) {
+      var threads = threadsByParent[pid]
+      var tIndex = Array.isArray(threads) ? indexOfId(threads, channelId) : -1
+      if (tIndex < 0) continue
+      var nextThreads = Api.shallowCopy(threadsByParent)
+      nextThreads[pid] = patchedList(threads, tIndex, { unread: marker, mention_count: mentions })
+      threadsByParent = nextThreads
+      break
+    }
     if (Array.isArray(list)) {
       var index = indexOfId(list, channelId)
       if (index >= 0) {
@@ -1551,15 +1709,19 @@ Item {
     watchQrReplay()
     if (now === "ready" && was !== "ready") {
       refreshStructure()
+      loadServerEmoji()
       // Open channels are per socket connection: re-open after every
       // (re)connect. A gateway resume on the same connection re-sends the tail,
       // which mergeTail() absorbs.
       reopenChannels()
+      syncMembers()
     }
     if (now !== "ready" && was === "ready" && now !== "connecting") {
       guilds = []
       dms = []
       channelsByGuild = ({})
+      threadsByParent = ({})
+      serverEmoji = []
       clearMessages()
     }
   }
@@ -1583,17 +1745,18 @@ Item {
         }
         channelsByGuild = kept
         for (var r = 0; r < reload.length; r++) loadChannels(reload[r], true)
+        loadServerEmoji()
         break
       }
-      case "channel_update": {
-        var channel = message.channel || {}
-        var guildId = String(channel.guild_id || "")
-        if (guildId && channelsByGuild[guildId] !== undefined) loadChannels(guildId, true)
-        else if (!guildId) send("list_dms", null, function(ok, result) {
-          if (ok && result && Array.isArray(result.channels)) root.dms = result.channels
-        })
+      case "channel_update":
+        noteChannelUpdate(message.channel || {})
         break
-      }
+      case "member_list_update":
+        applyMemberListUpdate(message)
+        break
+      case "presence_update":
+        applyPresenceUpdate(message)
+        break
       case "read_state_changed":
         applyReadState(message)
         break
@@ -1672,6 +1835,7 @@ Item {
   onShellChanged: settingsSync.restart()
   onPluginDirChanged: daemonManager.pluginDir = pluginDir
   onMediaCacheMBChanged: sendConfig()
+  onCurrentChannelIdChanged: syncMembers()
 
   Component.onCompleted: {
     // Deferred so shell/manifest injection lands before any startup work.
@@ -1693,6 +1857,19 @@ Item {
     id: qrReplayTimer
     interval: root.qrReplayMs
     onTriggered: root.qrMissing = root.lifecycle === "qr_pending" && root.qr === null && !root.qrBusy
+  }
+
+  // Coalesces channel_update bursts (see noteChannelUpdate).
+  Timer {
+    id: structureFlushTimer
+    interval: 300
+    onTriggered: root.flushStructureUpdates()
+  }
+
+  Timer {
+    id: membersTimer
+    interval: root.membersTimeoutMs
+    onTriggered: root.membersTimedOut = root.membersChannelId !== "" && root.memberList === null
   }
 
   Timer {
@@ -1783,6 +1960,15 @@ Item {
         root.notifyHeld = ({})
       }
       if (!backendClient.connected) {
+        // Member subscriptions die with the socket; syncMembers re-subscribes
+        // once the session is ready again.
+        root.membersChannelId = ""
+        root.memberList = null
+        root.membersTimedOut = false
+        membersTimer.stop()
+        root.dirtyGuilds = ({})
+        root.dirtyThreadParents = ({})
+        root.threadsLoading = ({})
         root.backendState = null
         root.lastGeneration = -1
         reconnectGraceTimer.stop()
