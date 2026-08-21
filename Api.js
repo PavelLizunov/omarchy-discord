@@ -52,6 +52,12 @@ function clampInt(value, min, max, fallback) {
   return Math.max(min, Math.min(max, n))
 }
 
+// The backend's media cache only fetches Discord's CDN hosts; anything else
+// (embed images off-site) is not even requested.
+function isCdnUrl(url) {
+  return /^https:\/\/(cdn\.discordapp\.com|media\.discordapp\.net)\//i.test(String(url || ""))
+}
+
 function lifecycleLabel(lifecycle, connected) {
   if (!connected) return "Backend not running"
   switch (String(lifecycle || "")) {

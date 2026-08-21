@@ -6,15 +6,17 @@ Go backend, instead of the 1 GB Electron app. Same architecture as
 quickshell.spotify: QML owns everything visible, a systemd user unit owns the
 Discord connection, and a private JSON-lines socket joins them.
 
-**Status: Phase 2, participation.** Everything from Phase 1 (bar mark with mention
-badge and unread dot, token login, guild rail + channel list, virtualized timeline with
-history paging and markdown rendering, live read state, typing line) plus a composer:
-send, reply, edit, delete, outgoing typing, and image paste (`Ctrl+V` stages a
-clipboard image as an attachment chip; `Enter` uploads it). Reactions, the quick
-switcher, and the emoji picker are Phase 3; threads and forums are listed but open in
-Phase 3; voice and stage channels are hidden entirely (voice is a non-goal). See
-`docs/PLAN.md` for
-the roadmap and `docs/CONVENTIONS.md` for the mechanics contract.
+**Status: Phase 2 complete (notifications, media, QR login).** Everything from Phase 1
+(bar mark with mention badge and unread dot, guild rail + channel list, virtualized
+timeline with history paging and markdown rendering, live read state, typing line)
+plus the composer (send, reply, edit, delete, outgoing typing, image paste: `Ctrl+V`
+stages a clipboard image as an attachment chip, `Enter` uploads it), desktop
+notifications through the Omarchy notification center, media through the backend's
+cache (avatars, guild icons, inline image attachments with spoiler covers, embed
+thumbnails/images, custom emoji in messages and reaction chips), and QR login. Reactions,
+the quick switcher, and the emoji picker are Phase 3; threads and forums are listed but
+open in Phase 3; voice and stage channels are hidden entirely (voice is a non-goal). See
+`docs/PLAN.md` for the roadmap and `docs/CONVENTIONS.md` for the mechanics contract.
 
 ## Install (development)
 
@@ -53,10 +55,22 @@ bindd = SUPER SHIFT, D, Discord, exec, omarchy-shell quickshell.discord.panel to
 
 ## Logging in
 
-Click the bar mark (or use the bind) and paste a user token into the form; Enter
-submits. The token goes over the socket to the backend, which stores it in the GNOME
-keyring via `secret-tool` over stdin. It is never written to disk, logs, or shown in
-the UI. QR login arrives in a later phase.
+Click the bar mark (or use the bind). The login screen offers two ways in; `Tab` cycles
+Scan QR → token field → Log in → Close, `Enter` activates, `Esc` closes.
+
+**Scan QR** (default): the panel shows a QR code; open the Discord mobile app, go to
+Settings › Scan QR Code, scan it, and confirm on the phone. The panel follows along
+("Logging in as … — confirm on your phone", then "Approved, connecting…"). The code is
+valid for about two minutes; when it expires, is declined, or you press `Esc`, a
+[Try again] button produces a fresh one. No password or captcha is involved; the token
+the phone hands over goes straight into the keyring.
+
+**Paste a token** instead: paste a user token into the field and press Enter. The token
+goes over the socket to the backend, which stores it in the GNOME keyring via
+`secret-tool` over stdin. It is never written to disk, logs, or shown in the UI.
+
+When a session expires (token revoked elsewhere) the same screen comes back with
+"Session expired — log in again".
 
 From a terminal instead:
 
@@ -80,6 +94,7 @@ channel focuses the composer.
 | `j` / `k`, arrows | Move the cursor in the focused column / timeline |
 | `Enter` (rail) | Select the server and focus its channel list |
 | `Enter` (channel list) | Open the channel and focus the composer |
+| `Enter` (timeline) | Reveal the focused message's spoiler images (click works too) |
 | `h` / `l`, Left / Right | Rail ↔ channel list ↔ timeline |
 | `Alt+↑` / `Alt+↓` | Previous / next channel in the current list (works from the composer too) |
 | `Alt+Shift+↑` / `Alt+Shift+↓` | Previous / next **unread** channel |
@@ -87,7 +102,7 @@ channel focuses the composer.
 | `R` (timeline) | Reply to the focused message: reply line appears in the composer, `Esc` cancels it |
 | `D` `D` (timeline) | Delete the focused message if it is yours: the first `D` arms it for 3 s ("D again to delete"), the second deletes; `Esc` or moving disarms |
 | `E` (timeline) | Reactions: not yet, shows a hint (Phase 3) |
-| `Y` / `O` | Copy the focused message's text / open its first link or attachment |
+| `Y` / `O` | Copy the focused message's text / open its first link or attachment (attachments open from the local media cache when already downloaded) |
 | `Enter` (composer) | Send; with staged attachments, upload them with the text |
 | `Shift+Enter` (composer) | Newline |
 | `↑` (empty composer) | Edit your last message in the loaded window; `Enter` saves, `Esc` cancels |
@@ -112,11 +127,45 @@ The open channel keeps a rolling window of the newest 500 messages while you are
 the bottom (older rows become pageable history again); nothing is trimmed while you
 are scrolled up.
 
+## Notifications and media
+
+New messages raise desktop notifications through the Omarchy notification center
+(`notify-send`, app name "Omarchy Discord", normal urgency, the author's cached avatar as
+the icon). Which ones is decided by the `notifications` setting on top of Discord's own
+per-channel settings as the backend evaluates them (muted channels never notify):
+
+| `notifications` | Notifies on |
+|---|---|
+| `All` | every message Discord would notify about, including "All messages" channels |
+| `Mentions and DMs` (default) | messages that mention you (or `@everyone` where not suppressed) and DMs / group DMs |
+| `Off` | nothing |
+
+Suppressed regardless: your own messages, anything while your Discord status is Do Not
+Disturb, and messages in the channel you are looking at (panel open, focused, on that
+channel). Bursts are rate-limited to one notification per channel every 3 s; held
+messages fold into the next one as "(+N more)". The summary is "Author in #channel"
+("Author" for a DM), the body the first ~200 characters of the message as plain text,
+plus a paperclip when it carries attachments.
+
+Images (avatars, guild icons, attachments, embed images, custom emoji) are downloaded by
+the backend into `$XDG_CACHE_HOME/omarchy-discord/media/` (Discord CDN hosts only) and
+rendered from there. `imagePreviews` `Off` turns attachment and embed images back into
+filename chips (avatars and emoji stay). Spoiler images stay covered until you press
+`Enter` on the message or click them. `mediaCacheMB` caps the cache (LRU, default 512).
+
 ## Settings
 
 Stored inline on the plugin's `shell.json` entry; edit with
-`omarchy bar set quickshell.discord <key> <value>`: `stayConnected`,
-`notifications`, `showMentionCount`, `middleClick`, `imagePreviews`, `mediaCacheMB`.
+`omarchy bar set quickshell.discord <key> <value>`.
+
+| Key | Values | Default | Effect |
+|---|---|---|---|
+| `stayConnected` | `On` / `Off` | `On` | Keep the backend connected while the plugin is enabled; `Off` idles it out 15 min after the last open surface |
+| `notifications` | `All` / `Mentions and DMs` / `Off` | `Mentions and DMs` | Desktop notification filter (see above) |
+| `showMentionCount` | `On` / `Off` | `On` | Show the mention count next to the bar mark |
+| `middleClick` | `Last unread DM` / `Raise panel` | `Last unread DM` | Middle-click action on the bar mark |
+| `imagePreviews` | `On` / `Off` | `On` | Inline image attachments and embed images in the timeline |
+| `mediaCacheMB` | 64–4096 | 512 | Media cache size cap in MiB (pushed to the backend with `set_config`) |
 
 ## License
 

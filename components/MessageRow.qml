@@ -1,13 +1,20 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import QtQuick.Effects
 import qs.Commons
 import qs.Ui
 
+import "../Api.js" as Api
 import "../Markdown.js" as Markdown
 
-// One timeline row: optional header (author + time), reply line, markdown
-// content, attachments, embeds, reactions. Height follows content; the
-// Timeline's ListView reads implicitHeight.
+// One timeline row: avatar + optional header (author + time), reply line,
+// markdown content, attachments (inline image previews through the media
+// cache, filename chips otherwise), embeds, reactions. Height follows
+// content; the Timeline's ListView reads implicitHeight.
+//
+// Media comes through `ctx` (Service.markdownCtx): ctx.mediaPath(url, size)
+// and ctx.emojiPath(id) return a cached local path or "" while fetching, and
+// ctx.imagePreviews gates inline images. The row never talks to the service.
 Item {
   id: root
 
@@ -16,11 +23,14 @@ Item {
   property bool cursor: false
   // First D landed on this (own) row: show the confirm hint.
   property bool armedDelete: false
+  // Spoiler attachments shown uncovered (Timeline keeps this per message id).
+  property bool spoilersRevealed: false
   property string selfId: ""
   property var ctx: ({})
 
   signal clicked()
   signal linkActivated(string url)
+  signal revealRequested()
 
   readonly property color foreground: Color.foreground
   readonly property color accent: Color.accent
@@ -41,11 +51,53 @@ Item {
   readonly property string fullTimeText: hasTime ? Qt.formatDateTime(when, "dddd d MMMM yyyy HH:mm:ss") : ""
   readonly property string html: Markdown.render(message ? message.content : "", ctx)
   readonly property bool showHeader: !grouped && !system
+  readonly property bool previews: !(ctx && ctx.imagePreviews === false)
+  readonly property bool hasSpoilerImages: {
+    for (var i = 0; i < attachments.length; i++)
+      if (attachments[i] && attachments[i].spoiler && isImageAttachment(attachments[i])) return true
+    return false
+  }
+  readonly property string avatarPath: mediaPath(author.avatar_url, 64)
+  readonly property string initials: {
+    var name = String(author.display_name || author.username || "?").trim()
+    return name ? name.charAt(0).toUpperCase() : "?"
+  }
 
   readonly property int sidePad: Style.spacing.rowPaddingX
   readonly property int barWidth: Style.spacing.xs
+  readonly property int avatarSize: Style.space(36)
+  readonly property int gutter: system ? 0 : avatarSize + Style.spacing.md
+  readonly property int maxImageWidth: Style.space(400)
+  readonly property int maxImageHeight: Style.space(300)
 
-  implicitHeight: body.implicitHeight + (showHeader ? Style.spacing.sm : Style.spacing.xxs) * 2
+  function mediaPath(url, size) {
+    if (!url || !ctx || typeof ctx.mediaPath !== "function") return ""
+    try { return String(ctx.mediaPath(String(url), size) || "") } catch (e) { return "" }
+  }
+
+  function emojiPath(id) {
+    if (!id || !ctx || typeof ctx.emojiPath !== "function") return ""
+    try { return String(ctx.emojiPath(String(id), false) || "") } catch (e) { return "" }
+  }
+
+  function isImageAttachment(attachment) {
+    return !!attachment && String(attachment.content_type || "").indexOf("image/") === 0
+      && String(attachment.url || "") !== ""
+  }
+
+  // Preview box for an image attachment: its own size scaled into the
+  // width/height caps (400x300 default when Discord sent no dimensions).
+  function previewSize(attachment, available) {
+    var w = Math.max(0, Number(attachment.width) || 0)
+    var h = Math.max(0, Number(attachment.height) || 0)
+    if (!w || !h) { w = maxImageWidth; h = maxImageHeight }
+    var maxW = Math.max(Style.space(40), Math.min(maxImageWidth, available))
+    var scale = Math.min(1, maxW / w, maxImageHeight / h)
+    return { width: Math.max(1, Math.round(w * scale)), height: Math.max(1, Math.round(h * scale)) }
+  }
+
+  implicitHeight: Math.max(body.implicitHeight + (showHeader ? Style.spacing.sm : Style.spacing.xxs) * 2,
+    showHeader ? avatar.anchors.topMargin + avatarSize + Style.spacing.sm : 0)
 
   BorderSurface {
     anchors.fill: parent
@@ -92,12 +144,67 @@ Item {
     font.bold: true
   }
 
+  // Avatar (header rows only): the cached image masked round, an initial on
+  // a muted disc until it lands.
+  Item {
+    id: avatar
+    visible: root.showHeader
+    anchors.left: parent.left
+    anchors.top: parent.top
+    anchors.leftMargin: root.sidePad + root.barWidth
+    anchors.topMargin: Style.spacing.sm + (replyLine.visible ? replyLine.height + body.spacing : 0)
+    width: root.avatarSize
+    height: root.avatarSize
+
+    Rectangle {
+      anchors.fill: parent
+      radius: width / 2
+      color: Util.alpha(root.foreground, 0.1)
+      visible: !avatarEffect.visible
+
+      Text {
+        anchors.centerIn: parent
+        text: root.initials
+        color: Color.muted
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.subtitle
+        font.bold: true
+      }
+    }
+    Rectangle {
+      id: avatarMask
+      anchors.fill: parent
+      radius: width / 2
+      visible: false
+      layer.enabled: true
+    }
+    Image {
+      id: avatarImage
+      anchors.fill: parent
+      visible: false
+      asynchronous: true
+      cache: true
+      fillMode: Image.PreserveAspectCrop
+      sourceSize.width: root.avatarSize * 2
+      sourceSize.height: root.avatarSize * 2
+      source: root.avatarPath ? "file://" + root.avatarPath : ""
+    }
+    MultiEffect {
+      id: avatarEffect
+      anchors.fill: avatarImage
+      source: avatarImage
+      maskEnabled: true
+      maskSource: avatarMask
+      visible: root.avatarPath !== "" && avatarImage.status === Image.Ready
+    }
+  }
+
   Column {
     id: body
     anchors.left: parent.left
     anchors.right: parent.right
     anchors.top: parent.top
-    anchors.leftMargin: root.sidePad + root.barWidth
+    anchors.leftMargin: root.sidePad + root.barWidth + root.gutter
     anchors.rightMargin: root.sidePad
     anchors.topMargin: root.showHeader ? Style.spacing.sm : Style.spacing.xxs
     spacing: Style.spacing.xxs
@@ -105,6 +212,7 @@ Item {
 
     // Reply line
     Text {
+      id: replyLine
       width: parent.width
       visible: !!root.replyTo
       elide: Text.ElideRight
@@ -187,24 +295,24 @@ Item {
       font.pixelSize: Style.font.caption
     }
 
-    // Attachments: filename + size (media arrives in Phase 2)
+    // Attachments: image previews inline (media cache), other files as
+    // filename chips. A spoiler image stays covered until revealed (click or
+    // Enter on the row).
     Repeater {
       model: root.attachments.length
-      delegate: Text {
+      delegate: Loader {
+        id: attachmentSlot
         required property int index
         readonly property var attachment: root.attachments[index] || ({})
+        readonly property bool image: root.previews && root.isImageAttachment(attachment)
         width: body.width
-        elide: Text.ElideMiddle
-        text: " " + String(attachment.filename || "attachment")
-          + "  " + Markdown.formatSize(attachment.size)
-          + (attachment.spoiler ? "  (spoiler)" : "")
-        color: root.accent
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall
+        sourceComponent: image ? imagePreview : fileChip
+        onLoaded: item.attachment = Qt.binding(function() { return attachmentSlot.attachment })
       }
     }
 
-    // Embeds: left-bordered block with title (link) + description
+    // Embeds: left-bordered block with title (link), description, and when
+    // previews are on a thumbnail (right) / image (below) via the cache.
     Repeater {
       model: root.embeds.length
       delegate: Item {
@@ -214,9 +322,17 @@ Item {
         readonly property string title: String(embed.title || "")
         readonly property string description: String(embed.description || "")
         readonly property string url: String(embed.url || "")
+        // Off-CDN embed media (link previews of other sites) is never fetched.
+        readonly property string thumbUrl: root.previews && Api.isCdnUrl(embed.thumbnail_url) ? String(embed.thumbnail_url) : ""
+        readonly property string imageUrl: root.previews && Api.isCdnUrl(embed.image_url) ? String(embed.image_url) : ""
+        readonly property string thumbPath: root.mediaPath(thumbUrl, 0)
+        readonly property string imagePath: root.mediaPath(imageUrl, 0)
+        readonly property int thumbSize: Style.space(64)
+        readonly property var imageBox: root.previewSize({ width: 0, height: 0 },
+          body.width - Style.spacing.lg - Style.spacing.sm)
         width: body.width
-        height: visible ? embedColumn.implicitHeight + Style.spacing.sm * 2 : 0
-        visible: title !== "" || description !== ""
+        height: visible ? Math.max(embedColumn.implicitHeight, embedThumb.visible ? thumbSize : 0) + Style.spacing.sm * 2 : 0
+        visible: title !== "" || description !== "" || imageUrl !== "" || thumbUrl !== ""
 
         Rectangle {
           anchors.fill: parent
@@ -231,13 +347,34 @@ Item {
           radius: width / 2
           color: root.accent
         }
+        Image {
+          id: embedThumb
+          visible: embedRow.thumbUrl !== ""
+          anchors.right: parent.right
+          anchors.top: parent.top
+          anchors.margins: Style.spacing.sm
+          width: embedRow.thumbSize
+          height: embedRow.thumbSize
+          asynchronous: true
+          fillMode: Image.PreserveAspectFit
+          sourceSize.width: embedRow.thumbSize * 2
+          sourceSize.height: embedRow.thumbSize * 2
+          source: embedRow.thumbPath ? "file://" + embedRow.thumbPath : ""
+
+          Rectangle {
+            anchors.fill: parent
+            radius: Style.cornerRadius
+            color: Util.alpha(root.foreground, 0.08)
+            visible: embedThumb.status !== Image.Ready
+          }
+        }
         Column {
           id: embedColumn
           anchors.left: parent.left
           anchors.right: parent.right
           anchors.top: parent.top
           anchors.leftMargin: Style.spacing.lg
-          anchors.rightMargin: Style.spacing.sm
+          anchors.rightMargin: Style.spacing.sm + (embedThumb.visible ? embedRow.thumbSize + Style.spacing.sm : 0)
           anchors.topMargin: Style.spacing.sm
           spacing: Style.spacing.xxs
 
@@ -268,6 +405,30 @@ Item {
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
           }
+          Image {
+            id: embedImage
+            visible: embedRow.imageUrl !== ""
+            width: status === Image.Ready ? paintedWidth : embedRow.imageBox.width
+            height: status === Image.Ready ? paintedHeight : embedRow.imageBox.height
+            asynchronous: true
+            fillMode: Image.PreserveAspectFit
+            sourceSize.width: embedRow.imageBox.width * 2
+            sourceSize.height: embedRow.imageBox.height * 2
+            source: embedRow.imagePath ? "file://" + embedRow.imagePath : ""
+            onStatusChanged: if (status === Image.Ready) {
+              // Fit the loaded size into the caps; paintedWidth follows.
+              var box = root.previewSize({ width: implicitWidth, height: implicitHeight }, embedColumn.width)
+              width = box.width
+              height = box.height
+            }
+
+            Rectangle {
+              anchors.fill: parent
+              radius: Style.cornerRadius
+              color: Util.alpha(root.foreground, 0.08)
+              visible: embedImage.status !== Image.Ready
+            }
+          }
         }
       }
     }
@@ -285,28 +446,132 @@ Item {
           required property int index
           readonly property var reaction: root.reactions[index] || ({})
           readonly property bool me: !!reaction.me
-          readonly property string emoji: {
-            var raw = String(reaction.emoji || "")
-            var m = /^([^:]+):\d+$/.exec(raw)
-            return m ? ":" + m[1] + ":" : raw
-          }
+          readonly property var custom: /^([^:]+):(\d+)$/.exec(String(reaction.emoji || ""))
+          readonly property string emoji: custom ? ":" + custom[1] + ":" : String(reaction.emoji || "")
+          readonly property string emojiFile: custom ? root.emojiPath(custom[2]) : ""
+          readonly property int emojiPx: Math.round(Style.font.bodySmall * 1.4)
           radius: Style.cornerRadius
           color: me ? Style.selectedFillFor(root.foreground, root.accent)
             : Util.alpha(root.foreground, 0.06)
           borderSpec: me
             ? Border.controlSpec("selected", root.foreground, root.accent)
             : Border.none()
-          implicitWidth: reactionLabel.implicitWidth + Style.spacing.md * 2
-          implicitHeight: reactionLabel.implicitHeight + Style.spacing.xxs * 2
+          implicitWidth: reactionRow.implicitWidth + Style.spacing.md * 2
+          implicitHeight: Math.max(reactionRow.implicitHeight, chip.emojiPx) + Style.spacing.xxs * 2
 
-          Text {
-            id: reactionLabel
+          Row {
+            id: reactionRow
             anchors.centerIn: parent
-            text: chip.emoji + " " + String(Number(chip.reaction.count) || 0)
-            color: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
+            spacing: Style.spacing.xs
+
+            Image {
+              visible: chip.emojiFile !== ""
+              anchors.verticalCenter: parent.verticalCenter
+              width: chip.emojiPx
+              height: chip.emojiPx
+              asynchronous: true
+              fillMode: Image.PreserveAspectFit
+              sourceSize.width: chip.emojiPx * 2
+              sourceSize.height: chip.emojiPx * 2
+              source: chip.emojiFile ? "file://" + chip.emojiFile : ""
+            }
+            Text {
+              visible: chip.emojiFile === ""
+              anchors.verticalCenter: parent.verticalCenter
+              text: chip.emoji
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: String(Number(chip.reaction.count) || 0)
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
           }
+        }
+      }
+    }
+  }
+
+  // --- attachment delegates ---
+  Component {
+    id: fileChip
+
+    Text {
+      property var attachment: ({})
+      elide: Text.ElideMiddle
+      text: " " + String(attachment.filename || "attachment")
+        + "  " + Markdown.formatSize(attachment.size)
+        + (attachment.spoiler ? "  (spoiler)" : "")
+      color: root.accent
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.bodySmall
+    }
+  }
+
+  Component {
+    id: imagePreview
+
+    Item {
+      id: preview
+      property var attachment: ({})
+      readonly property bool spoiler: !!attachment.spoiler
+      readonly property bool covered: spoiler && !root.spoilersRevealed
+      readonly property string path: root.mediaPath(attachment.url, 0)
+      readonly property var box: root.previewSize(attachment, width)
+      implicitHeight: box.height
+
+      // Muted placeholder while the file is fetched; doubles as the spoiler
+      // cover (the image is not even loaded until revealed).
+      Rectangle {
+        width: preview.box.width
+        height: preview.box.height
+        radius: Style.cornerRadius
+        color: Util.alpha(root.foreground, preview.covered ? 0.14 : 0.06)
+        visible: preview.covered || previewImage.status !== Image.Ready
+
+        Text {
+          anchors.centerIn: parent
+          text: preview.covered ? "SPOILER" : (previewImage.status === Image.Error ? "image unavailable" : "")
+          color: preview.covered ? root.foreground : Color.muted
+          font.family: root.fontFamily
+          font.pixelSize: preview.covered ? Style.font.bodySmall : Style.font.caption
+          font.bold: preview.covered
+        }
+        Text {
+          anchors.bottom: parent.bottom
+          anchors.horizontalCenter: parent.horizontalCenter
+          anchors.bottomMargin: Style.spacing.sm
+          visible: preview.covered
+          text: "Enter or click to reveal"
+          color: Color.muted
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+      }
+      Image {
+        id: previewImage
+        width: preview.box.width
+        height: preview.box.height
+        visible: !preview.covered && status === Image.Ready
+        asynchronous: true
+        fillMode: Image.PreserveAspectFit
+        horizontalAlignment: Image.AlignLeft
+        sourceSize.width: preview.box.width * 2
+        sourceSize.height: preview.box.height * 2
+        source: !preview.covered && preview.path ? "file://" + preview.path : ""
+      }
+      MouseArea {
+        width: preview.box.width
+        height: preview.box.height
+        cursorShape: Qt.PointingHandCursor
+        onClicked: {
+          if (preview.covered) root.revealRequested()
+          else if (preview.path) root.linkActivated(preview.path)
+          else if (preview.attachment.url) root.linkActivated(String(preview.attachment.url))
         }
       }
     }

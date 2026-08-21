@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Effects
 import Quickshell
 import qs.Commons
 import qs.Ui
@@ -40,8 +41,18 @@ Item {
   // Structure stays visible through the short reconnect grace (Service.showStructure).
   readonly property bool ready: !!(service && service.showStructure)
   readonly property bool showLogin: connected
-    && (lifecycle === "logged_out" || lifecycle === "reauth_needed")
+    && (lifecycle === "logged_out" || lifecycle === "reauth_needed" || lifecycle === "qr_pending")
   readonly property string errorText: service ? Api.redact(service.lastError) : ""
+  // QR login: the service mirrors qr_* events in `qr`; the QR view replaces
+  // the login choices while a flow runs or has just ended (Try again).
+  readonly property var qr: service ? service.qr : null
+  readonly property string qrStage: qr ? String(qr.stage || "") : ""
+  readonly property bool qrView: showLogin && (lifecycle === "qr_pending"
+    || !!(service && service.qrBusy) || qrStage === "cancelled")
+  readonly property bool qrCancelable: lifecycle === "qr_pending" && (qrStage === "code" || qrStage === "scanned")
+  property int qrSecondsLeft: 0
+  // The panel window owns keyboard focus (notification suppression).
+  readonly property bool windowActive: opened && focusScope.Window.active
 
   // --- zones: "sidebar" (columns "rail" | "channels"), "timeline", "composer" ---
   // `zone` is the last keyboard zone; the header buttons sit outside the
@@ -139,6 +150,70 @@ Item {
     return tokenField.activeFocus || composerView.inputFocused
   }
 
+  function publishActive() {
+    if (service) service.panelActive = windowActive
+  }
+
+  // Login screen Tab order: Scan QR -> token field -> Log in -> Close; in
+  // the QR view: Cancel / Try again -> Close.
+  function loginStops() {
+    return qrView ? [qrActionButton, closeButton] : [scanQrButton, tokenField, loginButton, closeButton]
+  }
+
+  function focusLogin() {
+    if (!showLogin) return
+    var stops = loginStops()
+    for (var i = 0; i < stops.length; i++) if (stops[i].activeFocus) return
+    stops[0].forceActiveFocus()
+  }
+
+  function cycleLoginFocus(delta) {
+    var stops = loginStops()
+    var index = -1
+    for (var i = 0; i < stops.length; i++) if (stops[i].activeFocus) { index = i; break }
+    stops[clampCursor(index + delta, stops.length)].forceActiveFocus()
+  }
+
+  function startQrLogin() {
+    if (service) service.startQrLogin()
+  }
+
+  // Esc in the QR view: cancel a running flow, dismiss a finished one.
+  function leaveQr() {
+    if (!service) return
+    if (qrCancelable) service.cancelQrLogin()
+    else service.dismissQr()
+  }
+
+  function qrStatusText() {
+    if (!qr) return "Starting QR login…"
+    var user = qr.user || null
+    var name = user ? String(user.username || "") : ""
+    switch (qrStage) {
+      case "code": return "Scan with the Discord mobile app (Settings › Scan QR Code)"
+      case "scanned": return "Logging in" + (name ? " as " + name : "") + " — confirm on your phone"
+      case "approved": return "Approved, connecting…"
+      case "cancelled":
+        switch (String(qr.reason || "")) {
+          case "declined": return "Login was declined on the phone."
+          case "expired": return "The QR code expired."
+          case "error": return "QR login failed." + (qr.error ? " " + qr.error : "")
+          default: return "QR login cancelled."
+        }
+      default: return ""
+    }
+  }
+
+  function qrAvatarUrl() {
+    var user = qr && qr.user ? qr.user : null
+    if (!user || !user.id || !user.avatar_hash) return ""
+    return "https://cdn.discordapp.com/avatars/" + String(user.id) + "/" + String(user.avatar_hash) + ".png"
+  }
+
+  function updateQrCountdown() {
+    qrSecondsLeft = qr && qr.expiresAt ? Math.max(0, Math.ceil((Number(qr.expiresAt) - Date.now()) / 1000)) : 0
+  }
+
   // --- host contract ---
   function open(payloadJson) {
     var payload = ({})
@@ -159,7 +234,7 @@ Item {
     }
     Qt.callLater(function() {
       focusZone()
-      if (root.showLogin) tokenField.forceActiveFocus()
+      if (root.showLogin) focusLogin()
     })
   }
 
@@ -170,6 +245,7 @@ Item {
     if (service) service.setUiVisible("full-panel", false)
     publishScreen()
     publishPinned()
+    publishActive()
     closingFromHost = false
   }
 
@@ -460,17 +536,19 @@ Item {
   // Panel-level keys. The Timeline and the Composer handle their own keys
   // first when they have focus and only unhandled ones arrive here.
   function handleKey(event) {
-    if (tokenField.activeFocus) {
-      if (event.key === Qt.Key_Escape) {
-        root.requestClose()
-        event.accepted = true
-      }
-      return
-    }
     var key = event.key
     var text = event.text
     var alt = (event.modifiers & Qt.AltModifier) !== 0
     var shift = (event.modifiers & Qt.ShiftModifier) !== 0
+    if (showLogin) {
+      // Buttons take Enter themselves; the token field takes its text.
+      if (key === Qt.Key_Tab || key === Qt.Key_Backtab) cycleLoginFocus(key === Qt.Key_Backtab || shift ? -1 : 1)
+      else if (key === Qt.Key_Escape) { if (qrView) leaveQr(); else root.requestClose() }
+      else return
+      event.accepted = true
+      return
+    }
+    if (tokenField.activeFocus) return
     if (!ready) {
       if (key === Qt.Key_Escape) { root.requestClose(); event.accepted = true }
       else if (text === "r") { retry(); event.accepted = true }
@@ -541,7 +619,11 @@ Item {
 
   onGuildRowsChanged: ensureCursors()
   onChannelRowsChanged: ensureCursors()
-  onShowLoginChanged: if (showLogin && opened) Qt.callLater(function() { tokenField.forceActiveFocus() })
+  onShowLoginChanged: if (showLogin && opened) Qt.callLater(focusLogin)
+  // Switching between the choices and the QR view moves the focus stop.
+  onQrViewChanged: if (showLogin && opened) Qt.callLater(focusLogin)
+  onWindowActiveChanged: publishActive()
+  onQrChanged: updateQrCountdown()
   // Losing the session hides the panes; put the zone and the keyboard focus
   // back on the rail together (the timeline would otherwise keep focus while
   // the zone says "rail", and reclaim it when the panes reappear).
@@ -555,8 +637,17 @@ Item {
     if (service) {
       service.setUiVisible("full-panel", false)
       service.panelScreenName = ""
+      service.panelActive = false
       service.timelinePinned = true
     }
+  }
+
+  Timer {
+    interval: 1000
+    repeat: true
+    running: root.opened && (root.qrStage === "code" || root.qrStage === "scanned")
+    triggeredOnStart: true
+    onTriggered: root.updateQrCountdown()
   }
 
   // Ack-on-read: the timeline reached its newest row while focused and
@@ -718,51 +809,223 @@ Item {
             }
           }
 
-          // Login form
+          // Login: Scan QR (default) or paste a token; the QR view takes over
+          // while a flow runs.
           Column {
             anchors.centerIn: parent
             visible: root.showLogin
             spacing: Style.spacing.lg
-            width: Math.min(parent.width, Style.space(460))
+            width: Math.min(parent.width, Style.space(520))
 
             Text {
               width: parent.width
-              text: root.lifecycle === "reauth_needed" ? "Login required again" : "Log in to Discord"
+              text: root.lifecycle === "reauth_needed" ? "Session expired — log in again" : "Log in to Discord"
               color: root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.heading
             }
-            Text {
+
+            // --- QR view ---
+            Column {
+              id: qrColumn
               width: parent.width
-              wrapMode: Text.WordWrap
-              text: "Paste a user token and press Enter. It goes straight to the backend and into the keyring; it is never written to disk or shown here. QR login arrives in a later phase."
-              color: Color.muted
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.body
-            }
-            TextField {
-              id: tokenField
-              width: parent.width
-              password: true
-              placeholderText: "Discord user token"
-              enabled: !(root.service && root.service.loginBusy)
-              onAccepted: root.submitToken()
-            }
-            Row {
-              spacing: Style.spacing.controlGap
-              Button {
-                text: root.service && root.service.loginBusy ? "Logging in" : "Log in"
-                focusable: true
-                foreground: root.foreground
-                enabled: !(root.service && root.service.loginBusy)
-                onClicked: root.submitToken()
+              visible: root.qrView
+              spacing: Style.spacing.lg
+
+              Item {
+                id: qrFrame
+                anchors.horizontalCenter: parent.horizontalCenter
+                // Half the backend's 512 px PNG: an exact 2:1 downscale keeps
+                // every module crisp for the phone camera.
+                width: Style.space(256)
+                height: width
+                visible: root.qrStage === "code" || root.qrStage === ""
+
+                // The PNG is rewritten per qr_code; the revision query defeats
+                // Qt's pixmap cache so a fresh code always reloads.
+                Rectangle {
+                  anchors.fill: parent
+                  radius: Style.cornerRadius
+                  color: Util.alpha(root.foreground, 0.06)
+                  visible: qrImage.status !== Image.Ready
+                  Text {
+                    anchors.centerIn: parent
+                    width: parent.width - Style.spacing.lg * 2
+                    wrapMode: Text.WrapAnywhere
+                    horizontalAlignment: Text.AlignHCenter
+                    text: root.qr && root.qr.url && qrImage.status !== Image.Loading
+                      ? String(root.qr.url) : "Requesting a code…"
+                    color: Color.muted
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                }
+                Image {
+                  id: qrImage
+                  anchors.fill: parent
+                  cache: false
+                  asynchronous: true
+                  fillMode: Image.PreserveAspectFit
+                  source: root.qr && root.qr.imagePath
+                    ? "file://" + String(root.qr.imagePath) + "?r=" + String(root.qr.revision || 0) : ""
+                }
+              }
+
+              // Scanned: who is logging in.
+              Row {
+                anchors.horizontalCenter: parent.horizontalCenter
+                visible: root.qrStage === "scanned"
+                spacing: Style.spacing.md
+
+                Item {
+                  width: Style.space(40)
+                  height: width
+                  anchors.verticalCenter: parent.verticalCenter
+                  Rectangle {
+                    anchors.fill: parent
+                    radius: width / 2
+                    color: Util.alpha(root.foreground, 0.1)
+                    visible: !qrAvatarEffect.visible
+                    Text {
+                      anchors.centerIn: parent
+                      text: root.qr && root.qr.user && root.qr.user.username
+                        ? String(root.qr.user.username).charAt(0).toUpperCase() : "?"
+                      color: Color.muted
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.subtitle
+                      font.bold: true
+                    }
+                  }
+                  Rectangle { id: qrAvatarMask; anchors.fill: parent; radius: width / 2; visible: false; layer.enabled: true }
+                  Image {
+                    id: qrAvatarImage
+                    anchors.fill: parent
+                    visible: false
+                    asynchronous: true
+                    fillMode: Image.PreserveAspectCrop
+                    sourceSize.width: width * 2
+                    sourceSize.height: height * 2
+                    readonly property string path: root.service ? root.service.mediaPath(root.qrAvatarUrl(), 64) : ""
+                    source: path ? "file://" + path : ""
+                  }
+                  MultiEffect {
+                    id: qrAvatarEffect
+                    anchors.fill: qrAvatarImage
+                    source: qrAvatarImage
+                    maskEnabled: true
+                    maskSource: qrAvatarMask
+                    visible: qrAvatarImage.path !== "" && qrAvatarImage.status === Image.Ready
+                  }
+                }
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: root.qr && root.qr.user ? String(root.qr.user.username || "") : ""
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.title
+                  font.bold: true
+                }
+              }
+
+              Text {
+                id: qrStatus
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                text: root.qrStatusText()
+                color: root.qrStage === "cancelled" ? Color.urgent : root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
               }
               Text {
-                anchors.verticalCenter: parent.verticalCenter
-                text: "Terminal alternative: omarchy-discord-backend login"
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+                visible: root.qrStage === "code" || root.qrStage === "scanned"
+                text: root.qrSecondsLeft > 0
+                  ? "Code expires in " + Math.floor(root.qrSecondsLeft / 60) + ":"
+                    + (root.qrSecondsLeft % 60 < 10 ? "0" : "") + (root.qrSecondsLeft % 60)
+                  : "Code expiring…"
                 color: Color.muted
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
+              }
+              Button {
+                id: qrActionButton
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: root.qrStage === "cancelled" ? "Try again" : "Cancel"
+                focusable: true
+                activeFocusOnTab: false
+                foreground: root.foreground
+                enabled: !(root.service && root.service.qrBusy)
+                onClicked: {
+                  if (root.qrStage === "cancelled") root.startQrLogin()
+                  else root.leaveQr()
+                }
+              }
+            }
+
+            // --- choices: Scan QR / token ---
+            Column {
+              width: parent.width
+              visible: !root.qrView
+              spacing: Style.spacing.lg
+
+              Row {
+                spacing: Style.spacing.md
+                Button {
+                  id: scanQrButton
+                  text: "Scan QR"
+                  focusable: true
+                  activeFocusOnTab: false
+                  foreground: root.foreground
+                  enabled: !(root.service && (root.service.loginBusy || root.service.qrBusy))
+                  onClicked: root.startQrLogin()
+                }
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: parent.parent.width - scanQrButton.width - parent.spacing
+                  wrapMode: Text.WordWrap
+                  text: "Shows a code to scan with the Discord mobile app. No password, no captcha."
+                  color: Color.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                }
+              }
+              Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Or paste a user token and press Enter. It goes straight to the backend and into the keyring; it is never written to disk or shown here."
+                color: Color.muted
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+              }
+              TextField {
+                id: tokenField
+                width: parent.width
+                password: true
+                placeholderText: "Discord user token"
+                activeFocusOnTab: false
+                enabled: !(root.service && root.service.loginBusy)
+                onAccepted: root.submitToken()
+              }
+              Row {
+                spacing: Style.spacing.controlGap
+                Button {
+                  id: loginButton
+                  text: root.service && root.service.loginBusy ? "Logging in" : "Log in"
+                  focusable: true
+                  activeFocusOnTab: false
+                  foreground: root.foreground
+                  enabled: !(root.service && root.service.loginBusy)
+                  onClicked: root.submitToken()
+                }
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "Terminal alternative: omarchy-discord-backend login"
+                  color: Color.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
               }
             }
           }
@@ -840,11 +1103,43 @@ Item {
 
                     Text {
                       anchors.centerIn: parent
+                      visible: !guildIconEffect.visible
                       text: guildRow.isDms ? "@" : Api.initials(guildRow.row.name)
                       color: guildRow.unread || guildRow.selected ? root.foreground : Color.muted
                       font.family: root.fontFamily
                       font.pixelSize: guildRow.isDms ? Style.font.title : Style.font.bodySmall
                       font.bold: guildRow.unread
+                    }
+
+                    // Guild icon through the media cache, masked to the tile
+                    // shape; the initials stay until it lands.
+                    Rectangle {
+                      id: guildIconMask
+                      anchors.fill: parent
+                      radius: guildTile.radius
+                      visible: false
+                      layer.enabled: true
+                    }
+                    Image {
+                      id: guildIcon
+                      anchors.fill: parent
+                      visible: false
+                      asynchronous: true
+                      fillMode: Image.PreserveAspectCrop
+                      sourceSize.width: width * 2
+                      sourceSize.height: height * 2
+                      readonly property string path: !guildRow.isDms && root.service && guildRow.row.icon_url
+                        ? root.service.mediaPath(String(guildRow.row.icon_url), 64) : ""
+                      source: path ? "file://" + path : ""
+                    }
+                    MultiEffect {
+                      id: guildIconEffect
+                      anchors.fill: guildIcon
+                      source: guildIcon
+                      maskEnabled: true
+                      maskSource: guildIconMask
+                      opacity: guildRow.unread || guildRow.selected || guildRow.hasCursor ? 1 : 0.7
+                      visible: guildIcon.path !== "" && guildIcon.status === Image.Ready
                     }
                   }
 
@@ -1198,9 +1493,11 @@ Item {
             width: parent.width
             elide: Text.ElideRight
             text: {
-              if (!root.ready)
-                return root.showLogin ? "Enter logs in · Tab reaches buttons · Esc closes"
+              if (!root.ready) {
+                if (root.qrView) return root.qrCancelable ? "Esc cancels · Tab reaches Close" : "Enter tries again · Esc dismisses · Tab reaches Close"
+                return root.showLogin ? "Enter activates · Tab cycles Scan QR, token, Log in, Close · Esc closes"
                   : "r retries · Tab reaches buttons · Esc closes"
+              }
               if (root.buttonFocused)
                 return "Enter activates · Tab/Shift+Tab cycle · Esc back to " + (root.zone === "timeline" ? "timeline" : "sidebar")
               if (root.zone === "composer") {

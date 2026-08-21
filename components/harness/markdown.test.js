@@ -84,6 +84,47 @@ test("mentions and emoji", () => {
   assert.equal(M.render("<@7>", { selfId: "7" }), "<b>@you</b>")
 })
 
+test("custom emoji images", () => {
+  const paths = { "123": "/home/m/.cache/omarchy-discord/media/ab.png" }
+  const ectx = Object.assign({}, ctx, { emojiSize: 17, emojiPath: (id) => paths[id] || "" })
+  const img = "<img src=\"file:///home/m/.cache/omarchy-discord/media/ab.png\" width=\"17\" height=\"17\" alt=\":smile:\">"
+  assert.equal(M.render("<:smile:123>", ectx), img)
+  assert.equal(M.render("<a:smile:123>", ectx), img)
+  // unknown emoji keep the :name: fallback; plain text never gets an image
+  assert.equal(M.render("<:wave:4>", ectx), ":wave:")
+  assert.equal(M.plainText("<:smile:123>", ectx), ":smile:")
+  // size from fontSize when emojiSize is absent (12 * 1.4 -> 17)
+  assert.equal(M.render("<:smile:123>", { emojiPath: () => "/a.png" }),
+    "<img src=\"file:///a.png\" width=\"17\" height=\"17\" alt=\":smile:\">")
+  // emoji inside formatting and spoilers still work
+  assert.equal(M.render("**<:smile:123>**", ectx), "<b>" + img + "</b>")
+  assert.equal(M.render("||<:smile:123>||", ectx),
+    "<span style=\"background-color:#s;color:#s\">" + img + "</span>")
+  // the emoji id is the only thing reaching the resolver
+  let seen = null
+  M.render("<:x:999>", Object.assign({}, ectx, { emojiPath: (id, animated) => { seen = [id, animated]; return "" } }))
+  assert.deepEqual(seen, ["999", false])
+  M.render("<a:x:999>", Object.assign({}, ectx, { emojiPath: (id, animated) => { seen = [id, animated]; return "" } }))
+  assert.deepEqual(seen, ["999", true])
+})
+
+test("emoji path cannot inject markup", () => {
+  const bad = ["\"><script>x</script>", "/a.png\" onload=\"x", "/a.png'>", "/a<b>.png", "/a&b.png",
+    "relative.png", "file:///a.png", "http://evil/x.png", "/a\\b.png", "/a\n.png", "", null, undefined, 42]
+  for (const p of bad) {
+    const out = M.render("<:smile:123>", { emojiPath: () => p })
+    assert.equal(out, ":smile:", JSON.stringify(p))
+  }
+  const thrown = M.render("<:smile:123>", { emojiPath: () => { throw new Error("boom") } })
+  assert.equal(thrown, ":smile:")
+  assert.equal(M.render("<:smile:123>", { emojiPath: "not a function" }), ":smile:")
+  // a path with a space is fine, quotes never reach the attribute unescaped
+  assert.equal(M.render("<:smile:123>", { emojiPath: () => "/a b/c.png" }),
+    "<img src=\"file:///a b/c.png\" width=\"17\" height=\"17\" alt=\":smile:\">")
+  // the name in alt is escaped by construction (\\w+ only) and the id is digits only
+  assert.equal(M.render("<:<b>:123>", { emojiPath: () => "/a.png" }), "&lt;:&lt;b&gt;:123&gt;")
+})
+
 test("timestamps", () => {
   assert.equal(r("<t:1700000000:R>"), "<u>1 hour ago</u>")
   assert.equal(r("<t:1700007200:R>"), "<u>in 1 hour</u>")

@@ -4,6 +4,7 @@ import Quickshell.Io
 import qs.Commons
 
 import "Api.js" as Api
+import "Markdown.js" as Markdown
 
 // Shared state for the bar widget and the lazy full panel. The Go backend is
 // the source of truth; this is a mirror fed by its socket events. Runs while
@@ -82,6 +83,42 @@ Item {
 
   // Monitor name hosting the open full panel ("" when closed); set by Panel.qml.
   property string panelScreenName: ""
+  // The panel window has keyboard focus (Panel.qml publishes Window.active);
+  // gates notification suppression for the current channel.
+  property bool panelActive: false
+
+  // --- media cache mirror (backend fetch_media / media_ready) ---
+  // "url|size" -> local path. Replaced wholesale: every avatar / image /
+  // emoji binding reads it through mediaPath().
+  property var mediaPaths: ({})
+  // "url|size" -> true while a fetch_media is outstanding; mutated in place
+  // (nothing binds to it) so mediaPath() can run inside bindings without
+  // re-triggering them.
+  property var mediaPending: ({})
+  // "url|size" -> true after a failed fetch; cleared per connection so a
+  // binding never loops on a dead URL.
+  property var mediaFailed: ({})
+  readonly property int avatarSize: 64
+  readonly property int emojiSize: 32
+
+  // --- notifications ---
+  // notify-send argv builder; a harness substitutes a recorder. Only the
+  // args after the binary are ours (see notificationArgs()).
+  property var notifyCommand: function(args) { return ["notify-send"].concat(args) }
+  readonly property int notifyWindowMs: 3000
+  // channelId -> last notify-send time (in place; nothing binds to it).
+  property var notifyLastAt: ({})
+  // channelId -> { message, channel_name, isDm, count } held back by the
+  // per-channel rate limit; flushed as one "+N more" notification.
+  property var notifyHeld: ({})
+
+  // --- QR login (start_qr_login / qr_* events) ---
+  // null, or { stage: "code"|"scanned"|"approved"|"cancelled", url,
+  // fingerprint, imagePath, expiresAt, revision, user, reason, error }.
+  // `revision` bumps per qr_code so the panel reloads the rewritten PNG.
+  property var qr: null
+  property bool qrBusy: false
+  property int qrRevision: 0
 
   // --- panel view state (the panel is destroyed on hide; this restores it) ---
   property string selectedGuildId: ""
@@ -164,6 +201,10 @@ Item {
     return map
   }
   // Markdown.js render context: theme tokens + resolvers (harness Fixtures.ctx).
+  // Also carries the media resolvers MessageRow uses (avatars, attachment
+  // previews, emoji), so rows never touch the service directly. Reading
+  // `mediaPaths` here makes the ctx (and every row's html) refresh when a
+  // media_ready lands.
   readonly property var markdownCtx: ({
     users: knownUsers,
     channels: channelNames,
@@ -176,7 +217,12 @@ Item {
     spoilerColor: Color.muted,
     mutedColor: Color.muted,
     monoFamily: Style.font.family,
-    fontSize: Style.font.body
+    fontSize: Style.font.body,
+    emojiSize: Math.round(Style.font.body * 1.4),
+    imagePreviews: imagePreviews,
+    mediaPaths: mediaPaths,
+    mediaPath: function(url, size) { return root.mediaPath(url, size) },
+    emojiPath: function(id, animated) { return root.emojiPath(id, animated) }
   })
 
   // --- UI visibility refcount ---
@@ -900,8 +946,9 @@ Item {
     var channelId = String(message.channel_id || "")
     var row = message.message
     if (!row || !row.id) return
-    // notify:true also arrives for channels we do not have open (Phase 2
-    // notifications); the store only holds open channels.
+    // notify:true also arrives for channels we do not have open; the store
+    // only holds open channels, the notification decision runs for every one.
+    maybeNotify(message)
     var entry = channelEntry(channelId)
     if (!entry || !isOpen(channelId)) return
     if (row.author && row.author.id) removeTyper(channelId, String(row.author.id))
@@ -1053,6 +1100,207 @@ Item {
     return next
   }
 
+  // --- media cache ---
+  function mediaKey(url, size) {
+    return String(url) + "|" + (Math.max(0, Number(size) || 0))
+  }
+
+  // Local path for a CDN URL at `size` (0 = original), or "" while it is
+  // being fetched. A miss issues fetch_media once per url+size and resolves
+  // through mediaPaths (media_ready or a cache-hit response). Safe to call
+  // from bindings: the only reactive read is mediaPaths.
+  function mediaPath(url, size) {
+    var u = String(url || "")
+    if (!u) return ""
+    var key = mediaKey(u, size)
+    var known = mediaPaths[key]
+    if (known) return String(known)
+    if (!connected || mediaPending[key] || mediaFailed[key]) return ""
+    mediaPending[key] = true
+    requestMedia(u, Math.max(0, Number(size) || 0))
+    return ""
+  }
+
+  function requestMedia(url, size) {
+    var key = mediaKey(url, size)
+    var fields = { url: url }
+    if (size > 0) fields.size = size
+    backendClient.sendCommand("fetch_media", fields, function(ok, result, error) {
+      if (!ok) { root.mediaFailed[key] = true; delete root.mediaPending[key]; return }
+      if (result && result.cached && result.path) root.resolveMedia(key, String(result.path))
+      // else: media_ready will follow
+    })
+  }
+
+  function resolveMedia(key, path) {
+    delete mediaPending[key]
+    if (mediaPaths[key] === path) return
+    var next = Api.shallowCopy(mediaPaths)
+    next[key] = path
+    mediaPaths = next
+  }
+
+  // media_ready is keyed by url only; two sizes of one url share the event.
+  // With a single size outstanding the path is adopted directly, otherwise
+  // each size is re-requested (a completed one is now a cache hit).
+  function applyMediaReady(message) {
+    var url = String(message.url || "")
+    if (!url) return
+    var prefix = url + "|"
+    var keys = []
+    for (var key in mediaPending) if (key.indexOf(prefix) === 0) keys.push(key)
+    if (!keys.length) return
+    if (!message.ok) {
+      for (var f = 0; f < keys.length; f++) { mediaFailed[keys[f]] = true; delete mediaPending[keys[f]] }
+      return
+    }
+    if (keys.length === 1 && message.path) { resolveMedia(keys[0], String(message.path)); return }
+    for (var k = 0; k < keys.length; k++) requestMedia(url, Number(keys[k].slice(prefix.length)) || 0)
+  }
+
+  function emojiUrl(id) {
+    return "https://cdn.discordapp.com/emojis/" + String(id) + ".png"
+  }
+
+  // Custom emoji path for Markdown.js / reaction chips. Animated emoji are
+  // fetched as PNG too: Qt rich text cannot animate an <img>, and one cache
+  // entry per emoji is cheaper than two.
+  function emojiPath(id, animated) {
+    var value = String(id || "")
+    if (!/^\d+$/.test(value)) return ""
+    return mediaPath(emojiUrl(value), emojiSize)
+  }
+
+  function sendConfig() {
+    if (!connected) return
+    backendClient.sendCommand("set_config", { media_cache_mb: mediaCacheMB }, null)
+  }
+
+  // --- notifications ---
+  // Why a message_create event does NOT raise a notification ("" = notify).
+  // Exposed for the harness; maybeNotify() is the caller.
+  function notifySkipReason(message) {
+    if (!message || !message.notify) return "not-notify"
+    var row = message.message
+    if (!row || !row.author) return "no-message"
+    if (lifecycle !== "ready") return "not-ready"
+    if (notificationMode === "Off") return "mode-off"
+    if (isOwn(row)) return "own"
+    if (backendState && String(backendState.presence || "") === "dnd") return "dnd"
+    var isDm = message.guild_id === null || message.guild_id === undefined || String(message.guild_id) === ""
+    if (notificationMode !== "All" && !row.mentions_self && !isDm) return "mode-mentions"
+    var channelId = String(message.channel_id || "")
+    if (panelActive && visibleSurfaces["full-panel"] && channelId === currentChannelId) return "viewing"
+    return ""
+  }
+
+  function maybeNotify(message) {
+    if (notifySkipReason(message) !== "") return
+    var channelId = String(message.channel_id || "")
+    var now = Date.now()
+    var last = Number(notifyLastAt[channelId]) || 0
+    var isDm = message.guild_id === null || message.guild_id === undefined || String(message.guild_id) === ""
+    if (now - last < notifyWindowMs) {
+      // Inside the per-channel window: hold it, one flush per window.
+      var held = notifyHeld[channelId]
+      notifyHeld[channelId] = { message: message.message, channel_name: String(message.channel_name || ""),
+        isDm: isDm, count: held ? held.count + 1 : 1 }
+      notifyFlushTimer.restart()
+      return
+    }
+    notifyLastAt[channelId] = now
+    fireNotification(notificationArgs(message.message, String(message.channel_name || ""), isDm, 1))
+  }
+
+  function flushNotifications() {
+    var now = Date.now()
+    var again = false
+    for (var channelId in notifyHeld) {
+      var held = notifyHeld[channelId]
+      if (now - (Number(notifyLastAt[channelId]) || 0) < notifyWindowMs) { again = true; continue }
+      delete notifyHeld[channelId]
+      notifyLastAt[channelId] = now
+      fireNotification(notificationArgs(held.message, held.channel_name, held.isDm, held.count))
+    }
+    if (again) notifyFlushTimer.restart()
+  }
+
+  // argv after "notify-send". Nothing but the preview text, the channel /
+  // author names, and a cached avatar path ever goes here.
+  function notificationArgs(row, channelName, isDm, count) {
+    var author = row.author || {}
+    var name = String(author.display_name || author.username || "Someone")
+    var channel = String(channelName || "")
+    var summary = isDm && (!channel || channel === name) ? name
+      : name + " in " + (isDm ? channel : "#" + channel)
+    // Preview text is user content by design; redact anyway so a pasted
+    // token never lands in a notification daemon's history.
+    var body = Api.redact(Markdown.plainText(row.content, markdownCtx))
+    if (body.length > 200) body = body.slice(0, 199) + "…"
+    if (Array.isArray(row.attachments) && row.attachments.length) body += (body ? " " : "") + "📎"
+    if (count > 1) body += (body ? " " : "") + "(+" + (count - 1) + " more)"
+    var args = ["--app-name=Omarchy Discord", "--urgency=normal"]
+    var avatar = author.avatar_url ? mediaPath(String(author.avatar_url), avatarSize) : ""
+    if (avatar) args.push("--icon=" + avatar)
+    // The shell renders the body as styled text; the summary is plain.
+    args.push("--", summary.replace(/[<>]/g, ""), Markdown.escapeHtml(body))
+    return args
+  }
+
+  function fireNotification(args) {
+    var argv = notifyCommand(args)
+    if (Array.isArray(argv) && argv.length) Quickshell.execDetached(argv)
+  }
+
+  // --- QR login ---
+  function startQrLogin() {
+    if (!connected) { fail("The Discord backend is not connected yet"); return false }
+    if (qrBusy || lifecycle === "qr_pending") return false
+    qrBusy = true
+    lastError = ""
+    qr = null
+    backendClient.sendCommand("start_qr_login", null, function(ok, result, error) {
+      root.qrBusy = false
+      if (!ok) root.fail(error || "QR login is unavailable right now")
+    })
+    return true
+  }
+
+  function cancelQrLogin() {
+    if (!connected) return false
+    backendClient.sendCommand("cancel_qr_login", null, null)
+    return true
+  }
+
+  // Forget a finished QR attempt (back to the login choices).
+  function dismissQr() {
+    qr = null
+  }
+
+  function applyQrEvent(name, message) {
+    var current = qr || ({})
+    switch (name) {
+      case "qr_code":
+        qr = { stage: "code", url: String(message.url || ""), fingerprint: String(message.fingerprint || ""),
+          imagePath: String(message.image_path || ""),
+          expiresAt: Date.now() + Math.max(0, Number(message.expires_in_ms) || 0),
+          revision: ++qrRevision, user: null, reason: "", error: "" }
+        break
+      case "qr_scanned":
+        qr = Api.assign(Api.shallowCopy(current), { stage: "scanned", user: message.user || null })
+        break
+      case "qr_approved":
+        qr = Api.assign(Api.shallowCopy(current), { stage: "approved" })
+        break
+      case "qr_cancelled":
+        qr = Api.assign(Api.shallowCopy(current), { stage: "cancelled",
+          reason: String(message.reason || "cancelled"), error: Api.redact(String(message.error || "")) })
+        break
+      default:
+        break
+    }
+  }
+
   // --- event handling ---
   // Returns false (and ignores the payload) when `generation` is older than
   // the newest one seen. Messages without a generation always pass.
@@ -1081,6 +1329,8 @@ Item {
     }
     backendState = next
     if (next.error) lastError = Api.redact(String(next.error))
+    // A session coming up (QR approved, token login) ends the QR view.
+    if (qr && (now === "connecting" || now === "ready")) qr = null
     if (now === "ready" && was !== "ready") {
       refreshStructure()
       // Open channels are per socket connection: re-open after every
@@ -1144,6 +1394,15 @@ Item {
       case "upload_progress":
         applyUploadProgress(message)
         break
+      case "media_ready":
+        applyMediaReady(message)
+        break
+      case "qr_code":
+      case "qr_scanned":
+      case "qr_approved":
+      case "qr_cancelled":
+        applyQrEvent(name, message)
+        break
       default:
         break
     }
@@ -1194,6 +1453,7 @@ Item {
 
   onShellChanged: settingsSync.restart()
   onPluginDirChanged: daemonManager.pluginDir = pluginDir
+  onMediaCacheMBChanged: sendConfig()
 
   Component.onCompleted: {
     // Deferred so shell/manifest injection lands before any startup work.
@@ -1222,6 +1482,12 @@ Item {
     interval: 1000
     repeat: true
     onTriggered: root.pruneTypers()
+  }
+
+  Timer {
+    id: notifyFlushTimer
+    interval: root.notifyWindowMs
+    onTriggered: root.flushNotifications()
   }
 
   Timer {
@@ -1277,6 +1543,14 @@ Item {
     function onEventReceived(name, message) { root.handleEvent(name, message) }
     function onConfigurationFailed(reason) { root.fail(reason) }
     function onConnectedChanged() {
+      // In-flight fetches died with the socket; let bindings ask again.
+      root.mediaPending = ({})
+      root.mediaFailed = ({})
+      if (backendClient.connected) root.sendConfig()
+      else {
+        root.qr = null
+        root.notifyHeld = ({})
+      }
       if (!backendClient.connected) {
         root.backendState = null
         root.lastGeneration = -1

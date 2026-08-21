@@ -164,6 +164,55 @@ DND (our app name will be correctly silenced by DND — bypass exists only for
 Off* filter gates in Service.qml **before** sending. Never put message content into argv
 logs; icon = cached avatar path from the media cache.
 
+What ships (Service.qml `maybeNotify` / `notificationArgs`), per `message_create`
+with `notify: true`:
+
+```
+notify-send --app-name=Omarchy Discord --urgency=normal [--icon=<cached avatar path>] -- <summary> <body>
+```
+
+- `summary`: `"<author> in #<channel_name>"`; DMs whose `channel_name` is the author:
+  `"<author>"`; group DMs: `"<author> in <channel_name>"`. `<`/`>` stripped (the card
+  renders the summary as auto-text).
+- `body`: `Markdown.plainText(content)` → `Api.redact` → cut to 200 chars (`…`) → HTML
+  entities escaped (the shell's card renders the body as `Text.StyledText`) → ` 📎`
+  appended when the message has attachments → ` (+N more)` when it flushes a held burst.
+- `--icon` only when the author's avatar (`avatar_url`, size 64) is **already** in
+  `mediaPaths`; the lookup itself queues the fetch so the next notification has it.
+  Never a URL, never an icon-theme name.
+- No actions (`--action` support varies across servers), no hints, never critical.
+- The argv builder is `property var notifyCommand(args)` (default prepends
+  `notify-send`) so a harness can record instead of execute; `fireNotification` runs it
+  through `Quickshell.execDetached`.
+
+Skip rules, in order (`notifySkipReason` returns the name, `""` means notify):
+`not-notify` (event's `notify` false) · `not-ready` (lifecycle ≠ ready) · `mode-off` ·
+`own` (author is `selfId`) · `dnd` (`state.presence === "dnd"`) · `mode-mentions`
+(mode is *Mentions and DMs* and neither `message.mentions_self` nor `guild_id == null`)
+· `viewing` (`panelActive` — Panel.qml publishes `Window.active` — and the full panel
+surface is visible and `channel_id === currentChannelId`). Rate limit: one
+notification per channel per 3 s (`notifyWindowMs`); arrivals inside the window are
+held (`notifyHeld`, last message wins, count accumulates) and flushed by one timer as a
+single notification with `(+N more)`.
+
+### Media (fetch_media mirror)
+
+`Service.mediaPath(url, size)` returns the cached local path or `""`; a miss marks
+`mediaPending["url|size"]` in place (nothing binds to it, so the call is safe inside
+bindings) and sends `fetch_media`. Resolution writes `mediaPaths` wholesale (a cache-hit
+response or `media_ready`). `media_ready` is keyed by `url` only: one outstanding size
+adopts the path directly, several outstanding sizes are re-requested (the finished one
+is now a cache hit). Failures go to `mediaFailed` so a binding never loops; both maps
+reset per socket connection. `markdownCtx` carries `mediaPath`, `emojiPath(id)`
+(`https://cdn.discordapp.com/emojis/<id>.png` at size 32, PNG even for animated —
+rich text cannot animate), `emojiSize` (`font.body × 1.4`), `imagePreviews`, and reads
+`mediaPaths`, so rows re-render when media lands without touching the service.
+Sizes: avatars and guild icons 64, emoji 32, attachments/embeds original (`size` 0 =
+omitted). Off-CDN URLs (embed images of other sites) are filtered with
+`Api.isCdnUrl` before any request. `set_config {media_cache_mb}` is sent on every
+connect and whenever `mediaCacheMB` changes. Spoiler images are never loaded until
+revealed (`Timeline.revealed`, per message id, reset on channel change).
+
 ### Bar widget contract
 
 - Root extends `qs.Ui BarWidget { moduleName: "quickshell.discord" }`; must set
@@ -290,7 +339,14 @@ cursor. The implementation patterns to copy are spotify's, verbatim:
   Exclusive→OnDemand prime for the quick switcher and bar popup. Opening a channel
   focuses the composer.
 - Keymap per PLAN.md (Ctrl+K quick switcher, Alt+h/l zone moves, j/k roving, `R E Y O`
-  message actions, `↑` edit-last in empty composer, Ctrl+/ cheatsheet).
+  message actions, `↑` edit-last in empty composer, Ctrl+/ cheatsheet). `Enter` on a
+  timeline row reveals its covered spoiler images first, then activates; `O` opens an
+  attachment from its cached local path when the cache has it.
+- **Login screen** (Panel.qml `loginStops`): its own Tab cycle — Scan QR (default
+  focus) → token field → Log in → Close; in the QR view Cancel/Try again → Close. All
+  stops are `focusable` qs.Ui Buttons / the TextField with `activeFocusOnTab: false`
+  so Qt's chain never competes. `Esc` cancels a running QR flow (`cancel_qr_login`),
+  dismisses a finished one, else closes the panel. `showLogin` includes `qr_pending`.
 
 ### Composer zone (`components/Composer.qml`)
 

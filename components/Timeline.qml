@@ -42,6 +42,9 @@ FocusScope {
   // deleteArmMs emits deleteRequested, anything else disarms.
   property string armedDeleteId: ""
   readonly property int deleteArmMs: 3000
+  // Message ids whose spoiler attachments were revealed (Enter / click).
+  // Replaced wholesale; reset on channel change.
+  property var revealed: ({})
 
   signal requestHistory(string beforeId)
   // `escape` is an illegal QML signal name (clashes with the JS global), hence:
@@ -378,11 +381,52 @@ FocusScope {
     copied()
   }
 
+  // O: first link in the text, else the first attachment (opened from its
+  // cached local file when the media cache already has it, so it is instant
+  // and works offline), else the first embed URL.
   function openCursorLink() {
     var index = cursorIndex
     if (index < 0) return
     var url = Markdown.firstLink(rows[index])
-    if (url) openLink(url)
+    if (!url) return
+    var attachments = Array.isArray(rows[index].attachments) ? rows[index].attachments : []
+    for (var i = 0; i < attachments.length; i++) {
+      if (!attachments[i] || String(attachments[i].url || "") !== url) continue
+      var local = localPath(url)
+      if (local) url = local
+      break
+    }
+    openLink(url)
+  }
+
+  function localPath(url) {
+    if (!ctx || typeof ctx.mediaPath !== "function") return ""
+    try { return String(ctx.mediaPath(url, 0) || "") } catch (e) { return "" }
+  }
+
+  function hasCoveredSpoiler(row) {
+    if (!row || revealed[String(row.id || "")]) return false
+    var attachments = Array.isArray(row.attachments) ? row.attachments : []
+    for (var i = 0; i < attachments.length; i++)
+      if (attachments[i] && attachments[i].spoiler
+          && String(attachments[i].content_type || "").indexOf("image/") === 0) return true
+    return false
+  }
+
+  function reveal(messageId) {
+    var id = String(messageId || "")
+    if (!id || revealed[id]) return
+    var next = ({})
+    for (var key in revealed) next[key] = true
+    next[id] = true
+    revealed = next
+  }
+
+  // Enter: uncover the row's spoiler images first, otherwise activate it.
+  function activateCursor() {
+    if (cursorIndex < 0) return
+    if (hasCoveredSpoiler(rows[cursorIndex])) reveal(cursorMessageId)
+    else activateMessage(cursorMessageId)
   }
 
   function isOwnRow(index) {
@@ -431,9 +475,7 @@ FocusScope {
     else if (key === Qt.Key_Home) goTop()
     else if (key === Qt.Key_End || text === "G") focusNewest()
     else if (text === "g") { if (wasG) goTop(); else lastGAt = now }
-    else if (key === Qt.Key_Return || key === Qt.Key_Enter) {
-      if (cursorIndex >= 0) activateMessage(cursorMessageId)
-    }
+    else if (key === Qt.Key_Return || key === Qt.Key_Enter) activateCursor()
     else if (text === "y" || text === "Y") copyCursorMessage()
     else if (text === "o" || text === "O") openCursorLink()
     else if (text === "r" || text === "R") { if (cursorIndex >= 0 && !rows[cursorIndex].pending) replyRequested(cursorMessageId) }
@@ -463,6 +505,7 @@ FocusScope {
     reachedId = ""
     cursorMessageId = ""
     lastGAt = 0
+    revealed = ({})
     disarmDelete()
   }
   onCursorMessageIdChanged: if (armedDeleteId && armedDeleteId !== cursorMessageId) disarmDelete()
@@ -611,9 +654,14 @@ FocusScope {
           ctx: timeline.ctx
           cursor: timeline.active && row.mid !== "" && row.mid === timeline.cursorMessageId
           armedDelete: row.mid !== "" && row.mid === timeline.armedDeleteId
+          spoilersRevealed: !!timeline.revealed[row.mid]
           onClicked: {
             timeline.cursorMessageId = row.mid
             timeline.forceActiveFocus()
+          }
+          onRevealRequested: {
+            timeline.cursorMessageId = row.mid
+            timeline.reveal(row.mid)
           }
           onLinkActivated: function(url) { timeline.openLink(url) }
         }

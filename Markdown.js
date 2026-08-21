@@ -8,7 +8,8 @@
 //
 // ctx: { users: id->display_name, channels: id->name, roles: id->name,
 //        selfId, mentionColor, mentionBg, linkColor, codeBg, spoilerColor,
-//        mutedColor, monoFamily, fontSize }
+//        mutedColor, monoFamily, fontSize, emojiSize,
+//        emojiPath(id, animated) -> local file path or "" }
 // Every field is optional. All user content is HTML-escaped before any markup
 // is applied; render() never throws (falls back to escaped plain text).
 
@@ -119,6 +120,21 @@ function linkHtml(ctx, href, label) {
   return "<a href=\"" + href + "\"" + style + ">" + label + "</a>"
 }
 
+// <img> for a custom emoji when ctx.emojiPath(id, animated) resolves to a
+// local file. The path is the only non-escaped input anywhere in the
+// renderer, so it is both escaped and restricted to a plain absolute path.
+var SAFE_PATH_RE = /^\/[^\x00-\x1f"'<>&\\]*$/
+
+function emojiImg(ctx, id, animated, name) {
+  if (!ctx || typeof ctx.emojiPath !== "function") return ""
+  var path = ""
+  try { path = str(ctx.emojiPath(id, animated)) } catch (e) { return "" }
+  if (!path || !SAFE_PATH_RE.test(path)) return ""
+  var size = Math.max(8, Math.round(Number(ctx.emojiSize) || Math.round((Number(ctx.fontSize) || 12) * 1.4)))
+  return "<img src=\"file://" + escapeHtml(path) + "\" width=\"" + size + "\" height=\"" + size
+    + "\" alt=\":" + escapeHtml(name) + ":\">"
+}
+
 function codeStyle(ctx) {
   var style = ""
   if (ctx.monoFamily) style += "font-family:'" + String(ctx.monoFamily).replace(/'/g, "") + "';"
@@ -158,9 +174,11 @@ function protectInline(text, ctx, stash, plain) {
     var label = "#" + (lookup(ctx.channels, id) || id)
     return stash.put(plain ? label : mentionHtml(ctx, escapeHtml(label)))
   })
-  // custom emoji <:name:id> / <a:name:id>  -> :name: (images arrive in Phase 2)
-  text = text.replace(/&lt;a?:(\w+):\d+&gt;/g, function(_, name) {
-    return stash.put(":" + name + ":")
+  // custom emoji <:name:id> / <a:name:id> -> inline image from the media
+  // cache (ctx.emojiPath), else :name:
+  text = text.replace(/&lt;(a?):(\w+):(\d+)&gt;/g, function(_, animated, name, id) {
+    var img = plain ? "" : emojiImg(ctx, id, animated === "a", name)
+    return stash.put(img || ":" + name + ":")
   })
   // timestamps <t:unix> / <t:unix:STYLE>
   text = text.replace(/&lt;t:(-?\d+)(?::([tTdDfFR]))?&gt;/g, function(_, unix, style) {
