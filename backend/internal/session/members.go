@@ -146,10 +146,49 @@ func groupName(n *ningen.State, guildID discord.GuildID, id string) string {
 	return id
 }
 
+// memberListID computes the id Discord stamps on a channel's member list
+// (GUILD_MEMBER_LIST_UPDATE.id), derived empirically against the live
+// gateway (32 channels, 5 guilds): the list is "everyone" when the
+// @everyone role has View Channel at guild level and no overwrite denies it;
+// otherwise it is murmur3-32 of "allow:<id>,…,deny:<id>,…" with the allow
+// and deny overwrite ids each sorted as strings (the client sorts in JS).
+// ningen's ComputeListID keeps payload order and ignores the @everyone
+// rule, so it matches only channels whose overwrites happen to arrive
+// sorted — it must not be used for lookups.
+func memberListID(n *ningen.State, ch *discord.Channel) string {
+	var allows, denies []discord.Snowflake
+	for _, ow := range ch.Overwrites {
+		switch {
+		case ow.Allow.Has(discord.PermissionViewChannel):
+			allows = append(allows, ow.ID)
+		case ow.Deny.Has(discord.PermissionViewChannel):
+			denies = append(denies, ow.ID)
+		}
+	}
+	if len(denies) == 0 {
+		if everyone, err := n.Cabinet.Role(ch.GuildID, discord.RoleID(ch.GuildID)); err == nil && everyone.Permissions.Has(discord.PermissionViewChannel) {
+			return "everyone"
+		}
+		if len(allows) == 0 {
+			return "everyone"
+		}
+	}
+	sort.Slice(allows, func(i, j int) bool { return allows[i].String() < allows[j].String() })
+	sort.Slice(denies, func(i, j int) bool { return denies[i].String() < denies[j].String() })
+	var sorted []discord.Overwrite
+	for _, id := range allows {
+		sorted = append(sorted, discord.Overwrite{ID: id, Allow: discord.PermissionViewChannel})
+	}
+	for _, id := range denies {
+		sorted = append(sorted, discord.Overwrite{ID: id, Deny: discord.PermissionViewChannel})
+	}
+	return member.ComputeListID(sorted)
+}
+
 // guildMemberList renders ningen's kept list for a guild channel. ok is false
 // when ningen holds no list for the channel yet.
 func guildMemberList(n *ningen.State, ch *discord.Channel) (groups []protocol.MemberGroup, members []protocol.Member, ok bool) {
-	list, err := n.MemberState.GetMemberList(ch.GuildID, ch.ID)
+	list, err := n.MemberState.GetMemberListDirect(ch.GuildID, memberListID(n, ch))
 	if err != nil {
 		return nil, nil, false
 	}
@@ -277,7 +316,7 @@ func requestedChannels(n *ningen.State, guildID discord.GuildID, listID string) 
 		if n.MemberState.GetMemberListChunk(guildID, ch.ID) < 0 {
 			continue
 		}
-		if member.ComputeListID(ch.Overwrites) == listID {
+		if memberListID(n, &ch) == listID {
 			out = append(out, ch.ID)
 		}
 	}
@@ -358,7 +397,7 @@ func (m *Manager) subscribeMembers(ctx context.Context, req *protocol.Request) (
 		// list ningen already holds is re-emitted at once because Discord
 		// does not resend an unchanged range.
 		n.MemberState.RequestMemberList(ch.GuildID, chID, 0)
-		if _, err := n.MemberState.GetMemberList(ch.GuildID, chID); err != nil {
+		if _, err := n.MemberState.GetMemberListDirect(ch.GuildID, memberListID(off, ch)); err != nil {
 			return protocol.EmptyResult{}, nil
 		}
 	}

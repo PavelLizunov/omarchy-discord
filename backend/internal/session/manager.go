@@ -290,11 +290,16 @@ func (m *Manager) installHandlers(n *ningen.State) {
 	// Sync handlers run inside ningen's dispatch after its sub-states updated,
 	// so caches are consistent here. Keep them cheap and never block on the
 	// network: structure is read through Offline().
-	n.AddSyncHandler(func(*ningen.ConnectedEvent) {
+	n.AddSyncHandler(func(ev *ningen.ConnectedEvent) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		if m.n != n {
 			return
+		}
+		// READY reset the cabinet; put our own member back before the first
+		// permission-dependent read (unread dots below, every list later).
+		if ready, ok := ev.Event.(*gateway.ReadyEvent); ok {
+			seedSelfMembers(n, ready)
 		}
 		off := n.Offline()
 		if me, err := off.Cabinet.Me(); err == nil {

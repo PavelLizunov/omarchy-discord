@@ -169,6 +169,12 @@ channel object was built — `read_state_changed` is the live source afterwards.
 members for `dm`/`group_dm` (possibly empty), `[]` for guild channels. For DMs, `name`
 is the recipient display name (group DMs: joined names or set name).
 
+`message_count` and `member_count` (ints) are Discord's approximate counters for
+`thread` channels and `0` for everything else. A thread's `parent_id` is the text /
+announcement / forum channel it belongs to; `type` is `"thread"` for public, private
+and announcement threads alike. Threads are ordinary channels for every other
+command (`open_channel`, `history`, `send`, `ack`, …).
+
 ### `message`
 
 | field | type | notes |
@@ -321,12 +327,111 @@ Structure commands read the session cache. They succeed in `ready` and in
 - Errors: `not_logged_in`, `gateway_unavailable`.
 
 #### `quick_switch`
-Fuzzy match over channels and DMs for the Ctrl+K switcher.
-- Request: `{query: string, limit?: int (default 20)}`
+Fuzzy match over channels and DMs for the Ctrl+K switcher. Cache-only (no REST,
+safe to call on every keystroke).
+- Request: `{query: string, limit?: int}` — `limit` ≤ 0 or absent means 20.
 - Result: `{entries: [{channel, guild_name (string|null), last_message_preview
-  (string), score (number)}]}` — unread/mentioned entries rank first; empty query
-  returns the unread set then recents.
-- Errors: `not_logged_in`.
+  (string), score (number)}]}`.
+  - Candidates are every openable channel the account can see: guild `text` and
+    `announcement` channels, unarchived `thread`s whose parent is visible, `dm`
+    and `group_dm`. Categories, voice, stage and forum channels never appear.
+  - With a non-empty query, only fuzzy matches are returned: `score` is the
+    subsequence match of the query against the channel name (for DMs the
+    recipient names), or half the match against the guild name when that is
+    better; `score > 0` always. With an empty query every candidate is eligible
+    and `score` is `0`.
+  - Order: `channel.unread` tier first (`mentioned` > `unread` > `read`), then
+    `score` desc, then `last_message_id` desc, then id. So an empty query yields
+    the unread set followed by recents.
+  - `guild_name` is null for DMs. `last_message_preview` is the newest *cached*
+    message collapsed to one line (as `reply_to.preview`), `""` when nothing is
+    cached — which is the common case for channels never opened this session.
+- Errors: `not_logged_in`, `gateway_unavailable`.
+
+```json
+{"v":1,"id":60,"command":"quick_switch","query":"gen","limit":10}
+{"type":"response","v":1,"id":60,"ok":true,"result":{"entries":[{"channel":{...},"guild_name":"Omarchy","last_message_preview":"shall we?","score":12.97},{"channel":{...},"guild_name":null,"last_message_preview":"","score":7}]}}
+```
+
+#### `list_threads`
+Active threads of a text / announcement / forum channel, from the cache.
+- Request: `{channel_id: string}` — the parent channel.
+- Result: `{threads: [channel]}` — every cached, unarchived thread whose
+  `parent_id` is the channel, `type: "thread"`, newest activity first
+  (`last_message_id` desc, then id desc). `[]` for DMs and for parents with no
+  known threads.
+- Errors: `invalid_argument`, `not_logged_in`, `gateway_unavailable`,
+  `unknown_channel` (parent not cached / not visible).
+- **What the cache knows**: READY carries only threads the account has joined.
+  The full active set of a guild arrives as THREAD_LIST_SYNC in response to the
+  guild subscribe that the first `open_channel` of any channel in that guild
+  performs, and is pushed as a burst of `channel_update {change: "create",
+  channel.type: "thread"}` events (one per thread, guild-wide, typically
+  *before* that `open_channel` response). So: open a channel in the guild,
+  apply `channel_update`s, then `list_threads` is complete; later thread
+  create/update/archive/delete keeps flowing as `channel_update` (an archived
+  thread arrives as `update` and drops out of `list_threads`).
+
+```json
+{"v":1,"id":61,"command":"list_threads","channel_id":"1049931213073821696"}
+{"type":"response","v":1,"id":61,"ok":true,"result":{"threads":[{"id":"1049931500000000000","guild_id":"1000000000000000001","type":"thread","name":"release planning","parent_id":"1049931213073821696","message_count":42,"member_count":5,...}]}}
+```
+
+#### `list_emoji`
+Custom emoji the account can use in reactions, grouped by guild in guild display
+order. Cache-only.
+- Result: `{guilds: [{guild_id, guild_name, emoji: [{id, name, animated (bool),
+  url}]}]}` — `url` is the CDN image (`.gif` when `animated`), suitable for
+  `fetch_media`. Filtered to available emoji that are not role-restricted (or
+  restricted to a role the account holds); guilds with no usable emoji are
+  omitted, so `guilds` may be `[]`. Nitro cross-guild gating is not modelled:
+  `react` with an emoji from another guild may fail with `discord_error`.
+- Errors: `not_logged_in`, `gateway_unavailable`.
+- To react with one: `react` with `emoji: "<name>:<id>"` (animated emoji use the
+  same form; no `a:` prefix).
+
+```json
+{"v":1,"id":64,"command":"list_emoji"}
+{"type":"response","v":1,"id":64,"ok":true,"result":{"guilds":[{"guild_id":"1000000000000000001","guild_name":"Omarchy","emoji":[{"id":"1000000000000000099","name":"omarchy","animated":false,"url":"https://cdn.discordapp.com/emojis/1000000000000000099.png"},{"id":"1000000000000000098","name":"partyblob","animated":true,"url":"https://cdn.discordapp.com/emojis/1000000000000000098.gif"}]}]}}
+```
+
+### Members
+
+#### `subscribe_members`
+Asks for the member list of a channel; the list and its later changes arrive as
+`member_list_update` events, and presence changes of listed users as
+`presence_update`. Independent of `open_channel` (a client may show the member
+pane for a channel it has not opened, and vice versa).
+- Request: `{channel_id: string}`. Result: `{}` — always immediate; the list
+  itself is an event.
+- Guild channels: sends the same Op 14 the official client sends on channel
+  open (`GUILD_SUBSCRIBE` with `channels: {id: [[0, 99]]}`), which Discord
+  answers with a GUILD_MEMBER_LIST_UPDATE. The first `member_list_update`
+  typically lands 0.1–1.5 s after the response; if the backend already holds
+  the list (same list shared by another channel, or a re-subscribe) it is
+  re-emitted at once. Guild member lists are **never** fetched over REST.
+- DMs / group DMs: the list is synthesized from the recipients and the global
+  presence store; the first `member_list_update` follows within the debounce
+  window (~100 ms).
+- Errors: `invalid_argument`, `not_logged_in`, `gateway_unavailable`,
+  `unknown_channel` (not cached / not visible), `forbidden` (guild channel
+  without View Channel).
+- The subscription is **per connection** and dies with it; subscribing twice
+  is harmless. No member list is requested for a channel nobody subscribed.
+
+#### `unsubscribe_members`
+Stops `member_list_update` / `presence_update` delivery for the channel on this
+connection. Idempotent (the gateway-side subscription is retained).
+- Request: `{channel_id: string}`. Result: `{}`.
+- Errors: `invalid_argument`.
+
+```json
+{"v":1,"id":62,"command":"subscribe_members","channel_id":"1049931213073821696"}
+{"type":"response","v":1,"id":62,"ok":true,"result":{}}
+{"type":"event","v":1,"event":"member_list_update","channel_id":"1049931213073821696","guild_id":"1000000000000000001","groups":[...],"members":[...]}
+{"v":1,"id":63,"command":"unsubscribe_members","channel_id":"1049931213073821696"}
+{"type":"response","v":1,"id":63,"ok":true,"result":{}}
+```
 
 ### Messages
 
@@ -556,7 +661,12 @@ connect).
 ### `channel_update`
 `{change: "create"|"update"|"delete", channel: channel}` — channel/thread created,
 renamed, reordered, or deleted anywhere in the session (`channel.id` alone is
-meaningful for `delete`). Fires from gateway Channel*/Thread* events.
+meaningful for `delete`; for a deleted thread `guild_id`, `type` and `parent_id`
+are also set). Delivered to every connection. Fires from gateway Channel*/Thread*
+events, including THREAD_LIST_SYNC: the first `open_channel` in a guild yields one
+`create` per active thread of that guild (hundreds on busy guilds, usually before
+the `open_channel` response) — see `list_threads`. A thread that gets archived
+arrives as `update` with the thread no longer in `list_threads`.
 
 ### `message_create`
 `{channel_id, guild_id (string|null), message: message, notify: bool,
@@ -609,6 +719,45 @@ these (`total_mention_count` is precomputed for convenience and matches
 actually changed. Because ningen raises these on its own goroutine, a
 `read_state_changed` for a new message may arrive before or after that message's
 `message_create`.
+
+### `member_list_update`
+`{channel_id, guild_id (string|null), groups: [{id, name, count}], members:
+[{user: {id, username, display_name, avatar_url, bot}, group_id, status,
+activity}]}` — the complete current list for a channel some client subscribed
+with `subscribe_members`; delivered only to connections subscribed to that
+`channel_id`. Every event is a full replacement (never a delta): QML replaces the
+pane's model on receipt.
+- `groups` are the sections in display order: hoisted roles (`id` = role id,
+  `name` = role name) then `"online"`/`"offline"` (`name` `"Online"`/`"Offline"`).
+  `count` is Discord's **total** for the section (e.g. 5952 online), which is
+  usually larger than the rows present.
+- `members` are the rows of the first range Discord serves (the first 100 list
+  slots, so ≤ 100 members minus one slot per group header), in Discord's order
+  (section by section, each sorted as the official client shows it); `group_id`
+  names the section each row belongs to. Paging further ranges is not
+  implemented. `user.display_name` is nick > global display name > username;
+  `avatar_url` carries `?size=64` like message authors. `status` is
+  `"online"|"idle"|"dnd"|"offline"`; `activity` is one line like the official
+  client (`"Playing X"`, `"Listening to X"`, custom status `"<emoji> text"`), `""`
+  when none.
+- Re-emits: gateway list changes (members joining/leaving the range, status
+  changes, re-sorts) are coalesced over ~100 ms into one new event per channel;
+  expect a few per minute on busy guilds, zero on idle ones.
+- DMs / group DMs: `guild_id` null, synthesized from the recipients: groups
+  `online` (anyone not offline) and `offline`, each sorted by display name;
+  groups with no members are omitted. No gateway request is involved.
+- `groups: [], members: []` is a valid event (nothing visible yet).
+
+### `presence_update`
+`{user_id, status ("online"|"idle"|"dnd"|"offline"), activity (string)}` —
+a user's presence changed, delivered to a connection only when it displays that
+user: one of the connection's member subscriptions currently lists the user
+(`subscribe_members`), or the user is a recipient of a DM the connection has
+open (`open_channel`). Each connection receives a given update at most once even
+if both apply. It carries no channel id: apply it to every row showing `user_id`.
+Discord sends PRESENCE_UPDATE for friends and for guild members it chooses to
+(large guilds mostly push status changes through the member list instead), so a
+member pane must also take statuses from each `member_list_update`.
 
 ### `media_ready`
 `{url: string, ok: bool, path: string ("" on failure), error: string ("" on
@@ -675,9 +824,11 @@ approval; there is no auto-restart — call `start_qr_login` again for a fresh c
 |---|---|
 | `state_changed` | `ningen.ConnectedEvent` / `DisconnectedEvent` (fatal-code check via `IsLoggedOut()`), login/logout, `SetStatus`, `TotalMentionCount` deltas |
 | `guilds_synced` | ningen post-READY (`Open` returned / `ConnectedEvent`), GuildCreate/Delete |
-| `channel_update` | `ChannelCreateEvent`/`ChannelUpdateEvent`/`ChannelDeleteEvent`, `ThreadCreateEvent` etc. |
+| `channel_update` | `ChannelCreateEvent`/`ChannelUpdateEvent`/`ChannelDeleteEvent`, `ThreadCreateEvent`/`ThreadUpdateEvent`/`ThreadDeleteEvent`, `ThreadListSyncEvent` (one `create` per thread) |
 | `message_create/update/delete` | `MessageCreateEvent`/`MessageUpdateEvent`/`MessageDeleteEvent`/`MessageDeleteBulkEvent` + `MessageReaction{Add,Remove,RemoveAll,RemoveEmoji}` (folded into `message_update` from the cache); per-connection routing in the socket layer (`socket.Routed`) |
 | `typing_start` | `TypingStartEvent` (guilds require the Op 14 subscribe from `open_channel`) |
+| `member_list_update` | ningen `MemberState.RequestMemberList` (Op 14 with `channels`) → `GuildMemberListUpdateEvent`, matched to channels by the list id the backend computes itself (`memberListID`: Discord's "everyone" rule + murmur3 of the view-channel overwrites sorted as strings; ningen's `ComputeListID` does not match live lists); DM lists from the recipient list + `PresenceStore`; coalesced per channel (100 ms) |
+| `presence_update` | `PresenceUpdateEvent`, routed by the users of the last emitted member lists and the open-DM recipient index |
 | `read_state_changed` | ningen `read.UpdateEvent` (async goroutine — serialized into the writer) |
 | `media_ready` / `upload_progress` | backend media cache / counting reader |
 | `qr_*` | ported remote-auth gateway client (discordo protocol) + `ExchangeRemoteAuthTicket` |

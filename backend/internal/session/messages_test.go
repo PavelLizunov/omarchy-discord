@@ -27,7 +27,9 @@ type fakeClient struct {
 	pushed []any
 }
 
-func newFakeClient() *fakeClient { return &fakeClient{open: map[string]bool{}, subs: map[string]bool{}} }
+func newFakeClient() *fakeClient {
+	return &fakeClient{open: map[string]bool{}, subs: map[string]bool{}}
+}
 func (f *fakeClient) SubscribeMembers(id string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

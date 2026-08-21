@@ -41,6 +41,9 @@ type readyFixture struct {
 	UserSettings      *gateway.UserSettings      `json:"user_settings"`
 	ReadStates        []gateway.ReadState        `json:"read_state"`
 	UserGuildSettings []gateway.UserGuildSetting `json:"user_guild_settings"`
+	// MergedMembers carries our own member per guild, index-aligned with
+	// Guilds, as the real READY does (guild objects ship no members).
+	MergedMembers [][]gateway.SupplementalMember `json:"merged_members"`
 }
 
 // buildReady constructs a SYNTHETIC but schema-faithful READY payload using
@@ -65,8 +68,7 @@ func buildReady() readyFixture {
 	r.SessionID = "synthetic-session"
 	r.Guilds = []gateway.GuildCreateEvent{
 		{
-			Guild:   discord.Guild{ID: guildOmar, Name: "Omarchy", Icon: "iconhash", OwnerID: adaID, Roles: []discord.Role{everyone}},
-			Members: []discord.Member{{User: self}},
+			Guild: discord.Guild{ID: guildOmar, Name: "Omarchy", Icon: "iconhash", OwnerID: adaID, Roles: []discord.Role{everyone}},
 			Channels: []discord.Channel{
 				{ID: catGeneral, GuildID: guildOmar, Type: discord.GuildCategory, Name: "General", Position: 1},
 				text(chDev, catGeneral, "dev", 1, 500000000000000020),
@@ -78,12 +80,15 @@ func buildReady() readyFixture {
 			},
 		},
 		{
-			Guild:   discord.Guild{ID: guildQuiet, Name: "Quiet", OwnerID: selfID, Roles: []discord.Role{quietEveryone}},
-			Members: []discord.Member{{User: self}},
+			Guild: discord.Guild{ID: guildQuiet, Name: "Quiet", OwnerID: selfID, Roles: []discord.Role{quietEveryone}},
 			Channels: []discord.Channel{
 				{ID: chQuiet, GuildID: guildQuiet, Type: discord.GuildText, Name: "chat", LastMessageID: 500000000000000050},
 			},
 		},
+	}
+	r.MergedMembers = [][]gateway.SupplementalMember{
+		{{UserID: selfID, RoleIDs: []discord.RoleID{}}},
+		{{UserID: selfID, RoleIDs: []discord.RoleID{}}},
 	}
 	r.PrivateChannels = []discord.Channel{
 		{ID: dmGroup, Type: discord.GroupDM, DMRecipients: []discord.User{ada, lin}, LastMessageID: 500000000000000060},
@@ -117,6 +122,7 @@ func loadOfflineState(t *testing.T) *ningen.State {
 	t.Helper()
 	n, ready := newUnopenedState(t)
 	dispatch(n, ready)
+	seedSelfMembers(n, ready) // what the ConnectedEvent handler does
 	return n.Offline()
 }
 

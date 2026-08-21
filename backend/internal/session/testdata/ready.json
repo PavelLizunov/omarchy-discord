@@ -81,25 +81,6 @@
       "public_updates_channel_id": null,
       "nsfw_level": 0,
       "joined_at": null,
-      "members": [
-        {
-          "user": {
-            "id": "100000000000000001",
-            "username": "tester",
-            "discriminator": "",
-            "avatar": "",
-            "global_name": "Tester"
-          },
-          "roles": null,
-          "joined_at": null,
-          "premium_since": null,
-          "communication_disabled_until": null,
-          "deaf": false,
-          "mute": false,
-          "flags": 0,
-          "pending": false
-        }
-      ],
       "channels": [
         {
           "id": "300000000000000001",
@@ -201,25 +182,6 @@
       "public_updates_channel_id": null,
       "nsfw_level": 0,
       "joined_at": null,
-      "members": [
-        {
-          "user": {
-            "id": "100000000000000001",
-            "username": "tester",
-            "discriminator": "",
-            "avatar": "",
-            "global_name": "Tester"
-          },
-          "roles": null,
-          "joined_at": null,
-          "premium_since": null,
-          "communication_disabled_until": null,
-          "deaf": false,
-          "mute": false,
-          "flags": 0,
-          "pending": false
-        }
-      ],
       "channels": [
         {
           "id": "300000000000000008",
@@ -349,5 +311,29 @@
         }
       ]
     }
+  ],
+  "merged_members": [
+    [
+      {
+        "user_id": "100000000000000001",
+        "roles": [],
+        "hoisted_role": null,
+        "mute": false,
+        "deaf": false,
+        "joined_at": null,
+        "premium_since": null
+      }
+    ],
+    [
+      {
+        "user_id": "100000000000000001",
+        "roles": [],
+        "hoisted_role": null,
+        "mute": false,
+        "deaf": false,
+        "joined_at": null,
+        "premium_since": null
+      }
+    ]
   ]
 }

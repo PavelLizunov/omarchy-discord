@@ -45,7 +45,10 @@ type candidate struct {
 // switchCandidates lists every openable channel: visible guild channels and
 // unarchived threads (via ningen's permission-filtered Channels) and private
 // channels. Threads additionally require View Channel on the parent, since the
-// permission check on a thread itself sees no overwrites.
+// permission check on a thread itself sees no overwrites. n should be
+// Offline(): the filter needs our own member per guild, which READY seeds
+// (seedSelfMembers), so a miss must hide the guild rather than REST-fetch on
+// every keystroke.
 func switchCandidates(n *ningen.State) []candidate {
 	var out []candidate
 	if gs, err := n.Cabinet.Guilds(); err == nil {
@@ -93,8 +96,9 @@ func dmName(ch discord.Channel) string {
 
 // fuzzyScore scores query as a subsequence of text (both lowercased). 0 means
 // no match. Each matched rune scores 2, consecutive matches +3, a match at a
-// word start +2, a match at the very start +3; every skipped rune between
-// matches costs 1. Deterministic and greedy (first occurrence wins).
+// word start +2 (and the gap before it is free), a match at the very start
+// +3; otherwise every skipped rune between matches costs 1, capped at 3.
+// Deterministic and greedy (first occurrence wins).
 func fuzzyScore(query, text string) float64 {
 	q := []rune(strings.ToLower(strings.TrimSpace(query)))
 	t := []rune(strings.ToLower(text))
@@ -114,9 +118,10 @@ func fuzzyScore(query, text string) float64 {
 			score += 3
 		case isWordBoundary(t[ti-1]):
 			score += 2
-		}
-		if last >= 0 {
-			score -= float64(ti - last - 1)
+		default:
+			if last >= 0 {
+				score -= min(float64(ti-last-1), 3)
+			}
 		}
 		last, qi = ti, qi+1
 	}
@@ -156,7 +161,7 @@ func lastPreview(n *ningen.State, chID discord.ChannelID) string {
 // fuzzy matches on the channel name (or, at half weight, the guild name) are
 // returned; unread/mentioned entries come first, then by score, then by
 // recency. With an empty query the unread set comes first, then everything
-// else by recency.
+// else by recency. Cache-only: callers pass Offline().
 func QuickSwitch(n *ningen.State, query string, limit int) []protocol.QuickSwitchEntry {
 	if limit <= 0 {
 		limit = quickSwitchDefault

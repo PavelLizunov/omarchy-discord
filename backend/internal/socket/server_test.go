@@ -41,6 +41,18 @@ func (f *fakeBackend) Handle(ctx context.Context, req *protocol.Request) (any, *
 	case "slow":
 		time.Sleep(100 * time.Millisecond)
 		return protocol.EmptyResult{}, nil
+	case "subscribe_members", "unsubscribe_members":
+		var p protocol.SubscribeMembersParams
+		if e := req.Params(&p); e != nil {
+			return nil, e
+		}
+		c := ClientFromContext(ctx)
+		if req.Command == "subscribe_members" {
+			c.SubscribeMembers(p.ChannelID)
+		} else {
+			c.UnsubscribeMembers(p.ChannelID)
+		}
+		return protocol.EmptyResult{}, nil
 	case "open_channel", "close_channel":
 		var p protocol.OpenChannelParams
 		if e := req.Params(&p); e != nil {
@@ -396,4 +408,75 @@ func TestOpenCloseSameChannelOrdered(t *testing.T) {
 		c.lanesMu.Unlock()
 	}
 	srv.mu.Unlock()
+}
+
+// Member-subscription routing is independent of the open set, per
+// connection, and dies with the connection; Open/Members keys deliver an
+// event at most once.
+func TestRoutedMemberSubscriptions(t *testing.T) {
+	srv, _ := startServer(t, &fakeBackend{})
+	a, sa := dial(t, srv)
+	b, sb := dial(t, srv)
+	next(t, sa)
+	next(t, sb)
+
+	fmt.Fprintln(a, `{"v":1,"id":1,"command":"subscribe_members","channel_id":"77"}`)
+	next(t, sa)
+	fmt.Fprintln(b, `{"v":1,"id":1,"command":"open_channel","channel_id":"77"}`)
+	next(t, sb)
+
+	list := protocol.NewMemberListUpdate("77", nil, nil, nil)
+	srv.Broadcast(Routed{Members: []string{"77"}, Event: list})
+	// Presence matching both an open DM (B) and a member list (A), once each.
+	srv.Broadcast(Routed{Open: []string{"77"}, Members: []string{"77"}, Event: protocol.NewPresenceUpdate("9", "idle", "")})
+	srv.Broadcast(Routed{Open: []string{"78"}, Members: []string{"78"}, Event: protocol.NewPresenceUpdate("8", "idle", "")})
+
+	if ev := next(t, sa); ev["event"] != "member_list_update" {
+		t.Fatalf("a first: %v", ev)
+	}
+	if ev := next(t, sa); ev["event"] != "presence_update" || ev["user_id"] != "9" {
+		t.Fatalf("a second: %v", ev)
+	}
+	// B (open only) never sees the list, sees presence 9 once.
+	if ev := next(t, sb); ev["event"] != "presence_update" || ev["user_id"] != "9" {
+		t.Fatalf("b first: %v", ev)
+	}
+	fmt.Fprintln(b, `{"v":1,"id":2,"command":"ping"}`)
+	if r := next(t, sb); r["id"] != float64(2) {
+		t.Fatalf("b leaked: %v", r)
+	}
+	// Unsubscribe stops delivery.
+	fmt.Fprintln(a, `{"v":1,"id":3,"command":"unsubscribe_members","channel_id":"77"}`)
+	next(t, sa)
+	srv.Broadcast(Routed{Members: []string{"77"}, Event: list})
+	fmt.Fprintln(a, `{"v":1,"id":4,"command":"ping"}`)
+	if r := next(t, sa); r["id"] != float64(4) {
+		t.Fatalf("a after unsubscribe: %v", r)
+	}
+	// Resubscribe, then drop the connection: the server forgets the sub.
+	fmt.Fprintln(a, `{"v":1,"id":5,"command":"subscribe_members","channel_id":"77"}`)
+	next(t, sa)
+	a.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		srv.mu.Lock()
+		n := len(srv.conns)
+		srv.mu.Unlock()
+		if n == 1 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	srv.mu.Lock()
+	for c := range srv.conns {
+		if len(c.members) != 0 {
+			t.Fatalf("surviving conn has member subs: %v", c.members)
+		}
+	}
+	srv.mu.Unlock()
+	srv.Broadcast(Routed{Members: []string{"77"}, Event: list}) // nobody; must not panic
+	fmt.Fprintln(b, `{"v":1,"id":6,"command":"ping"}`)
+	if r := next(t, sb); r["id"] != float64(6) {
+		t.Fatalf("b: %v", r)
+	}
 }
