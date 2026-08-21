@@ -58,6 +58,8 @@ FocusScope {
   signal replyRequested(string messageId)
   signal deleteRequested(string messageId)
   signal reactRequested(string messageId)
+  // A reaction chip was clicked: add ours or remove it (Service decides).
+  signal reactionToggled(string messageId, string emoji)
 
   function scrollToBottom() {
     adjusting = true
@@ -664,6 +666,10 @@ FocusScope {
             timeline.reveal(row.mid)
           }
           onLinkActivated: function(url) { timeline.openLink(url) }
+          onReactionClicked: function(emoji) {
+            timeline.cursorMessageId = row.mid
+            timeline.reactionToggled(row.mid, emoji)
+          }
         }
       }
     }

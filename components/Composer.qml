@@ -48,6 +48,11 @@ FocusScope {
   signal leave()
   signal moveZone(string direction)
   signal cycleFocus(int delta)
+  // Ctrl+K / Ctrl+/ typed into the input: the TextArea would otherwise
+  // take them (Ctrl+K deletes to the end of the line), so they are
+  // claimed here and handed to the panel.
+  signal switcherRequested()
+  signal cheatsheetRequested()
 
   readonly property color foreground: Color.foreground
   readonly property color accent: Color.accent
@@ -189,6 +194,8 @@ FocusScope {
       if (!startEditLast()) return
     }
     else if (ctrl && key === Qt.Key_V) pasteFromClipboard()
+    else if (ctrl && key === Qt.Key_K) switcherRequested()
+    else if (ctrl && key === Qt.Key_Slash) cheatsheetRequested()
     else if (key === Qt.Key_Tab) { if (chips.length) focusChip(0); else cycleFocus(1) }
     else if (key === Qt.Key_Backtab) cycleFocus(-1)
     else if (key === Qt.Key_Left && chips.length && input.cursorPosition === 0 && !shift) focusChip(chips.length - 1)
@@ -205,6 +212,8 @@ FocusScope {
     else if (alt && key === Qt.Key_L) moveZone("right")
     else if (alt) return
     else if (key === Qt.Key_Escape) focusInput()
+    else if ((event.modifiers & Qt.ControlModifier) && key === Qt.Key_K) switcherRequested()
+    else if ((event.modifiers & Qt.ControlModifier) && key === Qt.Key_Slash) cheatsheetRequested()
     else if (key === Qt.Key_Return || key === Qt.Key_Enter) submit()
     else if (key === Qt.Key_Tab) { if (chipCursor + 1 < chips.length) focusChip(chipCursor + 1); else { chipCursor = -1; cycleFocus(1) } }
     else if (key === Qt.Key_Backtab) { if (chipCursor > 0) focusChip(chipCursor - 1); else focusInput() }

@@ -31,6 +31,8 @@ Item {
   signal clicked()
   signal linkActivated(string url)
   signal revealRequested()
+  // A reaction chip was clicked (wire-form emoji).
+  signal reactionClicked(string emoji)
 
   readonly property color foreground: Color.foreground
   readonly property color accent: Color.accent
@@ -500,6 +502,18 @@ Item {
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall
             }
+          }
+
+          MouseArea {
+            id: chipMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.reactionClicked(String(chip.reaction.emoji || ""))
+          }
+          PanelToolTip {
+            visible: chipMouse.containsMouse
+            text: (chip.me ? "Remove your " : "React with ") + chip.emoji
           }
         }
       }

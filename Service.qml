@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import Quickshell
 import Quickshell.Io
@@ -5,6 +6,7 @@ import qs.Commons
 
 import "Api.js" as Api
 import "Markdown.js" as Markdown
+import "Emoji.js" as Emoji
 
 // Shared state for the bar widget and the lazy full panel. The Go backend is
 // the source of truth; this is a mirror fed by its socket events. Runs while
@@ -91,9 +93,13 @@ Item {
   // "url|size" -> local path. Replaced wholesale: every avatar / image /
   // emoji binding reads it through mediaPath().
   property var mediaPaths: ({})
+  // "url|size" -> { url, size } for every key a consumer has asked for and
+  // that is not resolved yet. mediaPath() only records the miss here (in
+  // place; nothing binds to it) and schedules flushMediaRequests() for the
+  // next event-loop turn, so no socket write ever runs inside a binding.
+  property var mediaWanted: ({})
   // "url|size" -> true while a fetch_media is outstanding; mutated in place
-  // (nothing binds to it) so mediaPath() can run inside bindings without
-  // re-triggering them.
+  // (nothing binds to it).
   property var mediaPending: ({})
   // "url|size" -> true after a failed fetch; cleared per connection so a
   // binding never loops on a dead URL.
@@ -235,6 +241,19 @@ Item {
     emojiPath: function(id, animated) { return root.emojiPath(id, animated) }
   })
 
+  // --- reactions / emoji picker ---
+  // Frequently used: [{ e, n }] persisted as a JSON string on the shell.json
+  // entry (frequentEmojiKey), capped by Emoji.FREQUENT_CAP.
+  property var frequentEmoji: []
+  readonly property string frequentEmojiKey: "frequentEmoji"
+  // Unicode catalogue [{ e, k }], loaded lazily from the shell's data file.
+  property var emojiCatalog: []
+  property bool emojiCatalogRequested: false
+  // Custom emoji of the current guild [{ name, id, animated }] — filled by
+  // list_emoji in a later wave; the picker shows a section when non-empty.
+  property var serverEmoji: []
+  property int quickSwitchSeq: 0
+
   // --- UI visibility refcount ---
   property var visibleSurfaces: ({})
   readonly property bool uiVisible: Object.keys(visibleSurfaces).length > 0
@@ -260,10 +279,10 @@ Item {
       if (oldKey !== name && visibleSurfaces[oldKey]) next[oldKey] = true
     if (value) next[name] = true
     visibleSurfaces = next
-    if (value) {
-      noteActivity()
-      ensureBackend()
-    }
+    // Opening and closing both count: the idle-disconnect window
+    // (idleDisconnectMinutes) runs from the last surface closing.
+    noteActivity()
+    if (value) ensureBackend()
   }
 
   // --- settings plumbing ---
@@ -325,7 +344,19 @@ Item {
   }
 
   function syncSettings() {
-    applySettings(configuredEntry() || {})
+    var entry = configuredEntry() || {}
+    applySettings(entry)
+    var frequent = Emoji.parseFrequent(entry[frequentEmojiKey])
+    if (JSON.stringify(frequent) !== JSON.stringify(frequentEmoji)) frequentEmoji = frequent
+  }
+
+  // Small opaque state on the same shell.json entry (spotify pattern):
+  // merged over the current entry so settings are carried forward.
+  function persistOpaque(key, value) {
+    var entry = Api.shallowCopy(configuredEntry() || {})
+    entry[key] = value
+    if (shell && typeof shell.updateEntryInline === "function")
+      shell.updateEntryInline(pluginId, entry)
   }
 
   // --- backend lifecycle ---
@@ -810,6 +841,79 @@ Item {
     return true
   }
 
+  // True when the loaded message carries our reaction with this emoji.
+  function hasOwnReaction(channelId, messageId, emoji) {
+    var message = findMessage(channelId, messageId)
+    var list = message && Array.isArray(message.reactions) ? message.reactions : []
+    var value = String(emoji || "")
+    for (var i = 0; i < list.length; i++)
+      if (list[i] && String(list[i].emoji || "") === value) return !!list[i].me
+    return false
+  }
+
+  // Picker / chip click: add the reaction, or remove ours when it is
+  // already there. Adding also bumps the frequently-used list.
+  function toggleReaction(channelId, messageId, emoji) {
+    var value = String(emoji || "")
+    if (!value) return false
+    if (hasOwnReaction(channelId, messageId, value)) return unreact(channelId, messageId, value)
+    if (!react(channelId, messageId, value)) return false
+    noteEmojiUse(value)
+    return true
+  }
+
+  function noteEmojiUse(emoji) {
+    frequentEmoji = Emoji.bumpFrequent(frequentEmoji, emoji)
+    persistOpaque(frequentEmojiKey, JSON.stringify(frequentEmoji))
+  }
+
+  // The unicode catalogue is the shell's own (omarchy.emojis data file),
+  // read once on first use; Emoji.FALLBACK covers a missing file.
+  function ensureEmojiCatalog() {
+    if (emojiCatalogRequested) return
+    emojiCatalogRequested = true
+    var base = String(Quickshell.env("OMARCHY_PATH") || "")
+    if (!base) { emojiCatalog = Emoji.FALLBACK; return }
+    emojiFile.path = base + "/shell/plugins/emojis/emojis.json"
+  }
+
+  // quick_switch: the backend ranks (unread first, then recents for an
+  // empty query). Only the newest request's result reaches the callback;
+  // errors go to the switcher, never the panel footer.
+  function quickSwitch(query, callback) {
+    var seq = ++quickSwitchSeq
+    var done = function(entries, error) { if (typeof callback === "function") callback(entries, error) }
+    if (!connected) { done([], "The Discord backend is not connected"); return false }
+    backendClient.sendCommand("quick_switch", { query: String(query || ""), limit: 20 }, function(ok, result, error) {
+      if (seq !== root.quickSwitchSeq) return
+      if (!ok) { done([], Api.redact(String(error || "Search failed"))); return }
+      done(result && Array.isArray(result.entries) ? result.entries : [], "")
+    })
+    return true
+  }
+
+  // The switcher overlay is created on first use (Loader), then kept.
+  function switcher() {
+    switcherLoader.active = true
+    var item = switcherLoader.item
+    return item ? item : null
+  }
+
+  function toggleSwitcher() {
+    var item = switcher()
+    return item ? item.toggle() : "unavailable"
+  }
+
+  function openSwitcher() {
+    var item = switcher()
+    return item ? item.open() : "unavailable"
+  }
+
+  function closeSwitcher() {
+    var item = switcherLoader.item
+    return item ? item.close() : "closed"
+  }
+
   // Own typing indicator, throttled per channel; silent on failure (a
   // typing error is never worth a footer line).
   function typing(channelId) {
@@ -1133,23 +1237,46 @@ Item {
   }
 
   // Local path for a CDN URL at `size` (0 = original), or "" while it is
-  // being fetched. A miss issues fetch_media once per url+size and resolves
-  // through mediaPaths (media_ready or a cache-hit response). Safe to call
-  // from bindings: the only reactive read is mediaPaths.
+  // being fetched. A miss only records the want (requestMedia); the
+  // fetch_media goes out on the next event-loop turn. Safe to call from
+  // bindings: the only reactive read is mediaPaths and nothing is written
+  // synchronously.
   function mediaPath(url, size) {
     var u = String(url || "")
     if (!u) return ""
     var key = mediaKey(u, size)
     var known = mediaPaths[key]
     if (known) return String(known)
-    if (!connected || mediaPending[key] || mediaFailed[key]) return ""
-    mediaPending[key] = true
-    requestMedia(u, Math.max(0, Number(size) || 0))
+    requestMedia(u, size)
     return ""
   }
 
+  // Ask for a url+size without reading anything: records the want and
+  // defers the fetch_media to the next event-loop turn (Qt.callLater
+  // coalesces), so callers inside bindings never write to the socket.
   function requestMedia(url, size) {
-    var key = mediaKey(url, size)
+    var u = String(url || "")
+    if (!u) return
+    var key = mediaKey(u, size)
+    if (mediaPaths[key] || mediaWanted[key]) return
+    mediaWanted[key] = { url: u, size: Math.max(0, Number(size) || 0) }
+    Qt.callLater(flushMediaRequests)
+  }
+
+  // Issue fetch_media for every wanted key that is neither in flight nor
+  // known to fail. Runs deferred after requestMedia() and on every connect
+  // (in-flight fetches die with the socket).
+  function flushMediaRequests() {
+    if (!connected) return
+    for (var key in mediaWanted) {
+      if (mediaPaths[key]) { delete mediaWanted[key]; continue }
+      if (mediaPending[key] || mediaFailed[key]) continue
+      mediaPending[key] = true
+      fetchMedia(key, mediaWanted[key].url, mediaWanted[key].size)
+    }
+  }
+
+  function fetchMedia(key, url, size) {
     var fields = { url: url }
     if (size > 0) fields.size = size
     backendClient.sendCommand("fetch_media", fields, function(ok, result, error) {
@@ -1161,6 +1288,7 @@ Item {
 
   function resolveMedia(key, path) {
     delete mediaPending[key]
+    delete mediaWanted[key]
     if (mediaPaths[key] === path) return
     var next = Api.shallowCopy(mediaPaths)
     next[key] = path
@@ -1183,6 +1311,10 @@ Item {
       delete next[dropped[i]]
     }
     mediaPaths = next
+    for (var d = 0; d < dropped.length; d++) {
+      var at = dropped[d].lastIndexOf("|")
+      requestMedia(dropped[d].slice(0, at), Number(dropped[d].slice(at + 1)) || 0)
+    }
     return true
   }
 
@@ -1201,7 +1333,7 @@ Item {
       return
     }
     if (keys.length === 1 && message.path) { resolveMedia(keys[0], String(message.path)); return }
-    for (var k = 0; k < keys.length; k++) requestMedia(url, Number(keys[k].slice(prefix.length)) || 0)
+    for (var k = 0; k < keys.length; k++) fetchMedia(keys[k], url, Number(keys[k].slice(prefix.length)) || 0)
   }
 
   function emojiUrl(id) {
@@ -1635,11 +1767,15 @@ Item {
     function onEventReceived(name, message) { root.handleEvent(name, message) }
     function onConfigurationFailed(reason) { root.fail(reason) }
     function onConnectedChanged() {
-      // In-flight fetches died with the socket; let bindings ask again.
+      // In-flight fetches died with the socket; flushMediaRequests re-issues
+      // every wanted key on connect.
       root.mediaPending = ({})
       root.mediaFailed = ({})
       root.mediaRetried = ({})
-      if (backendClient.connected) root.sendConfig()
+      if (backendClient.connected) {
+        root.sendConfig()
+        root.flushMediaRequests()
+      }
       else {
         root.qr = null
         root.qrMissing = false
@@ -1662,6 +1798,39 @@ Item {
     function toggle(): string { return root.togglePanel() }
     function open(): string { return root.openPanel(null) }
     function close(): string { return root.closePanel() }
+  }
+
+  // omarchy-shell quickshell.discord.switcher toggle — works from any app;
+  // the overlay is created on first use and lives here (always loaded).
+  IpcHandler {
+    target: root.pluginId + ".switcher"
+
+    function toggle(): string { return root.toggleSwitcher() }
+    function open(): string { return root.openSwitcher() }
+    function close(): string { return root.closeSwitcher() }
+  }
+
+  Component {
+    id: switcherComponent
+    QuickSwitch {
+      service: root
+    }
+  }
+
+  Loader {
+    id: switcherLoader
+    active: false
+    sourceComponent: switcherComponent
+  }
+
+  FileView {
+    id: emojiFile
+    path: ""
+    onLoaded: {
+      var parsed = Emoji.parseCatalog(text())
+      root.emojiCatalog = parsed.length ? parsed : Emoji.FALLBACK
+    }
+    onLoadFailed: root.emojiCatalog = Emoji.FALLBACK
   }
 
   // Clipboard pipeline processes (stageClipboardImage). Output is tiny

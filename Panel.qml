@@ -7,6 +7,7 @@ import qs.Commons
 import qs.Ui
 
 import "Api.js" as Api
+import "Keymap.js" as Keymap
 import "components" as Components
 
 // Panel: login/status screens, then guild rail + channel list + timeline +
@@ -26,6 +27,10 @@ Item {
   // Exposed for offscreen harnesses (dispatchKey + state inspection).
   readonly property alias timeline: timelineView
   readonly property alias composer: composerView
+  readonly property alias cheatsheet: cheatsheetView
+  readonly property alias picker: pickerView
+  // A modal overlay (cheatsheet / emoji picker) owns the keyboard.
+  readonly property bool overlayShown: cheatsheetView.shown || pickerView.shown
 
   readonly property string pluginId: manifest && manifest.id
     ? String(manifest.id) : "quickshell.discord"
@@ -156,6 +161,45 @@ Item {
     return tokenField.activeFocus || composerView.inputFocused
   }
 
+  // --- overlays: quick switcher (service-owned), cheatsheet, emoji picker ---
+  function openSwitcher() {
+    if (service) service.openSwitcher()
+  }
+
+  function toggleCheatsheet() {
+    if (cheatsheetView.shown) cheatsheetView.hide()
+    else { pickerView.hide(); cheatsheetView.show() }
+  }
+
+  // E on a timeline row: pick an emoji for that message. The picker lists
+  // the row's own reactions first so Enter on one toggles it.
+  function openPicker(messageId) {
+    var message = service ? service.findMessage(currentChannelId, messageId) : null
+    if (!message || message.pending) return
+    cheatsheetView.hide()
+    pickerView.show(message)
+  }
+
+  function applyReaction(messageId, emoji) {
+    if (!service || !currentChannelId) return
+    service.toggleReaction(currentChannelId, messageId, emoji)
+  }
+
+  // Chords that work from every zone, text inputs included (Ctrl+K, Ctrl+/)
+  // or only outside them (/ and ?). Returns true when handled.
+  function handleGlobalKey(event) {
+    var key = event.key
+    var text = event.text
+    var ctrl = (event.modifiers & Qt.ControlModifier) !== 0
+    if (ctrl && key === Qt.Key_K) openSwitcher()
+    else if (ctrl && key === Qt.Key_Slash) toggleCheatsheet()
+    else if (!textInputFocused() && !composerFocused && !showLogin && text === "/") openSwitcher()
+    else if (!textInputFocused() && !composerFocused && !showLogin && text === "?") toggleCheatsheet()
+    else return false
+    event.accepted = true
+    return true
+  }
+
   function publishActive() {
     if (service) service.panelActive = windowActive
   }
@@ -253,6 +297,8 @@ Item {
     closingFromHost = true
     opened = false
     tokenField.clear()
+    cheatsheetView.shown = false
+    pickerView.shown = false
     if (service) service.setUiVisible("full-panel", false)
     publishScreen()
     publishPinned()
@@ -551,6 +597,8 @@ Item {
     var text = event.text
     var alt = (event.modifiers & Qt.AltModifier) !== 0
     var shift = (event.modifiers & Qt.ShiftModifier) !== 0
+    if (overlayShown) return
+    if (handleGlobalKey(event)) return
     if (showLogin) {
       // Buttons take Enter themselves; the token field takes its text.
       if (key === Qt.Key_Tab || key === Qt.Key_Backtab) cycleLoginFocus(key === Qt.Key_Backtab || shift ? -1 : 1)
@@ -620,6 +668,8 @@ Item {
   // Synthesized-key entry point for offscreen harnesses (mirrors the focus
   // chain: the timeline first when it owns the zone, then the panel).
   function dispatchKey(event) {
+    if (cheatsheetView.shown) { cheatsheetView.handleKey(event); return event.accepted }
+    if (pickerView.shown) { pickerView.handleKey(event); return event.accepted }
     if (ready && !buttonFocused) {
       if (zone === "composer" && composerFocused) composerView.handleKey(event)
       else if (zone === "timeline" && !textInputFocused()) timelineView.handleKey(event)
@@ -702,6 +752,24 @@ Item {
         focus: true
         width: 0
         height: 0
+      }
+
+      // Modal overlays above the whole panel; each returns the keyboard to
+      // the last zone when it closes.
+      Components.Cheatsheet {
+        id: cheatsheetView
+        anchors.fill: parent
+        z: 10
+        onCloseRequested: Qt.callLater(root.focusZone)
+      }
+
+      Components.EmojiPicker {
+        id: pickerView
+        anchors.fill: parent
+        z: 10
+        service: root.service
+        onPicked: function(emoji) { root.applyReaction(pickerView.messageId, emoji) }
+        onCloseRequested: Qt.callLater(root.focusZone)
       }
 
       Column {
@@ -1427,7 +1495,8 @@ Item {
                 onDeleteRequested: function(messageId) {
                   if (root.service) root.service.deleteMessage(root.currentChannelId, messageId)
                 }
-                onReactRequested: root.hint = "Reactions arrive in Phase 3."
+                onReactRequested: function(messageId) { root.openPicker(messageId) }
+                onReactionToggled: function(messageId, emoji) { root.applyReaction(messageId, emoji) }
               }
 
               Text {
@@ -1457,6 +1526,8 @@ Item {
                 onLeave: root.leaveComposer(true)
                 onMoveZone: function(direction) { root.moveZone(direction) }
                 onCycleFocus: function(delta) { root.cycleFocus(delta) }
+                onSwitcherRequested: root.openSwitcher()
+                onCheatsheetRequested: root.toggleCheatsheet()
                 onActiveFocusChanged: if (activeFocus && root.zone !== "composer") root.zone = "composer"
               }
             }
@@ -1503,40 +1574,34 @@ Item {
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
           }
+          // Key hints come from the same table as the cheatsheet (Keymap.js),
+          // so the two cannot drift.
           Text {
             width: parent.width
             elide: Text.ElideRight
             text: {
               if (!root.ready) {
                 if (root.qrView) {
-                  if (root.qrMissing) return "Enter tries again · Esc cancels · Tab reaches Close"
-                  return root.qrCancelable ? "Esc cancels · Tab reaches Close" : "Enter tries again · Esc dismisses · Tab reaches Close"
+                  if (root.qrMissing) return Keymap.footer("qrMissing")
+                  return Keymap.footer(root.qrCancelable ? "qrRunning" : "qrDone")
                 }
-                return root.showLogin ? "Enter activates · Tab cycles Scan QR, token, Log in, Close · Esc closes"
-                  : "r retries · Tab reaches buttons · Esc closes"
+                return Keymap.footer(root.showLogin ? "login" : "down")
               }
               if (root.buttonFocused) {
                 // Esc goes where focusZone() goes: the last zone, unless it
                 // needs an open channel that is gone.
                 var back = (root.zone === "timeline" || root.zone === "composer") && !root.currentChannelId ? "sidebar"
                   : (root.zone === "composer" ? "the composer" : root.zone)
-                return "Enter activates · Tab/Shift+Tab cycle · Esc back to " + back
+                return Keymap.footer("global.activate", "global.tabCycle", { id: "global.escBack", hint: "back to " + back })
               }
               if (root.zone === "composer") {
-                if (root.composer.chipFocused)
-                  return "←/→ move between attachments · x removes · Enter sends · Esc back to the input"
-                if (root.composer.editing)
-                  return "Enter saves the edit · Shift+Enter newline · Esc cancels"
-                var pasteHint = root.composer.chips.length ? " · Tab reaches attachments" : ""
-                return "Enter sends · Shift+Enter newline · ↑ edits your last message · Ctrl+V pastes an image"
-                  + pasteHint + " · Alt+h timeline · Esc marks read, back to timeline"
+                if (root.composer.chipFocused) return Keymap.footer("chips")
+                if (root.composer.editing) return Keymap.footer("composerEdit")
+                return Keymap.footer("composer", root.composer.chips.length ? "composerChips" : "", "composerTail")
               }
-              if (root.zone === "timeline")
-                return "j/k move · gg/G top/newest · R reply · D D delete yours · Y copy · O open link · Alt+↑/↓ channel (Shift: unread) · Alt+l composer · Esc marks read, back to sidebar"
-              var timelineHint = root.currentChannelId ? " · Alt+l timeline" : ""
-              if (root.column === "rail")
-                return "j/k move · Enter/l opens channels · r reloads · Tab buttons · Esc closes"
-              return "j/k move · Enter opens channel · h/Esc servers · Alt+↑/↓ channel (Shift: unread)" + timelineHint + " · r reloads · Tab buttons"
+              if (root.zone === "timeline") return Keymap.footer("timeline")
+              if (root.column === "rail") return Keymap.footer("rail")
+              return Keymap.footer("channels", root.currentChannelId ? "channelsTimeline" : "", "channelsTail")
             }
             color: Color.muted
             font.family: root.fontFamily

@@ -6,16 +6,16 @@ Go backend, instead of the 1 GB Electron app. Same architecture as
 quickshell.spotify: QML owns everything visible, a systemd user unit owns the
 Discord connection, and a private JSON-lines socket joins them.
 
-**Status: Phase 2 complete (notifications, media, QR login).** Everything from Phase 1
-(bar mark with mention badge and unread dot, guild rail + channel list, virtualized
-timeline with history paging and markdown rendering, live read state, typing line)
-plus the composer (send, reply, edit, delete, outgoing typing, image paste: `Ctrl+V`
-stages a clipboard image as an attachment chip, `Enter` uploads it), desktop
-notifications through the Omarchy notification center, media through the backend's
-cache (avatars, guild icons, inline image attachments with spoiler covers, embed
-thumbnails/images, custom emoji in messages and reaction chips), and QR login. Reactions,
-the quick switcher, and the emoji picker are Phase 3; threads and forums are listed but
-open in Phase 3; voice and stage channels are hidden entirely (voice is a non-goal). See
+**Status: Phase 3 in progress (quick switcher, reactions, cheatsheet).** Everything from
+Phases 1–2 (bar mark with mention badge and unread dot, guild rail + channel list,
+virtualized timeline with history paging and markdown rendering, live read state, typing
+line, the composer with send / reply / edit / delete / outgoing typing / image paste,
+desktop notifications, media through the backend's cache, QR login) plus the `Ctrl+K`
+quick switcher (works from any app through a Hyprland bind), reactions with an emoji
+picker (the shell's own emoji catalogue, the message's reactions first, a persisted
+"frequently used" row), and a `Ctrl+/` cheatsheet generated from the same key table the
+footer hints use. Threads, the member list, and server emoji in the picker are the next
+wave; voice and stage channels are hidden entirely (voice is a non-goal). See
 `docs/PLAN.md` for the roadmap and `docs/CONVENTIONS.md` for the mechanics contract.
 
 ## Install (development)
@@ -44,14 +44,18 @@ it connected while the `stayConnected` setting is On (the default).
 Remove the runtime with `scripts/remove-runtime.sh` (`--purge` also clears the
 keyring entry and cache), then `omarchy plugin remove quickshell.discord --yes`.
 
-## Hyprland bind
+## Hyprland binds
 
 ```ini
 bindd = SUPER SHIFT, D, Discord, exec, omarchy-shell quickshell.discord.panel toggle
+bindd = SUPER SHIFT, K, Discord quick switcher, exec, omarchy-shell quickshell.discord.switcher toggle
 ```
 
-`open` and `close` are also available on that target. The zero-config fallback is
-`omarchy-shell shell toggle quickshell.discord`.
+`open` and `close` are also available on both targets. The zero-config fallback for the
+panel is `omarchy-shell shell toggle quickshell.discord`. The switcher is a small
+themed overlay (the "mini player"): unread channels and DMs first, then recents, each
+with the last message; type to search, `Enter` opens the panel on that channel. It
+takes the keyboard the moment it appears, so the bind works from any app.
 
 ## Logging in
 
@@ -92,6 +96,8 @@ channel focuses the composer.
 
 | Key | Action |
 |---|---|
+| `Ctrl+K`, `/` | Quick switcher (`/` outside text inputs; `Ctrl+K` works in the composer too) |
+| `Ctrl+/`, `?` | Cheatsheet overlay with the full keymap by zone (`?` outside text inputs); `Esc` closes |
 | `Alt+h` / `Alt+l` | Move focus zone: sidebar ↔ timeline ↔ composer |
 | `j` / `k`, arrows | Move the cursor in the focused column / timeline |
 | `Enter` (rail) | Select the server and focus its channel list |
@@ -103,7 +109,7 @@ channel focuses the composer.
 | `gg` / `G`, Home / End, `PgUp` / `PgDn` | Timeline top (pages history) / newest / page |
 | `R` (timeline) | Reply to the focused message: reply line appears in the composer, `Esc` cancels it |
 | `D` `D` (timeline) | Delete the focused message if it is yours: the first `D` arms it for 3 s ("D again to delete"), the second deletes; `Esc` or moving disarms |
-| `E` (timeline) | Reactions: not yet, shows a hint (Phase 3) |
+| `E` (timeline) | React: opens the emoji picker for the focused message (see below) |
 | `Y` / `O` | Copy the focused message's text / open its first link or attachment (attachments open from the local media cache when already downloaded) |
 | `Enter` (composer) | Send; with staged attachments, upload them with the text |
 | `Shift+Enter` (composer) | Newline |
@@ -116,6 +122,30 @@ channel focuses the composer.
 | `Esc` (channel list) | Back to the rail |
 | `Esc` (rail) | Close the panel |
 | `Tab` / `Shift+Tab` | Cycle rail → channel list → timeline → composer (→ its chips) → Log out → Close; `Esc` on a button returns to the last zone |
+
+### Quick switcher
+
+`Ctrl+K` or `/` in the panel, or the Hyprland bind above from anywhere. Type to search
+(the backend ranks: unread and mentioned channels first, then by match, then recency;
+an empty query shows unreads, then recents). `↑`/`↓`, `Tab`/`Shift+Tab`, `Ctrl+j`/`Ctrl+k`
+or `Ctrl+n`/`Ctrl+p` move (plain `j`/`k` type into the search), `Enter` opens the panel
+on the channel and focuses the composer, `Esc` clears the search, then closes. Rows show
+the channel glyph, name, server, the last message, and an unread dot or mention badge.
+While logged out the only row is "Log in to Discord", which opens the panel's login
+screen. The switcher counts as an open surface for the `stayConnected` idle rule.
+
+### Reactions
+
+`E` on the focused message opens the emoji picker. Type to filter by name; the arrows
+(or `Ctrl+h/j/k/l` — plain letters type into the filter) move across the grid; `Enter`
+reacts; `Esc` clears the filter, then closes. Sections, top to bottom: **Toggle** (the
+message's existing reactions — picking one you already reacted with removes yours),
+**Frequently used** (your last 16 distinct picks by count, stored on the plugin's
+`shell.json` entry as `frequentEmoji`), and the unicode catalogue (the shell's own emoji
+list; a small built-in set when it is unavailable). Clicking a reaction chip under a
+message toggles it too; hovering one tells you which. Reaction changes arrive back
+through `message_update`, so the chips reflect Discord, not an optimistic guess. Server
+(custom) emoji get their own picker section in the next wave.
 
 Reaching the bottom of the timeline while the timeline or the composer is focused
 marks the channel read (debounced); scrolling back up never acks. Sent messages show
@@ -161,16 +191,22 @@ filename chips (avatars and emoji stay). Spoiler images stay covered until you p
 ## Settings
 
 Stored inline on the plugin's `shell.json` entry; edit with
-`omarchy bar set quickshell.discord <key> <value>`.
+`omarchy bar set quickshell.discord <key> <value>` (or the bar widget's settings
+dialog). Changes apply live: the service re-reads its entry on every `shell.json`
+change, values are normalized (unknown enum values fall back to the default,
+`mediaCacheMB` is clamped to 64–4096).
 
 | Key | Values | Default | Effect |
 |---|---|---|---|
-| `stayConnected` | `On` / `Off` | `On` | Keep the backend connected while the plugin is enabled; `Off` idles it out 15 min after the last open surface |
+| `stayConnected` | `On` / `Off` | `On` | `On` keeps the backend unit running and the socket connected while the plugin is enabled (restarted within 5 s if it dies), so mentions and notifications keep arriving. `Off` stops the backend once no Discord surface (panel, quick switcher) has been open for 15 minutes (`Service.idleDisconnectMinutes`); the next open starts it again |
 | `notifications` | `All` / `Mentions and DMs` / `Off` | `Mentions and DMs` | Desktop notification filter (see above) |
-| `showMentionCount` | `On` / `Off` | `On` | Show the mention count next to the bar mark |
-| `middleClick` | `Last unread DM` / `Raise panel` | `Last unread DM` | Middle-click action on the bar mark |
-| `imagePreviews` | `On` / `Off` | `On` | Inline image attachments and embed images in the timeline |
-| `mediaCacheMB` | 64–4096 | 512 | Media cache size cap in MiB (pushed to the backend with `set_config`) |
+| `showMentionCount` | `On` / `Off` | `On` | Show the mention count next to the bar mark (`Off` keeps the dimmed-mark / unread-dot states) |
+| `middleClick` | `Last unread DM` / `Raise panel` | `Last unread DM` | Middle-click action on the bar mark: open the panel on the most recent unread DM (the panel itself when there is none) / open or remap the panel |
+| `imagePreviews` | `On` / `Off` | `On` | Inline image attachments and embed images in the timeline; `Off` shows filename chips instead (avatars and emoji stay) |
+| `mediaCacheMB` | 64–4096 | 512 | Media cache size cap in MiB, pushed to the backend with `set_config` on connect and on change |
+
+The entry also carries `frequentEmoji`, a small JSON string the emoji picker maintains;
+it is not a setting and survives `omarchy bar set` of the other keys.
 
 ## License
 

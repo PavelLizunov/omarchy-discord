@@ -200,17 +200,20 @@ its window.
 
 ### Media (fetch_media mirror)
 
-`Service.mediaPath(url, size)` returns the cached local path or `""`; a miss marks
-`mediaPending["url|size"]` in place (nothing binds to it, so the call is safe inside
-bindings) and sends `fetch_media`. Resolution writes `mediaPaths` wholesale (a cache-hit
-response or `media_ready`). `media_ready` is keyed by `url` only: one outstanding size
+`Service.mediaPath(url, size)` returns the cached local path or `""`. It is safe inside
+bindings because a miss does no I/O: it records the key in `mediaWanted` (in place,
+nothing binds to it) and `Qt.callLater(flushMediaRequests)` issues the `fetch_media`
+on the next event-loop turn (`mediaPending` marks keys in flight). A socket write from
+inside a binding evaluation produced "Binding loop detected" warnings on every
+media-bearing row; the deferred flush is what keeps that at zero. `flushMediaRequests`
+also runs on every connect, re-issuing wanted keys whose fetch died with the socket.
+Resolution writes `mediaPaths` wholesale (a cache-hit response or `media_ready`). `media_ready` is keyed by `url` only: one outstanding size
 adopts the path directly, several outstanding sizes are re-requested and each key
 resolves only from its own size-specific `cached: true` response (the finished one is
 now a cache hit). Failures go to `mediaFailed` so a binding never loops. A cached path
 the backend's LRU has since evicted fails in the `Image`: every consumer reports
 `Image.Error` through `Service.mediaError(path)` (rows via `ctx.mediaError`), which
-drops the key from `mediaPaths` so the binding fetches again — once per key
-(`mediaRetried`). All three maps reset per socket connection. `markdownCtx` carries `mediaPath`, `emojiPath(id)`
+drops the key from `mediaPaths` and re-requests it — once per key (`mediaRetried`). All three maps reset per socket connection. `markdownCtx` carries `mediaPath`, `emojiPath(id)`
 (`https://cdn.discordapp.com/emojis/<id>.png` at size 32, PNG even for animated —
 rich text cannot animate), `emojiSize` (`font.body × 1.4`), `imagePreviews`, and reads
 `mediaPaths`, so rows re-render when media lands without touching the service.
@@ -349,6 +352,16 @@ cursor. The implementation patterns to copy are spotify's, verbatim:
   message actions, `↑` edit-last in empty composer, Ctrl+/ cheatsheet). `Enter` on a
   timeline row reveals its covered spoiler images first, then activates; `O` opens an
   attachment from its cached local path when the cache has it.
+- **One key table.** `Keymap.js` holds every binding once (`ENTRIES`, grouped by
+  `ZONES`); the panel footer renders `Keymap.footer(state, …)` over `FOOTER` id lists
+  and the cheatsheet renders `Keymap.sections()`, so hints and cheatsheet cannot drift.
+  Adding a key means adding an entry (and, for a footer hint, its id to a state);
+  `missingFooterIds()` must stay empty (harness assertion). Global chords go through
+  `Panel.handleGlobalKey` before any zone: `Ctrl+K` / `Ctrl+/` everywhere (the composer
+  claims them on its TextArea — `Ctrl+K` would otherwise delete to end of line — and
+  emits `switcherRequested` / `cheatsheetRequested`), `/` and `?` only outside text
+  inputs. While a modal overlay is shown (`Panel.overlayShown`) `handleKey` ignores
+  everything; the overlay accepts every key itself.
 - **Login screen** (Panel.qml `loginStops`): its own Tab cycle — Scan QR (default
   focus) → token field → Log in → Close; in the QR view Cancel/Try again → Close. All
   stops are `focusable` qs.Ui Buttons / the TextField with `activeFocusOnTab: false`
@@ -360,6 +373,55 @@ cursor. The implementation patterns to copy are spotify's, verbatim:
   `qr_code` ("Reconnecting to QR login…"); when none arrives within `qrReplayMs`
   (3 s) `qrMissing` flips and the action button becomes Try again
   (`restartQrLogin`: cancel, then start).
+
+### Quick switcher (`QuickSwitch.qml`, service-owned)
+
+- Lives in Service.qml behind a `Loader` (created on first use) so the IpcHandler
+  `quickshell.discord.switcher` `toggle|open|close` works from any app; the panel's
+  `Ctrl+K` / `/` call `service.openSwitcher()`. The surface is a full-screen
+  `PanelWindow` (`WlrLayer.Overlay`, scrim, centered ~560 px card — the shell's own
+  emoji-overlay shape; `qs.Ui KeyboardPanel` is the bar-anchored variant and needs a
+  bar the Service does not have) with KeyboardPanel's focus prime replicated:
+  `WlrKeyboardFocus.Exclusive` until 75 ms after the surface maps, then `OnDemand`.
+  The window goes on the panel's screen when the panel is open, else the default.
+- Keys are intercepted on the search `TextField` itself (`Keys.priority: BeforeItem`):
+  `↑/↓`, `Tab/Shift+Tab`, `Ctrl+j/k`, `Ctrl+n/p` move (wrapping), `PgUp/PgDn` by 8,
+  `Enter` activates, `Esc` clears the query then closes; everything else is text.
+  Typing debounces 80 ms into `service.quickSwitch(query, cb)`, which drops stale
+  responses by sequence number and never touches the panel footer (`lastError`).
+- `Enter` → `close()` then `service.openPanel({channel_id})` (hide/summon split across
+  turns; the same payload path as the bar's middle click). Logged out: a single
+  "Log in to Discord" row → `openPanel({})`. Mouse: hover moves the cursor, click
+  activates, a click on the scrim closes. The switcher registers
+  `setUiVisible("quick-switch")` so it counts for idle-disconnect.
+
+### Cheatsheet (`components/Cheatsheet.qml`)
+
+- A modal `FocusScope` overlay inside the panel window (scrim + centered card), shown by
+  `Ctrl+/` anywhere and `?` outside text inputs; `Esc`, `Ctrl+/`, `?`, `Enter` close it,
+  `j/k`, arrows, `PgUp/PgDn`, `g/G` scroll; every other key is swallowed. On close the
+  panel runs `focusZone()` (deferred) so the keyboard returns to the last zone.
+
+### Emoji picker (`components/EmojiPicker.qml`)
+
+- Same overlay shape, opened by `E` on a timeline row (`Panel.openPicker`): the search
+  field owns the keyboard; arrows / `Ctrl+h/j/k/l` / `Tab` move, `Enter` picks, `Esc`
+  clears the filter then closes. The model is `Emoji.sections(reactions, frequent,
+  server, catalog, query)` → `[{id, title, cells}]` in the order **reactions**
+  ("Toggle", `me` marks ours) → **frequent** → **server** (custom emoji, `list_emoji`
+  next wave — shown when `Service.serverEmoji` is non-empty) → **all**; `Emoji.move`
+  navigates the flattened grid (rows within a section, crossing into the neighbour at
+  the edge, keeping the column).
+- `picked(emoji)` is wire form (unicode or `name:id`). `Service.toggleReaction` sends
+  `unreact` when the loaded message already carries our reaction, else `react` and
+  bumps `frequentEmoji` (`Emoji.bumpFrequent`, cap 16, persisted as a JSON string under
+  the `frequentEmoji` key on the shell.json entry via `persistOpaque`, read back in
+  `syncSettings`). Reaction chips in `MessageRow` emit `reactionClicked` → Timeline
+  `reactionToggled` → the same function. State comes back through `message_update`.
+- The unicode catalogue is the shell's `$OMARCHY_PATH/shell/plugins/emojis/emojis.json`
+  read through a `FileView` on first use (`ensureEmojiCatalog`); `Emoji.FALLBACK` when
+  missing. `Emoji.filter` ranks canonical-shortcode matches above whole-word, prefix,
+  then substring matches.
 
 ### Composer zone (`components/Composer.qml`)
 
