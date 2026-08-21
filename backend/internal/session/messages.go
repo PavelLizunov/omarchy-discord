@@ -354,7 +354,7 @@ func (m *Manager) openChannel(ctx context.Context, req *protocol.Request) (any, 
 	msgs, err := m.fetchTail(ctx, n, chID, openTail)
 	if err != nil {
 		rollback()
-		return nil, discordError(err)
+		return nil, m.restError(n, err, false)
 	}
 	if len(msgs) == 0 && ch.Type == discord.DirectMessage {
 		rollback()
@@ -442,7 +442,7 @@ func (m *Manager) history(ctx context.Context, req *protocol.Request) (any, *pro
 	if len(page) < limit {
 		page, err = m.fetchBefore(ctx, n, chID, before, uint(limit))
 		if err != nil {
-			return nil, discordError(err)
+			return nil, m.restError(n, err, false)
 		}
 		for i := range page {
 			page[i].GuildID = ch.GuildID

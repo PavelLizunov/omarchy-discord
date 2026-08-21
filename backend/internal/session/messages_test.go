@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -707,5 +708,48 @@ func TestOpenChannelTailCapped(t *testing.T) {
 	}
 	if r := res.(protocol.OpenChannelResult); len(r.Messages) != 3 || r.HasMore {
 		t.Fatalf("short tail: %d has_more=%v", len(r.Messages), r.HasMore)
+	}
+}
+
+// TestReadPath401MovesToReauth: a 401 from the history REST calls behind
+// open_channel / history is handled like a write 401 — reauth_needed,
+// keyring cleared, the command fails not_logged_in.
+func TestReadPath401MovesToReauth(t *testing.T) {
+	for _, cmd := range []string{"open_channel", "history"} {
+		m, n := readyManager(t)
+		kr := m.kr.(*fakeKeyring)
+		m.fetchTail = func(context.Context, *ningen.State, discord.ChannelID, uint) ([]discord.Message, error) {
+			return nil, httpErr(401)
+		}
+		m.fetchBefore = func(context.Context, *ningen.State, discord.ChannelID, discord.MessageID, uint) ([]discord.Message, error) {
+			return nil, httpErr(401)
+		}
+		client := newFakeClient()
+		ctx := socket.WithClient(context.Background(), client)
+		line := `{"v":1,"id":1,"command":"open_channel",` + general + `}`
+		if cmd == "history" {
+			client.OpenChannel("300000000000000002")
+			line = `{"v":1,"id":1,"command":"history",` + general + `,"before_id":"600000000000000001"}`
+		}
+		_, e := m.Handle(ctx, req(t, line))
+		if e == nil || e.Code != protocol.CodeNotLoggedIn {
+			t.Fatalf("%s 401: %v", cmd, e)
+		}
+		st := nextEvent(t, m).(protocol.StateChangedEvent).State
+		if st.Lifecycle != protocol.LifecycleReauthNeeded || !strings.Contains(st.Error, "invalidated") {
+			t.Fatalf("%s after 401: %+v", cmd, st)
+		}
+		if kr.clears != 1 {
+			t.Fatalf("%s keyring clears %d", cmd, kr.clears)
+		}
+		m.mu.Lock()
+		tok, live := m.token, m.n
+		m.mu.Unlock()
+		if tok != "" || live != n {
+			t.Fatalf("%s token %q session kept %v", cmd, tok, live == n)
+		}
+		if cmd == "open_channel" && client.HasOpen("300000000000000002") {
+			t.Fatal("open registration not rolled back")
+		}
 	}
 }

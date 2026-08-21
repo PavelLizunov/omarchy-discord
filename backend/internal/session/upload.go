@@ -161,7 +161,7 @@ func (m *Manager) upload(ctx context.Context, req *protocol.Request) (any, *prot
 	}
 	msg, err := m.rest.send(ctx, n, chID, data)
 	if err != nil {
-		return nil, m.writeError(n, err, false)
+		return nil, m.restError(n, err, false)
 	}
 	for _, f := range files {
 		if underStagedDir(m.stagedDir, f.path) {

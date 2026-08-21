@@ -45,7 +45,15 @@ type restOps struct {
 func liveREST() restOps {
 	return restOps{
 		send: func(ctx context.Context, n *ningen.State, chID discord.ChannelID, data api.SendMessageData) (*discord.Message, error) {
-			return n.Client.WithContext(ctx).SendMessageComplex(chID, data)
+			client := n.Client.WithContext(ctx)
+			if len(data.Files) > 0 {
+				// arikawa retries 429/5xx by re-sending the request, but the
+				// multipart body is a pipe that is consumed on the first
+				// attempt; a retry would send a corrupt body. One attempt,
+				// and the caller reports rate_limited / discord_error.
+				client.Retries = 1
+			}
+			return client.SendMessageComplex(chID, data)
 		},
 		edit: func(ctx context.Context, n *ningen.State, chID discord.ChannelID, msgID discord.MessageID, content string) error {
 			_, err := n.Client.WithContext(ctx).EditText(chID, msgID, content)
@@ -139,10 +147,10 @@ func requireOpen(ctx context.Context, chID string) (socket.Client, *protocol.Err
 	return c, nil
 }
 
-// writeError maps a REST failure on a write command. A 401 means the token
-// is dead: the session is moved to reauth_needed and the command fails with
+// restError maps a REST failure on any command. A 401 means the token is
+// dead: the session is moved to reauth_needed and the command fails with
 // not_logged_in. 404 maps to unknown_message for message-scoped calls.
-func (m *Manager) writeError(n *ningen.State, err error, messageScoped bool) *protocol.Error {
+func (m *Manager) restError(n *ningen.State, err error, messageScoped bool) *protocol.Error {
 	var herr *httputil.HTTPError
 	if errors.As(err, &herr) {
 		switch herr.Status {
@@ -244,7 +252,7 @@ func (m *Manager) send(ctx context.Context, req *protocol.Request) (any, *protoc
 	}
 	msg, err := m.rest.send(ctx, n, discord.ChannelID(sf), data)
 	if err != nil {
-		return nil, m.writeError(n, err, false)
+		return nil, m.restError(n, err, false)
 	}
 	return protocol.SendResult{MessageID: msg.ID.String(), Nonce: data.Nonce}, nil
 }
@@ -290,7 +298,7 @@ func (m *Manager) edit(ctx context.Context, req *protocol.Request) (any, *protoc
 		}
 	}
 	if err := m.rest.edit(ctx, n, chID, msgID, p.Content); err != nil {
-		return nil, m.writeError(n, err, true)
+		return nil, m.restError(n, err, true)
 	}
 	return protocol.EmptyResult{}, nil
 }
@@ -306,7 +314,7 @@ func (m *Manager) deleteMessage(ctx context.Context, req *protocol.Request) (any
 		return nil, e
 	}
 	if err := m.rest.delete(ctx, n, chID, msgID); err != nil {
-		return nil, m.writeError(n, err, true)
+		return nil, m.restError(n, err, true)
 	}
 	return protocol.EmptyResult{}, nil
 }
@@ -330,7 +338,7 @@ func (m *Manager) react(ctx context.Context, req *protocol.Request, add bool) (a
 		call = m.rest.react
 	}
 	if err := call(ctx, n, chID, msgID, emoji); err != nil {
-		return nil, m.writeError(n, err, true)
+		return nil, m.restError(n, err, true)
 	}
 	return protocol.EmptyResult{}, nil
 }
@@ -358,7 +366,7 @@ func (m *Manager) typing(ctx context.Context, req *protocol.Request) (any, *prot
 		return protocol.EmptyResult{}, nil
 	}
 	if err := m.rest.typing(ctx, n, chID); err != nil {
-		return nil, m.writeError(n, err, false)
+		return nil, m.restError(n, err, false)
 	}
 	return protocol.EmptyResult{}, nil
 }
@@ -387,7 +395,7 @@ func (m *Manager) setPresence(req *protocol.Request) (any, *protocol.Error) {
 		return nil, e
 	}
 	if err := m.rest.setStatus(n, status); err != nil {
-		return nil, m.writeError(n, err, false)
+		return nil, m.restError(n, err, false)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()

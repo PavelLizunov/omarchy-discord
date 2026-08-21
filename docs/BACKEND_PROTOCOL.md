@@ -45,6 +45,10 @@ Rules:
 
 - Responses may arrive out of request order; correlation is by `id` only. Long-running
   commands (`upload`, `history` on a cold channel) keep the connection usable.
+- Events and responses are not ordered relative to each other in general (a
+  `state_changed` caused by a command may land after its response). The exceptions
+  are spelled out per command: `start_qr_login`, `cancel_qr_login`, and `upload`
+  flush their own events to the socket before responding.
 - A request line that fails to parse is answered with `invalid_request` and **`id: 0`**
   (the real id is unknowable); clients must tolerate responses whose id matches no
   pending request. A line that parses but has a missing/empty `command` is also
@@ -72,7 +76,9 @@ Rules:
 On every client connect, before reading any request, the backend pushes:
 
 1. one `state_changed` event (full session state, below);
-2. if `lifecycle` is `ready`: one `guilds_synced` event (full guild + DM structure,
+2. if `lifecycle` is `qr_pending`: one `qr_code` event (the live code, see § QR
+   login events) so a client that connects mid-flow can show it;
+3. if `lifecycle` is `ready`: one `guilds_synced` event (full guild + DM structure,
    including per-channel unread/mention counts).
 
 Thereafter events are pushed as things change. A client can force a refresh at any
@@ -84,7 +90,7 @@ the current generation, but an event produced *before* the snapshot may still be
 delivered after it (events reach the socket asynchronously). Clients keep the highest
 generation seen across both events and **discard any `state_changed` or
 `guilds_synced` whose generation is lower than it**. Equal generations (the two
-snapshot lines) are applied. A snapshot's two lines are never interleaved with other
+snapshot lines) are applied. A snapshot's lines are never interleaved with other
 events.
 
 ## Error codes (stable, machine-readable)
@@ -132,7 +138,8 @@ events.
 (4004/4010–4014 — token invalid) or a REST 401 on any command. The backend drops the
 in-memory token, clears the keyring entry, closes the gateway, stays running, and
 keeps serving structure from cache read-only (`list_guilds` / `list_channels` /
-`list_dms` succeed). The command that hit the 401 fails with `not_logged_in`. Recovery is `login` or `start_qr_login`. A new `login` resets
+`list_dms` succeed). The command that hit the 401 — write or read (`open_channel`,
+`history`) — fails with `not_logged_in`. Recovery is `login` or `start_qr_login`. A new `login` resets
 `user`, `presence`, `total_mention_count`, and `unread_dm_channel_id` to their
 pre-ready values (null / `""` / 0 / null) in the `connecting` state it emits, even
 when it replaces a live session. Transient disconnects surface as
@@ -209,15 +216,17 @@ Answered in the socket layer without touching the session.
 #### `login`
 Log in with a pasted user token. The token is validated (REST `/users/@me`), written
 to the keyring (stdin path), and held in memory; this request line is exempt from all
-logging. Any existing session (live or `reauth_needed`) is replaced; concurrent
-`login`/`logout` requests are serialized so exactly one session survives.
+logging. Any existing session (live or `reauth_needed`) is replaced; all auth
+operations (`login`, `logout`, `start_qr_login`, a QR flow's completion) are
+serialized so exactly one session survives.
 - Request: `{token: string}`
 - Result: `{user: {id, username, display_name, avatar_url}, keyring_stored: bool}` —
   lifecycle proceeds `connecting` → `ready` via `state_changed` events.
   `keyring_stored: false` means the session is live for this process but the token
   could not be persisted (the user must log in again after a restart); the client
   should surface a warning.
-- Errors: `invalid_argument`, `login_failed`, `qr_unavailable` (QR flow in progress).
+- Errors: `invalid_argument`, `login_failed`, `qr_unavailable` (QR flow in progress,
+  including the moment between phone approval and the session being installed).
 
 ```json
 {"v":1,"id":4,"command":"login","token":"<redacted>"}
@@ -246,17 +255,22 @@ Disconnect the gateway, drop the in-memory token, clear the keyring entry.
 #### `start_qr_login`
 Open Discord's remote-auth gateway and begin the QR flow. Progress arrives as events
 (`qr_code`, `qr_scanned`, `qr_approved`, `qr_cancelled`); the command returns once
-the gateway has issued the first code, so the `qr_code` event is already queued
-(and precedes the response) when the response lands. Lifecycle → `qr_pending` is
-emitted before the response. If the gateway cannot be reached, or issues no code
-within ~10 s, the flow is torn down, the lifecycle returns to its previous value
-(`logged_out` or `reauth_needed`), and the response is `qr_unavailable` — no
-`qr_cancelled` is emitted in that case.
+the gateway has issued the first code, and the backend flushes its event queue to
+the socket before responding, so `state_changed {qr_pending}` and `qr_code` are
+written **before** the response on every connection. If the gateway cannot be
+reached, or issues no code within ~10 s, the flow is torn down, the lifecycle
+returns to its previous value (`logged_out` or `reauth_needed`), and the response
+is `qr_unavailable` — no `qr_cancelled` is emitted in that case (both
+`state_changed` events still precede the error response).
 - Request: no fields. Result: `{}`.
 - Errors: `qr_unavailable` (gateway unreachable / no code in time, a QR flow already
-  running, or a live session — `connecting`/`ready` — exists; `reauth_needed` is
-  allowed and is replaced on success). While a flow runs, `login` is also refused
-  with `qr_unavailable`.
+  running — including one whose phone approval is being installed — or a live
+  session — `connecting`/`ready` — exists; `reauth_needed` is allowed and is
+  replaced on success). While a flow runs, `login` is also refused with
+  `qr_unavailable`.
+- If a flow ends without login after something else changed the session meanwhile
+  (a `logout`), that later state stands; the flow does not restore `logged_out` /
+  `reauth_needed` over it.
 
 ```json
 {"v":1,"id":50,"command":"start_qr_login"}
@@ -266,8 +280,11 @@ within ~10 s, the flow is torn down, the lifecycle returns to its previous value
 #### `cancel_qr_login`
 - Request: no fields. Result: `{}` — closes the remote-auth WS; emits
   `qr_cancelled {reason:"cancelled"}` and the lifecycle `state_changed` (back to
-  `logged_out` / `reauth_needed`) **before** the response; removes the QR image.
-- Errors: `qr_unavailable` (no flow running).
+  `logged_out` / `reauth_needed`) and flushes both to the socket **before** the
+  response; removes the QR image.
+- Errors: `qr_unavailable` (no flow running, or the phone already approved and the
+  login is being installed — `state_changed {connecting}` follows; a cancel that
+  races the approval by a few milliseconds may instead succeed as a no-op).
 
 #### `set_config`
 Push settings the backend needs. QML sends it on connect and whenever the setting
@@ -525,7 +542,8 @@ connection, event order is the order the backend processed them (ningen's
 ### `state_changed`
 `{state: state}` — full session-state object (§ wire objects). Fires on connect
 (snapshot), on every lifecycle/user/presence/total-mention change. Unchanged states
-are not re-sent. This is the only event a client is guaranteed before `ready`.
+are not re-sent. This is the only event a client is guaranteed before `ready`,
+except that a connect while `qr_pending` is also followed by a `qr_code` replay.
 
 ### `guilds_synced`
 `{generation: int, guilds: [guild], dms: [channel]}` — the complete structure. Fires
@@ -620,8 +638,11 @@ show directly (`Image { source: "file://" + image_path; cache: false }`); it is
 rewritten on every `qr_code` and **deleted when the flow ends** (approved,
 cancelled, expired, failed), so reload it per event and do not keep the path
 around. `image_path` is `""` if the PNG could not be written (render the `url`
-yourself). Fires once per `start_qr_login`; expiry does **not** auto-refresh — see
-`qr_cancelled`.
+yourself). Fires once per `start_qr_login`, and again on every socket connect while
+the lifecycle is `qr_pending` (right after the snapshot's `state_changed`, with
+`expires_in_ms` recomputed from the original deadline — `0` once it has passed),
+so a client that reconnects mid-flow can show the live code. Expiry does **not**
+auto-refresh — see `qr_cancelled`.
 
 #### `qr_scanned`
 `{user: {id, username, discriminator, avatar_hash}}` — the phone scanned the code

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/diamondburned/arikawa/v3/api"
@@ -52,10 +53,13 @@ type Manager struct {
 	kr     Keyring
 	events chan any
 
-	// opMu serializes session replacement (login, logout, stop), which spans
-	// several mu critical sections with a blocking close in between. mu only
-	// guards the fields below and is never held across that close.
+	// opMu serializes every auth operation (login, QR start/finish, logout,
+	// stop): each spans several mu critical sections with blocking work
+	// (REST validation, keyring store, gateway close) in between. mu only
+	// guards the fields below and is never held across that work.
 	opMu sync.Mutex
+	// forwarding is set once Forward runs; Flush is a no-op before that.
+	forwarding atomic.Bool
 
 	// runLoop starts the connect loop for a freshly installed session. Tests
 	// replace it to avoid the network.
@@ -116,14 +120,52 @@ func (m *Manager) Configure(runtimeDir string, cache *media.Cache) {
 }
 
 // Events yields state_changed / guilds_synced events in the order they were
-// produced. The consumer forwards them to the socket fan-out.
+// produced. Production consumes it through Forward; tests read it directly.
 func (m *Manager) Events() <-chan any { return m.events }
 
-func (m *Manager) push(ev any) {
+// flushToken is queued by Flush; Forward closes done when it reaches it,
+// which proves every earlier event has been handed to the sink.
+type flushToken struct{ done chan struct{} }
+
+// Forward hands every event to sink, in order, until the manager's queue is
+// closed (never, in practice). It is the production consumer of Events.
+func (m *Manager) Forward(sink func(any)) {
+	m.forwarding.Store(true)
+	for ev := range m.events {
+		if t, ok := ev.(flushToken); ok {
+			close(t.done)
+			continue
+		}
+		sink(ev)
+	}
+}
+
+// Flush blocks until every event queued before the call has been passed to
+// Forward's sink (or ctx ends). Commands whose documented contract puts their
+// events before the response call it before returning. Without a running
+// Forward there is nothing to order against and it returns at once.
+func (m *Manager) Flush(ctx context.Context) {
+	if !m.forwarding.Load() {
+		return
+	}
+	t := flushToken{done: make(chan struct{})}
+	if !m.push(t) {
+		return
+	}
+	select {
+	case <-t.done:
+	case <-ctx.Done():
+	}
+}
+
+// push queues an event; false when the queue is full and it was dropped.
+func (m *Manager) push(ev any) bool {
 	select {
 	case m.events <- ev:
+		return true
 	default:
 		redact.Logf("session: event queue full, dropping %T", ev)
+		return false
 	}
 }
 
@@ -186,7 +228,7 @@ func (m *Manager) Start(ctx context.Context) {
 // Stop closes the gateway and waits for the connect loop.
 func (m *Manager) Stop() {
 	if m.qrRunning() {
-		m.CancelQRLogin()
+		m.CancelQRLogin(context.Background())
 	}
 	m.opMu.Lock()
 	defer m.opMu.Unlock()
@@ -377,7 +419,18 @@ func (m *Manager) reauth(n *ningen.State, cause error) {
 }
 
 // Login validates the token with REST /users/@me, stores it, and connects.
+// The whole operation holds opMu so it cannot interleave with a QR flow's
+// completion or another login: the QR guard is checked under the same lock
+// the QR flow holds while installing its session.
 func (m *Manager) Login(ctx context.Context, token string) (protocol.LoginResult, *protocol.Error) {
+	if m.qrRunning() { // fast refusal; re-checked under opMu
+		return protocol.LoginResult{}, protocol.Errorf(protocol.CodeQRUnavailable, "a QR login is in progress; cancel it first")
+	}
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
+	if m.qrRunning() {
+		return protocol.LoginResult{}, protocol.Errorf(protocol.CodeQRUnavailable, "a QR login is in progress; cancel it first")
+	}
 	n := ningen.New(token)
 	me, err := n.WithContext(ctx).Me()
 	if err != nil {
@@ -388,7 +441,7 @@ func (m *Manager) Login(ctx context.Context, token string) (protocol.LoginResult
 
 // finishLogin persists the validated token and installs the session. A keyring
 // failure is not fatal — the in-memory session is valid for this process — but
-// is reported in the result so the client can warn the user.
+// is reported in the result so the client can warn the user. Caller holds opMu.
 func (m *Manager) finishLogin(ctx context.Context, n *ningen.State, token string, user protocol.User) protocol.LoginResult {
 	stored := true
 	if err := m.kr.Store(ctx, token); err != nil {
@@ -399,12 +452,10 @@ func (m *Manager) finishLogin(ctx context.Context, n *ningen.State, token string
 	return protocol.LoginResult{User: user, KeyringStored: stored}
 }
 
-// replaceSession closes any live session and installs n. Serialized by opMu so
+// replaceSession closes any live session and installs n. Caller holds opMu so
 // two concurrent logins cannot each tear down and then both install, which
 // would orphan a live gateway connection.
 func (m *Manager) replaceSession(n *ningen.State, token string) {
-	m.opMu.Lock()
-	defer m.opMu.Unlock()
 	m.mu.Lock()
 	old, done := m.teardownLocked()
 	m.mu.Unlock()
@@ -440,6 +491,13 @@ func (m *Manager) Snapshot() []any {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	evs := []any{protocol.NewStateChanged(m.stateLocked())}
+	// A client (re)connecting mid-flow gets the live code again, otherwise
+	// the QR UI would sit empty until the code expires.
+	if m.lifecycle == protocol.LifecycleQRPending && m.qr != nil && m.qr.code != nil {
+		code := *m.qr.code
+		code.ExpiresInMS = max(0, m.qr.deadline.Sub(m.now()).Milliseconds())
+		evs = append(evs, code)
+	}
 	if m.lifecycle == protocol.LifecycleReady && m.n != nil {
 		off := m.n.Offline()
 		guilds, _ := Guilds(off)
@@ -463,9 +521,6 @@ func (m *Manager) Handle(ctx context.Context, req *protocol.Request) (any, *prot
 		}
 		if p.Token == "" {
 			return nil, protocol.Errorf(protocol.CodeInvalidArgument, "token is required")
-		}
-		if m.qrRunning() {
-			return nil, protocol.Errorf(protocol.CodeQRUnavailable, "a QR login is in progress; cancel it first")
 		}
 		res, e := m.Login(ctx, p.Token)
 		if e != nil {
@@ -548,7 +603,7 @@ func (m *Manager) Handle(ctx context.Context, req *protocol.Request) (any, *prot
 		}
 		return protocol.EmptyResult{}, nil
 	case "cancel_qr_login":
-		if e := m.CancelQRLogin(); e != nil {
+		if e := m.CancelQRLogin(ctx); e != nil {
 			return nil, e
 		}
 		return protocol.EmptyResult{}, nil

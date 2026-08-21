@@ -4,14 +4,17 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/diamondburned/arikawa/v3/api"
 	"github.com/diamondburned/arikawa/v3/discord"
+	"github.com/diamondburned/arikawa/v3/utils/httputil/httpdriver"
 	"github.com/diamondburned/ningen/v3"
 
 	"github.com/mattcalayo/omarchy-discord/backend/internal/protocol"
@@ -200,5 +203,56 @@ func TestUnderStagedDir(t *testing.T) {
 	}
 	if underStagedDir("", "/x") {
 		t.Fatal("empty staged dir must match nothing")
+	}
+}
+
+// countingTransport answers every request with 429 and records attempts and
+// the bytes it read from each body.
+type countingTransport struct {
+	mu       sync.Mutex
+	attempts int
+	bodies   []int64
+}
+
+func (c *countingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	n, _ := io.Copy(io.Discard, r.Body)
+	r.Body.Close()
+	c.mu.Lock()
+	c.attempts++
+	c.bodies = append(c.bodies, n)
+	c.mu.Unlock()
+	return &http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Header:     http.Header{"Content-Type": {"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"message":"You are being rate limited.","retry_after":0.01,"global":false}`)),
+		Request:    r,
+	}, nil
+}
+
+// TestUploadNoRetryOn429: the live send path makes exactly one attempt for a
+// multipart upload (the file readers cannot be replayed) and reports
+// rate_limited.
+func TestUploadNoRetryOn429(t *testing.T) {
+	m, _, _, call := uploadHarness(t)
+	m.rest = liveREST()
+	tr := &countingTransport{}
+	m.mu.Lock()
+	m.n.Client.Client.Client = httpdriver.WrapClient(http.Client{Transport: tr})
+	m.mu.Unlock()
+	path := writeFile(t, filepath.Join(m.stagedDir, "one.png"), 2048)
+	_, e := call(`{"v":1,"id":9,"command":"upload",` + general + `,"paths":["` + path + `"]}`)
+	if e == nil || e.Code != protocol.CodeRateLimited {
+		t.Fatalf("429: %v", e)
+	}
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	if tr.attempts != 1 {
+		t.Fatalf("attempts %d (bodies %v)", tr.attempts, tr.bodies)
+	}
+	if tr.bodies[0] < 2048 {
+		t.Fatalf("first attempt read only %d bytes", tr.bodies[0])
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal("staged file removed after a failed upload")
 	}
 }

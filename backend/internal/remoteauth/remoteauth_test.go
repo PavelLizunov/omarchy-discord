@@ -13,6 +13,7 @@ import (
 	"image/png"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -395,5 +396,38 @@ func TestGatewayMsgFields(t *testing.T) {
 	}
 	if m.HeartbeatInterval != 41250 || m.TimeoutMS != 142637 {
 		t.Errorf("%+v", m)
+	}
+}
+
+// readerGoroutines counts live goroutines parked in the gateway reader.
+func readerGoroutines() int {
+	buf := make([]byte, 1<<20)
+	n := runtime.Stack(buf, true)
+	return strings.Count(string(buf[:n]), "remoteauth.(*flow).run.func1")
+}
+
+// TestReaderGoroutineExitsWithoutCancel: when Run ends on its own (expiry
+// here) with a message still buffered and a never-cancelled context, the
+// reader goroutine must still exit once the socket is closed.
+func TestReaderGoroutineExitsWithoutCancel(t *testing.T) {
+	g := newFakeGateway(t, map[string]any{"heartbeat_interval": 20, "timeout_ms": 150}, func(c *websocket.Conn, _ *rsa.PublicKey) {
+		// Flood unknown ops so the reader always has a message in hand when
+		// the expiry fires.
+		for {
+			if err := c.WriteJSON(map[string]string{"op": "noise"}); err != nil {
+				return
+			}
+		}
+	})
+	_, err := Run(context.Background(), &recorder{}, Options{GatewayURL: g.url(), Exchange: noExchange(t)})
+	if !errors.Is(err, ErrExpired) {
+		t.Fatalf("err = %v, want ErrExpired", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for readerGoroutines() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("gateway reader goroutine leaked")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

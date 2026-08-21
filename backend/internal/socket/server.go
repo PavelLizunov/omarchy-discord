@@ -20,7 +20,8 @@ import (
 // Backend answers commands and provides the connect-time snapshot.
 type Backend interface {
 	// Snapshot returns the events pushed to a client on connect, in order
-	// (state_changed, then guilds_synced when ready).
+	// (state_changed, then qr_code while qr_pending, then guilds_synced
+	// when ready).
 	Snapshot() []any
 	// Handle answers one decoded request. hello and ping never reach it.
 	Handle(ctx context.Context, req *protocol.Request) (result any, err *protocol.Error)

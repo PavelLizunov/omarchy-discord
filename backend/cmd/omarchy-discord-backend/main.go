@@ -104,11 +104,7 @@ func serve(socketPath string) int {
 	mgr.Configure(filepath.Dir(socketPath), cache)
 	redact.Logf("listening on %s (backend %s, protocol v%d)", socketPath, protocol.BackendVersion, protocol.Version)
 
-	go func() {
-		for ev := range mgr.Events() {
-			srv.Broadcast(ev)
-		}
-	}()
+	go mgr.Forward(srv.Broadcast)
 	go mgr.Start(ctx)
 
 	srv.Serve(ctx)

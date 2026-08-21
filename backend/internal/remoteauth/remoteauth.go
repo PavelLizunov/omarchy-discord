@@ -176,13 +176,20 @@ type readResult struct {
 
 // run drives the socket until pending_login and returns (ticket, fingerprint).
 func (f *flow) run(ctx context.Context) (string, string, error) {
+	// done is closed when run returns; Run then closes the socket, which
+	// fails the pending ReadMessage, and the reader must not block handing
+	// that (or a buffered message) to a loop that is no longer listening.
 	reads := make(chan readResult, 1)
+	done := make(chan struct{})
+	defer close(done)
 	go func() {
 		for {
 			_, data, err := f.conn.ReadMessage()
 			select {
 			case reads <- readResult{data, err}:
 			case <-ctx.Done():
+				return
+			case <-done:
 				return
 			}
 			if err != nil {

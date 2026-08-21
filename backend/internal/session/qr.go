@@ -31,15 +31,28 @@ func liveQR(ctx context.Context, ev remoteauth.Events) (remoteauth.Result, error
 	return remoteauth.Run(ctx, ev, remoteauth.Options{})
 }
 
-// qrFlow is one running QR login.
+// qrFlow is one running QR login. It stays installed as m.qr from
+// start_qr_login until the flow has either ended without login or installed
+// its session, so no other auth operation can slip in between.
 type qrFlow struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	// firstCode is closed when the gateway issued the first code.
 	firstCode chan struct{}
-	gotCode   bool
-	// prevLifecycle/prevErr are restored when the flow ends without login.
+
+	// The fields below are guarded by Manager.mu.
+	gotCode bool
+	// finishing is set once the phone approved and the token is being
+	// installed; cancel is refused from then on.
+	finishing bool
+	// code/deadline are the current code, replayed by Snapshot to clients
+	// that connect mid-flow.
+	code     *protocol.QRCodeEvent
+	deadline time.Time
+	// prevLifecycle/prevErr/prevN are restored when the flow ends without
+	// login, provided nothing else changed the session meanwhile.
 	prevLifecycle, prevErr string
+	prevN                  *ningen.State
 }
 
 // qrEvents adapts remoteauth callbacks to protocol events. Callbacks run on
@@ -60,9 +73,14 @@ func (q qrEvents) QRCode(url, fingerprint string, expiresIn time.Duration) {
 			image = q.m.qrPath
 		}
 	}
-	q.m.push(protocol.NewQRCode(url, fingerprint, expiresIn.Milliseconds(), image))
-	if !q.f.gotCode {
-		q.f.gotCode = true
+	ev := protocol.NewQRCode(url, fingerprint, expiresIn.Milliseconds(), image)
+	q.m.mu.Lock()
+	q.f.code, q.f.deadline = &ev, q.m.now().Add(expiresIn)
+	q.m.push(ev)
+	first := !q.f.gotCode
+	q.f.gotCode = true
+	q.m.mu.Unlock()
+	if first {
 		close(q.f.firstCode)
 	}
 }
@@ -73,25 +91,40 @@ func (q qrEvents) Scanned(u remoteauth.User) {
 
 func (q qrEvents) Approved() { q.m.push(protocol.NewQRApproved()) }
 
-// StartQRLogin implements start_qr_login.
+// StartQRLogin implements start_qr_login. The guard-and-install step runs
+// under opMu so it cannot interleave with a login or a finishing QR flow;
+// the wait for the first code runs outside it (the installed flow is itself
+// the guard that refuses other auth operations).
 func (m *Manager) StartQRLogin(ctx context.Context) *protocol.Error {
+	// Fast refusal while a flow is finishing (it holds opMu for the keyring
+	// store + install); the guard is re-checked under opMu below.
+	if m.qrRunning() {
+		return protocol.Errorf(protocol.CodeQRUnavailable, "a QR login is already in progress")
+	}
+	m.opMu.Lock()
 	m.mu.Lock()
 	if m.qr != nil {
 		m.mu.Unlock()
+		m.opMu.Unlock()
 		return protocol.Errorf(protocol.CodeQRUnavailable, "a QR login is already in progress")
 	}
 	if m.n != nil && m.lifecycle != protocol.LifecycleReauthNeeded {
 		m.mu.Unlock()
+		m.opMu.Unlock()
 		return protocol.Errorf(protocol.CodeQRUnavailable, "already logged in")
 	}
 	fctx, cancel := context.WithCancel(context.Background())
-	f := &qrFlow{cancel: cancel, done: make(chan struct{}), firstCode: make(chan struct{}), prevLifecycle: m.lifecycle, prevErr: m.errText}
+	f := &qrFlow{cancel: cancel, done: make(chan struct{}), firstCode: make(chan struct{}), prevLifecycle: m.lifecycle, prevErr: m.errText, prevN: m.n}
 	m.qr = f
 	m.setLifecycleLocked(protocol.LifecycleQRPending, "")
 	m.mu.Unlock()
+	m.opMu.Unlock()
 
 	go m.runQRFlow(fctx, f)
 
+	// Every path flushes so the documented events (state_changed, qr_code)
+	// reach the socket before the response.
+	defer m.Flush(ctx)
 	select {
 	case <-f.firstCode:
 		return nil
@@ -111,6 +144,9 @@ func (m *Manager) StartQRLogin(ctx context.Context) *protocol.Error {
 // runQRFlow drives one flow to completion and publishes the outcome.
 func (m *Manager) runQRFlow(ctx context.Context, f *qrFlow) {
 	defer close(f.done)
+	// Release the flow context on every exit so nothing derived from it (the
+	// remote-auth reader goroutine, timers) outlives the flow.
+	defer f.cancel()
 	res, err := m.runQR(ctx, qrEvents{m: m, f: f})
 	if m.qrPath != "" {
 		os.Remove(m.qrPath)
@@ -137,32 +173,50 @@ func (m *Manager) runQRFlow(ctx context.Context, f *qrFlow) {
 	if f.gotCode {
 		m.push(protocol.NewQRCancelled(reason, text))
 	}
-	m.setLifecycleLocked(f.prevLifecycle, f.prevErr)
+	// Only undo our own lifecycle change: if a logout or another session
+	// change happened meanwhile, its state stands.
+	if m.lifecycle == protocol.LifecycleQRPending && m.n == f.prevN {
+		m.setLifecycleLocked(f.prevLifecycle, f.prevErr)
+	}
 	m.mu.Unlock()
 }
 
-// finishQRLogin stores the token and connects exactly like login.
+// finishQRLogin stores the token and connects exactly like login. The flow
+// stays installed (refusing other auth operations) until the session is.
 func (m *Manager) finishQRLogin(f *qrFlow, res remoteauth.Result) {
 	user := protocol.User{ID: res.User.ID, Username: res.User.Username, DisplayName: res.User.Username}
 	if sf, err := discord.ParseSnowflake(res.User.ID); err == nil && res.User.AvatarHash != "" {
 		user.AvatarURL = discord.User{ID: discord.UserID(sf), Avatar: discord.Hash(res.User.AvatarHash)}.AvatarURL()
 	}
 	m.mu.Lock()
+	f.finishing = true
+	m.mu.Unlock()
+
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
+	m.finishLogin(context.Background(), m.newState(res.Token), res.Token, user)
+	m.mu.Lock()
 	m.qr = nil
 	m.mu.Unlock()
-	m.finishLogin(context.Background(), m.newState(res.Token), res.Token, user)
 }
 
-// CancelQRLogin implements cancel_qr_login.
-func (m *Manager) CancelQRLogin() *protocol.Error {
+// CancelQRLogin implements cancel_qr_login. It refuses once the phone has
+// approved and the token is being installed.
+func (m *Manager) CancelQRLogin(ctx context.Context) *protocol.Error {
 	m.mu.Lock()
 	f := m.qr
+	finishing := f != nil && f.finishing
 	m.mu.Unlock()
 	if f == nil {
 		return protocol.Errorf(protocol.CodeQRUnavailable, "no QR login in progress")
 	}
+	if finishing {
+		return protocol.Errorf(protocol.CodeQRUnavailable, "QR login already approved; logging in")
+	}
 	f.cancel()
 	<-f.done
+	// qr_cancelled and the lifecycle state_changed precede the response.
+	m.Flush(ctx)
 	return nil
 }
 
