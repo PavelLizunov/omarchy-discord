@@ -36,7 +36,9 @@ Item {
   readonly property int debounceMs: 80
   readonly property string fontFamily: Style.font.family
   readonly property color foreground: Color.popups.text
-  readonly property color muted: Api.secondaryColor(Color.muted, Color.foreground, Color.background)
+  // The overlay card is a popup surface: guard the secondary text against
+  // that pair, not the panel background.
+  readonly property color muted: Api.secondaryColor(Color.muted, Color.popups.text, Color.popups.background)
   readonly property bool loggedOut: !!(service && service.loggedOut)
   readonly property bool offline: !service || !service.connected
   // Rows: backend entries, or a single "Log in" row while logged out.

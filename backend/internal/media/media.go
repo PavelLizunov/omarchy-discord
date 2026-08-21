@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mattcalayo/omarchy-discord/backend/internal/panics"
 	"github.com/mattcalayo/omarchy-discord/backend/internal/protocol"
 	"github.com/mattcalayo/omarchy-discord/backend/internal/redact"
 )
@@ -190,7 +191,8 @@ func (c *Cache) Fetch(ctx context.Context, rawURL string, size int) (protocol.Fe
 	}
 	if _, ok := c.inflight[key]; !ok {
 		c.inflight[key] = struct{}{}
-		go c.download(key, rawURL, sizedURL(u, rawURL, size))
+		url := sizedURL(u, rawURL, size)
+		panics.Go("media: download", func() { c.download(key, rawURL, url) })
 	}
 	return protocol.FetchMediaResult{Cached: false}, nil
 }

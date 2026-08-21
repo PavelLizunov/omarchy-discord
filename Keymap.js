@@ -184,12 +184,18 @@ var FOOTER = {
   composerChips: ["composer.chips"],
   composerEdit: ["composer.save", "composer.newline", "composer.cancel"],
   chips: ["chips.move", "chips.remove", "composer.send", "chips.esc"],
+  // timeline.threads is appended only while the open channel has a parent to
+  // expand (Panel.canToggleCurrentThreads): in a DM `t` does nothing.
   timeline: ["timeline.move", "timeline.ends", "timeline.reply", "timeline.react", "timeline.delete",
-    "timeline.copy", "timeline.open", "timeline.threads", "global.members", "global.channelStep", "global.zoneComposer", "timeline.esc"],
+    "timeline.copy", "timeline.open"],
+  timelineThreads: ["timeline.threads"],
+  timelineTail: ["global.members", "global.channelStep", "global.zoneComposer", "timeline.esc"],
   rail: ["rail.move", "rail.enter", "global.switcher", "global.cheatsheet", "global.reload", "global.tab", "global.esc"],
   channels: ["rail.move", "channels.open", "channels.threads", "channels.back", "global.channelStep"],
   channelsTimeline: ["channels.timeline"],
-  channelsTail: ["global.members", "global.switcher", "global.cheatsheet", "global.reload", "global.tab"],
+  // The member pane belongs to an open channel: no channel, no `m` hint.
+  channelsMembers: ["global.members"],
+  channelsTail: ["global.switcher", "global.cheatsheet", "global.reload", "global.tab"],
   switcher: ["switcher.type", "switcher.move", "switcher.open", "switcher.esc"],
   picker: ["picker.type", "picker.move", "picker.pick", "picker.esc"]
 }

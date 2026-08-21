@@ -252,6 +252,7 @@ func wireChannel(n *ningen.State, ch discord.Channel) protocol.Channel {
 		Recipients:    make([]protocol.User, 0, len(ch.DMRecipients)),
 		MessageCount:  ch.MessageCount,
 		MemberCount:   ch.MemberCount,
+		Archived:      archived(&ch),
 
 		LastReadMessageID: lastReadMessageID(n, ch.ID),
 	}

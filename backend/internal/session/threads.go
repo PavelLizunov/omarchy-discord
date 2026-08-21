@@ -83,15 +83,15 @@ func (m *Manager) installChannelHandlers(n *ningen.State) {
 		}
 		m.push(protocol.NewChannelUpdate(change, wireChannel(n.Offline(), ch)))
 	}
-	n.AddSyncHandler(func(ev *gateway.ChannelCreateEvent) { emit(protocol.ChannelChangeCreate, ev.Channel) })
-	n.AddSyncHandler(func(ev *gateway.ChannelUpdateEvent) { emit(protocol.ChannelChangeUpdate, ev.Channel) })
-	n.AddSyncHandler(func(ev *gateway.ChannelDeleteEvent) { emit(protocol.ChannelChangeDelete, ev.Channel) })
-	n.AddSyncHandler(func(ev *gateway.ThreadCreateEvent) { emit(protocol.ChannelChangeCreate, ev.Channel) })
-	n.AddSyncHandler(func(ev *gateway.ThreadUpdateEvent) { emit(protocol.ChannelChangeUpdate, ev.Channel) })
-	n.AddSyncHandler(func(ev *gateway.ThreadDeleteEvent) {
+	addSyncHandler(n, "channel_create", func(ev *gateway.ChannelCreateEvent) { emit(protocol.ChannelChangeCreate, ev.Channel) })
+	addSyncHandler(n, "channel_update", func(ev *gateway.ChannelUpdateEvent) { emit(protocol.ChannelChangeUpdate, ev.Channel) })
+	addSyncHandler(n, "channel_delete", func(ev *gateway.ChannelDeleteEvent) { emit(protocol.ChannelChangeDelete, ev.Channel) })
+	addSyncHandler(n, "thread_create", func(ev *gateway.ThreadCreateEvent) { emit(protocol.ChannelChangeCreate, ev.Channel) })
+	addSyncHandler(n, "thread_update", func(ev *gateway.ThreadUpdateEvent) { emit(protocol.ChannelChangeUpdate, ev.Channel) })
+	addSyncHandler(n, "thread_delete", func(ev *gateway.ThreadDeleteEvent) {
 		emit(protocol.ChannelChangeDelete, discord.Channel{ID: ev.ID, GuildID: ev.GuildID, Type: ev.Type, ParentID: ev.ParentID})
 	})
-	n.AddSyncHandler(func(ev *gateway.ThreadListSyncEvent) {
+	addSyncHandler(n, "thread_list_sync", func(ev *gateway.ThreadListSyncEvent) {
 		for _, th := range ev.Threads {
 			if th.GuildID == 0 {
 				th.GuildID = ev.GuildID

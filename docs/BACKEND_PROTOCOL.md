@@ -5,11 +5,15 @@ discipline as the quickshell.spotify backend protocol; the event model deliberat
 departs (granular events instead of full-state-only — a chat timeline cannot be a
 single snapshot).
 
-- Socket: `$XDG_RUNTIME_DIR/omarchy-discord/backend.sock`. When `XDG_RUNTIME_DIR` is
-  unset, backend **and** client use the single shared fallback
-  `/run/user/<uid>/omarchy-discord/backend.sock` — never `/tmp`. Parent dir created;
-  stale socket file unlinked before bind; socket `chmod 0600`; removed on clean
-  shutdown. Overridable via `--socket-path`.
+- Socket: `$XDG_RUNTIME_DIR/omarchy-discord/backend.sock` — never `/tmp`. Parent dir
+  created; stale socket file unlinked before bind; socket `chmod 0600`; removed on
+  clean shutdown. Overridable via `--socket-path`.
+- With `XDG_RUNTIME_DIR` unset the two sides behave **asymmetrically**: the backend
+  falls back to `/run/user/<uid>/omarchy-discord/backend.sock` (it knows its own uid),
+  while the QML client — which cannot read a uid — does not guess a path and stays in
+  the disconnected/bootstrap UI. A session without `XDG_RUNTIME_DIR` therefore needs
+  an explicit `--socket-path` on the backend and the matching path configured on the
+  client; in practice the shell always sets `XDG_RUNTIME_DIR`.
 - Transport: UTF-8 JSON, **one object per line**, `\n`-terminated. No pretty-printing.
 - The backend is the single source of truth; QML holds a mirror, never authoritative
   state.
@@ -169,6 +173,14 @@ channel object was built — `read_state_changed` is the live source afterwards.
 members for `dm`/`group_dm` (possibly empty), `[]` for guild channels. For DMs, `name`
 is the recipient display name (group DMs: joined names or set name).
 
+`archived` (bool) is true only for an archived thread. It matters because the two
+thread sources disagree by design: `list_channels` returns every cached thread of the
+guild, archived ones included, while `list_threads` serves only the active set. A
+client that counts "N threads" from `list_channels` must therefore filter
+`archived: true` (or use `list_threads`) to match what opening the thread list shows.
+`archived` is always false for non-threads. (Additive field, introduced after the
+first goldens; absent means false.)
+
 `message_count` and `member_count` (ints) are Discord's approximate counters for
 `thread` channels and `0` for everything else. A thread's `parent_id` is the text /
 announcement / forum channel it belongs to; `type` is `"thread"` for public, private
@@ -318,6 +330,8 @@ Structure commands read the session cache. They succeed in `ready` and in
 - Request: `{guild_id: string}`
 - Result: `{channels: [channel]}` — permission-filtered, empty categories removed,
   category-grouped display order (ningen `Channels(guildID, allowedTypes)`).
+  Cached threads appear here as `type: "thread"` channels **including archived
+  ones** (`archived: true`); `list_threads` is the active-only view.
 - Errors: `not_logged_in`, `gateway_unavailable`, `invalid_argument` (non-snowflake
   id), `unknown_guild`.
 
@@ -405,11 +419,20 @@ pane for a channel it has not opened, and vice versa).
 - Request: `{channel_id: string}`. Result: `{}` — always immediate; the list
   itself is an event.
 - Guild channels: sends the same Op 14 the official client sends on channel
-  open (`GUILD_SUBSCRIBE` with `channels: {id: [[0, 99]]}`), which Discord
-  answers with a GUILD_MEMBER_LIST_UPDATE. The first `member_list_update`
-  typically lands 0.1–1.5 s after the response; if the backend already holds
-  the list (same list shared by another channel, or a re-subscribe) it is
-  re-emitted at once. Guild member lists are **never** fetched over REST.
+  open (`GUILD_SUBSCRIBE` with `channels: {id: [[0, 99]]}` for **every** channel
+  of that guild some client currently displays), which Discord answers with a
+  GUILD_MEMBER_LIST_UPDATE per list. The first `member_list_update` typically
+  lands 0.1–1.5 s after the response; if the backend already holds the list
+  (same list shared by another channel, or a re-subscribe) it is re-emitted at
+  once and no gateway command is sent, because Discord does not resend an
+  unchanged range. Guild member lists are **never** fetched over REST.
+- Threads have no member list of their own: a thread resolves to its parent
+  channel for both the Op 14 request and the list lookup, so a thread under a
+  private channel shows that channel's list, not the guild's public one. Events
+  are still keyed by the thread's own `channel_id`.
+- After a reconnect that re-IDENTIFYs (a fresh READY rather than a resume), the
+  backend re-requests the member list of every channel that still has a
+  subscriber and re-emits it; no client action is needed.
 - DMs / group DMs: the list is synthesized from the recipients and the global
   presence store; the first `member_list_update` follows within the debounce
   window (~100 ms).
@@ -421,7 +444,12 @@ pane for a channel it has not opened, and vice versa).
 
 #### `unsubscribe_members`
 Stops `member_list_update` / `presence_update` delivery for the channel on this
-connection. Idempotent (the gateway-side subscription is retained).
+connection. Idempotent. Subscriptions are refcounted across connections: when the
+last subscriber of a channel goes away — explicit unsubscribe, or its connection
+dropping — the backend drops that channel's tracked state and it stops appearing in
+the guild's Op 14 from then on. No gateway command is sent for an unsubscribe, so
+the gateway-side subscription is retained until the next subscribe changes the
+guild's displayed set (and, either way, until the session ends).
 - Request: `{channel_id: string}`. Result: `{}`.
 - Errors: `invalid_argument`.
 
@@ -827,7 +855,7 @@ approval; there is no auto-restart — call `start_qr_login` again for a fresh c
 | `channel_update` | `ChannelCreateEvent`/`ChannelUpdateEvent`/`ChannelDeleteEvent`, `ThreadCreateEvent`/`ThreadUpdateEvent`/`ThreadDeleteEvent`, `ThreadListSyncEvent` (one `create` per thread) |
 | `message_create/update/delete` | `MessageCreateEvent`/`MessageUpdateEvent`/`MessageDeleteEvent`/`MessageDeleteBulkEvent` + `MessageReaction{Add,Remove,RemoveAll,RemoveEmoji}` (folded into `message_update` from the cache); per-connection routing in the socket layer (`socket.Routed`) |
 | `typing_start` | `TypingStartEvent` (guilds require the Op 14 subscribe from `open_channel`) |
-| `member_list_update` | ningen `MemberState.RequestMemberList` (Op 14 with `channels`) → `GuildMemberListUpdateEvent`, matched to channels by the list id the backend computes itself (`memberListID`: Discord's "everyone" rule + murmur3 of the view-channel overwrites sorted as strings; ningen's `ComputeListID` does not match live lists); DM lists from the recipient list + `PresenceStore`; coalesced per channel (100 ms) |
+| `member_list_update` | our own Op 14 `GuildSubscribeCommand{Channels: {ch: [[0,99]]}}` (ningen's `RequestMemberList` is unusable — its chunk arithmetic panics once it holds a list with < 100 visible members) → `GuildMemberListUpdateEvent`, matched to channels by the list id the backend computes itself (`memberListID`: Discord's "everyone" rule + murmur3 of the view-channel overwrites sorted as strings, computed on a thread's *parent*; ningen's `ComputeListID` does not match live lists); DM lists from the recipient list + `PresenceStore`; coalesced per channel (100 ms) |
 | `presence_update` | `PresenceUpdateEvent`, routed by the users of the last emitted member lists and the open-DM recipient index |
 | `read_state_changed` | ningen `read.UpdateEvent` (async goroutine — serialized into the writer) |
 | `media_ready` / `upload_progress` | backend media cache / counting reader |

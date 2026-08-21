@@ -18,9 +18,10 @@ config_dir="$config_root/omarchy-discord"
 cache_dir="$cache_root/omarchy-discord"
 runtime_dir=${OMARCHY_DISCORD_RUNTIME_DIR:-"$HOME/.local/lib/omarchy-discord"}
 backend_binary="$runtime_dir/omarchy-discord-backend"
+stamp_file="$runtime_dir/installed-version"
 
 systemctl --user stop omarchy-discord.service 2>/dev/null || true
-rm -f -- "$unit_file" "$backend_binary"
+rm -f -- "$unit_file" "$backend_binary" "$stamp_file"
 rmdir -- "$runtime_dir" 2>/dev/null || true
 systemctl --user daemon-reload
 

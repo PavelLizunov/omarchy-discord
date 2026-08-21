@@ -466,7 +466,7 @@ FocusScope {
     var wasG = now - lastGAt <= doubleTapMs
     lastGAt = 0
     var armed = armedDeleteId !== ""
-    if (armed && !(text === "d" || text === "D")) disarmDelete()
+    if (armed && text !== "D") disarmDelete()
 
     if (alt && key === Qt.Key_H) moveZone("left")
     else if (alt && key === Qt.Key_L) moveZone("right")
@@ -481,11 +481,14 @@ FocusScope {
     else if (key === Qt.Key_End || text === "G") focusNewest()
     else if (text === "g") { if (wasG) goTop(); else lastGAt = now }
     else if (key === Qt.Key_Return || key === Qt.Key_Enter) activateCursor()
-    else if (text === "y" || text === "Y") copyCursorMessage()
-    else if (text === "o" || text === "O") openCursorLink()
-    else if (text === "r" || text === "R") { if (cursorIndex >= 0 && !rows[cursorIndex].pending) replyRequested(cursorMessageId) }
-    else if (text === "d" || text === "D") requestDelete()
-    else if (text === "e" || text === "E") { if (cursorIndex >= 0) reactRequested(cursorMessageId) }
+    // Message actions are the documented uppercase forms only (Keymap.js:
+    // R E D D Y O). Lowercase falls through to the panel, which keeps the
+    // "anywhere" keys honest — notably r, which reloads.
+    else if (text === "Y") copyCursorMessage()
+    else if (text === "O") openCursorLink()
+    else if (text === "R") { if (cursorIndex >= 0 && !rows[cursorIndex].pending) replyRequested(cursorMessageId) }
+    else if (text === "D") requestDelete()
+    else if (text === "E") { if (cursorIndex >= 0) reactRequested(cursorMessageId) }
     else return
     event.accepted = true
   }

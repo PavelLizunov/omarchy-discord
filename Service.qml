@@ -77,6 +77,11 @@ Item {
   // channel_update names a thread of a loaded parent.
   property var threadsByParent: ({})
   property var threadsLoading: ({})
+  // Per-key request sequences (guildId / parentId -> int, mutated in place;
+  // nothing binds to them): a response that is not the newest for its key is
+  // dropped so overlapping refreshes cannot restore stale structure.
+  property var channelsSeq: ({})
+  property var threadsSeq: ({})
   // channel_update bursts (THREAD_LIST_SYNC: one create per active thread,
   // hundreds on a busy guild) are coalesced: guild ids / thread parents
   // touched since the last flush, mutated in place (nothing binds to them).
@@ -271,9 +276,14 @@ Item {
   // --- member list (subscribe_members) ---
   // The pane toggle lives here so a re-summoned panel comes back with it.
   property bool membersWanted: false
-  // Channel subscribed on this socket connection ("" = none). Subscriptions
-  // are per connection, so a reconnect re-subscribes (syncMembers).
+  // Channel the pane wants a list for ("" = none): what the UI shows.
   property string membersChannelId: ""
+  // Channel actually subscribed on the current gateway session ("" = none).
+  // Subscriptions die with the socket AND with the gateway session (a
+  // re-identify lands as connecting -> ready with the socket intact), so
+  // this is cleared on both and syncMembers re-sends subscribe_members
+  // whenever it differs from membersChannelId.
+  property string membersSubscribedId: ""
   // Last member_list_update for membersChannelId (FULL replacement each
   // time; presence_update patches rows in a copy).
   property var memberList: null
@@ -403,6 +413,17 @@ Item {
     daemonManager.stop()
   }
 
+  // See the pluginRegistry Connections below: only a genuine disable gets
+  // here. A misread (a shell.json that momentarily fails to parse falls back
+  // to the builtin config, where we are not listed) is self-healing —
+  // keepAliveTimer brings the unit back while this service is still alive.
+  function stopBackendIfDisabled() {
+    if (!pluginRegistry || typeof pluginRegistry.isEnabled !== "function") return
+    if (shell && shell.pluginReloading) return
+    if (pluginRegistry.isEnabled(pluginId)) return
+    stopBackend()
+  }
+
   // --- commands ---
   function send(name, fields, callback) {
     return backendClient.sendCommand(name, fields, function(ok, result, error) {
@@ -497,7 +518,12 @@ Item {
     var loading = Api.shallowCopy(channelsLoading)
     loading[id] = true
     channelsLoading = loading
+    // Overlapping refreshes (a forced reload over an in-flight one) must not
+    // restore the older list: only the newest request for this guild counts.
+    var seq = (Number(channelsSeq[id]) || 0) + 1
+    channelsSeq[id] = seq
     send("list_channels", { guild_id: id }, function(ok, result) {
+      if (root.channelsSeq[id] !== seq) return
       var nextLoading = Api.shallowCopy(root.channelsLoading)
       delete nextLoading[id]
       root.channelsLoading = nextLoading
@@ -524,7 +550,12 @@ Item {
     if (!pid || !ready) return
     if (!force && (threadsByParent[pid] !== undefined || threadsLoading[pid])) return
     threadsLoading[pid] = true
+    // Same stale-response guard as list_channels / quick_switch: a thread
+    // burst can issue several refreshes for one parent.
+    var seq = (Number(threadsSeq[pid]) || 0) + 1
+    threadsSeq[pid] = seq
     send("list_threads", { channel_id: pid }, function(ok, result) {
+      if (root.threadsSeq[pid] !== seq) return
       delete root.threadsLoading[pid]
       if (!ok || !result || !Array.isArray(result.threads)) return
       var next = Api.shallowCopy(root.threadsByParent)
@@ -570,22 +601,32 @@ Item {
 
   // Subscribe to the current channel while the pane is wanted and the full
   // panel is up; unsubscribe otherwise. Idempotent; called on every input
-  // change (channel, toggle, panel visibility, connection).
+  // change (channel, toggle, panel visibility, connection, gateway session).
+  // The wanted channel and the subscribed one are tracked apart so a
+  // re-subscribe after a re-identify does not blank a list we still have.
   function syncMembers() {
     var want = membersWanted && visibleSurfaces["full-panel"] && currentChannelId ? currentChannelId : ""
-    if (want === membersChannelId) return
-    if (membersChannelId && connected)
-      backendClient.sendCommand("unsubscribe_members", { channel_id: membersChannelId }, null)
-    membersChannelId = want
-    memberList = null
-    membersTimedOut = false
-    membersTimer.stop()
+    if (want !== membersChannelId) {
+      membersChannelId = want
+      memberList = null
+      membersTimedOut = false
+      membersTimer.stop()
+    }
+    if (want === membersSubscribedId) return
+    if (membersSubscribedId && connected)
+      backendClient.sendCommand("unsubscribe_members", { channel_id: membersSubscribedId }, null)
+    membersSubscribedId = ""
     if (!want) return
     if (!ready) return
     var id = want
+    membersSubscribedId = id
     send("subscribe_members", { channel_id: id }, function(ok) {
-      if (!ok && root.membersChannelId === id) root.membersTimedOut = true
+      if (ok || root.membersSubscribedId !== id) return
+      root.membersSubscribedId = ""
+      if (root.membersChannelId === id) root.membersTimedOut = true
     })
+    // A resubscribe keeps any rows we still have on screen; the timer only
+    // flips membersTimedOut while there is no list at all.
     membersTimer.restart()
   }
 
@@ -1714,6 +1755,11 @@ Item {
       // (re)connect. A gateway resume on the same connection re-sends the tail,
       // which mergeTail() absorbs.
       reopenChannels()
+      // Member subscriptions are per gateway session, not per socket: a
+      // Discord re-identify (connecting -> ready with the socket intact)
+      // drops them silently, so forget what we thought we had subscribed
+      // and let syncMembers() re-send subscribe_members.
+      membersSubscribedId = ""
       syncMembers()
     }
     if (now !== "ready" && was === "ready" && now !== "connecting") {
@@ -1929,6 +1975,24 @@ Item {
     function onShellConfigChanged() { root.syncSettings() }
   }
 
+  // Turning the plugin off must not leave the daemon holding a live Discord
+  // session. Destruction cannot be used for this: the shell tears every
+  // plugin service down through the same call for a hot reload (any write
+  // under ~/.config/omarchy/plugins) as for a disable. The registry can tell
+  // them apart while we are still alive — a disable arrives as
+  // `pluginsChanged` outside a plugin reload (`shell.pluginReloading` false)
+  // with the registry already reporting us disabled, and the shell destroys
+  // us right after. A hot reload never gets here (pluginReloading is true and
+  // we stay enabled), so the daemon survives frontend restarts. Deleting the
+  // plugin directory comes through the same inotify reload path and is
+  // indistinguishable from a hot reload: scripts/remove-runtime.sh remains
+  // the documented cleanup for that.
+  Connections {
+    target: root.pluginRegistry
+    ignoreUnknownSignals: true
+    function onPluginsChanged() { root.stopBackendIfDisabled() }
+  }
+
   Connections {
     target: daemonManager
     function onSetupSucceeded() { root.ensureBackend() }
@@ -1962,6 +2026,7 @@ Item {
       if (!backendClient.connected) {
         // Member subscriptions die with the socket; syncMembers re-subscribes
         // once the session is ready again.
+        root.membersSubscribedId = ""
         root.membersChannelId = ""
         root.memberList = null
         root.membersTimedOut = false

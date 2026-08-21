@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Attributes identify the keyring entry. Shared with scripts/keyring-store.sh.
+// Attributes identify the keyring entry; secret-tool is invoked with the token on stdin.
 var (
 	Attributes = []string{"service", "quickshell-discord", "kind", "user-token"}
 	Label      = "Omarchy Discord user token"

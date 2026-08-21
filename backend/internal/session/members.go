@@ -12,7 +12,9 @@ import (
 	"github.com/diamondburned/ningen/v3"
 	"github.com/diamondburned/ningen/v3/states/member"
 
+	"github.com/mattcalayo/omarchy-discord/backend/internal/panics"
 	"github.com/mattcalayo/omarchy-discord/backend/internal/protocol"
+	"github.com/mattcalayo/omarchy-discord/backend/internal/redact"
 	"github.com/mattcalayo/omarchy-discord/backend/internal/socket"
 )
 
@@ -20,9 +22,15 @@ import (
 // member_list_update per channel.
 const memberDebounce = 100 * time.Millisecond
 
+// gatewaySendTimeout bounds one Op 14 write so a stalled gateway cannot pin a
+// goroutine for the life of the process.
+const gatewaySendTimeout = 10 * time.Second
+
 // memberTracker is the manager's view of which users are shown where, so
 // presence updates can be routed to the clients that display them and nothing
-// else.
+// else. It also owns the subscription registry: socket subscriptions are
+// per connection, but the gateway request and the per-channel state behind
+// them are shared, so they are refcounted here by subscribing client.
 type memberTracker struct {
 	mu sync.Mutex
 	// pending holds the debounce timer per channel with a re-emit queued.
@@ -31,17 +39,132 @@ type memberTracker struct {
 	users map[discord.ChannelID]map[discord.UserID]struct{}
 	// dmUsers indexes private channels by recipient.
 	dmUsers map[discord.UserID][]discord.ChannelID
+	// subs holds the clients subscribed to each channel's member list; the
+	// channel's state lives exactly as long as this set is non-empty. A nil
+	// client (Handle called without a socket connection, i.e. tests) is a
+	// valid key that only unsubscribe_members can remove.
+	subs map[discord.ChannelID]map[socket.Client]struct{}
+	// sent is the channel set last asked for per guild (Op 14), so a
+	// re-subscribe of an already-requested set sends no gateway command.
+	sent map[discord.GuildID]string
 }
 
+// reset drops everything, including the subscription registry: it is called
+// when a *new* session is installed, whose lists belong to another account.
 func (t *memberTracker) reset() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.stopPendingLocked()
+	t.users = map[discord.ChannelID]map[discord.UserID]struct{}{}
+	t.dmUsers = map[discord.UserID][]discord.ChannelID{}
+	t.subs = map[discord.ChannelID]map[socket.Client]struct{}{}
+	t.sent = map[discord.GuildID]string{}
+}
+
+// resetLists drops the cached lists and the record of what was asked for, but
+// keeps the subscriptions: a re-IDENTIFY wipes ningen's member lists, so
+// everything must be requested and re-emitted again for the same subscribers.
+func (t *memberTracker) resetLists() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.stopPendingLocked()
+	t.users = map[discord.ChannelID]map[discord.UserID]struct{}{}
+	t.sent = map[discord.GuildID]string{}
+}
+
+func (t *memberTracker) stopPendingLocked() {
 	for _, tm := range t.pending {
 		tm.Stop()
 	}
 	t.pending = map[discord.ChannelID]*time.Timer{}
-	t.users = map[discord.ChannelID]map[discord.UserID]struct{}{}
-	t.dmUsers = map[discord.UserID][]discord.ChannelID{}
+}
+
+// subscribe registers c as a subscriber of chID.
+func (t *memberTracker) subscribe(chID discord.ChannelID, c socket.Client) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.subs[chID] == nil {
+		t.subs[chID] = map[socket.Client]struct{}{}
+	}
+	t.subs[chID][c] = struct{}{}
+}
+
+// unsubscribe removes c; last reports that nobody displays chID any more, in
+// which case its per-channel state is dropped with it.
+func (t *memberTracker) unsubscribe(chID discord.ChannelID, c socket.Client) (last bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.releaseLocked(chID, c)
+}
+
+// dropClient releases every subscription of c (its connection ended) and
+// returns the channels that lost their last subscriber.
+func (t *memberTracker) dropClient(c socket.Client) []discord.ChannelID {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var gone []discord.ChannelID
+	for chID := range t.subs {
+		if t.releaseLocked(chID, c) {
+			gone = append(gone, chID)
+		}
+	}
+	return gone
+}
+
+// releaseLocked drops one subscriber and, when it was the last, forgets the
+// channel's list state so nothing grows with every channel ever visited.
+// Caller holds mu.
+func (t *memberTracker) releaseLocked(chID discord.ChannelID, c socket.Client) bool {
+	subs, ok := t.subs[chID]
+	if !ok {
+		return false
+	}
+	if _, ok := subs[c]; !ok {
+		return false
+	}
+	delete(subs, c)
+	if len(subs) > 0 {
+		return false
+	}
+	delete(t.subs, chID)
+	delete(t.users, chID)
+	if tm, ok := t.pending[chID]; ok {
+		tm.Stop()
+		delete(t.pending, chID)
+	}
+	return true
+}
+
+// subscribed lists every channel some client currently displays.
+func (t *memberTracker) subscribed() []discord.ChannelID {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make([]discord.ChannelID, 0, len(t.subs))
+	for chID := range t.subs {
+		out = append(out, chID)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+// markSent records key as the channel set requested for guildID; false means
+// it is unchanged and no gateway command is needed.
+func (t *memberTracker) markSent(guildID discord.GuildID, key string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.sent[guildID] == key {
+		return false
+	}
+	t.sent[guildID] = key
+	return true
+}
+
+// clearSent forgets what was requested for guildID, so the next subscribe
+// asks again (used when the gateway command failed).
+func (t *memberTracker) clearSent(guildID discord.GuildID) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.sent, guildID)
 }
 
 // refreshDMIndex rebuilds the recipient → DM index from the cache.
@@ -185,10 +308,26 @@ func memberListID(n *ningen.State, ch *discord.Channel) string {
 	return member.ComputeListID(sorted)
 }
 
+// listChannel resolves the channel whose overwrites define the member list to
+// display. A thread carries no overwrites of its own, so taking its (empty)
+// set would compute the guild's public "everyone" list even for a thread under
+// a private channel; Discord serves the parent's list, which is also the one
+// to subscribe to.
+func listChannel(n *ningen.State, ch *discord.Channel) *discord.Channel {
+	if !isThread(ch.Type) || !ch.ParentID.IsValid() {
+		return ch
+	}
+	parent, err := n.Cabinet.Channel(ch.ParentID)
+	if err != nil {
+		return ch
+	}
+	return parent
+}
+
 // guildMemberList renders ningen's kept list for a guild channel. ok is false
 // when ningen holds no list for the channel yet.
 func guildMemberList(n *ningen.State, ch *discord.Channel) (groups []protocol.MemberGroup, members []protocol.Member, ok bool) {
-	list, err := n.MemberState.GetMemberListDirect(ch.GuildID, memberListID(n, ch))
+	list, err := n.MemberState.GetMemberListDirect(ch.GuildID, memberListID(n, listChannel(n, ch)))
 	if err != nil {
 		return nil, nil, false
 	}
@@ -291,6 +430,7 @@ func (m *Manager) scheduleMemberList(n *ningen.State, chID discord.ChannelID) {
 		return
 	}
 	m.members.pending[chID] = time.AfterFunc(m.memberDebounce, func() {
+		defer panics.Recover("session: member list debounce")
 		m.members.mu.Lock()
 		delete(m.members.pending, chID)
 		m.members.mu.Unlock()
@@ -303,24 +443,96 @@ func (m *Manager) scheduleMemberList(n *ningen.State, chID discord.ChannelID) {
 	})
 }
 
-// requestedChannels lists the guild channels that share list ID listID and
-// have had a member-list chunk requested through ningen — i.e. the channels
-// some client subscribed.
-func requestedChannels(n *ningen.State, guildID discord.GuildID, listID string) []discord.ChannelID {
-	chs, err := n.Cabinet.Channels(guildID)
-	if err != nil {
-		return nil
-	}
+// listedChannels returns the subscribed channels of guildID whose member list
+// is listID — the channels a GUILD_MEMBER_LIST_UPDATE with that id must be
+// re-emitted for. It reads the manager's own registry: ningen's chunk state is
+// not consulted (nothing is requested through it any more).
+func (m *Manager) listedChannels(n *ningen.State, guildID discord.GuildID, listID string) []discord.ChannelID {
 	var out []discord.ChannelID
-	for _, ch := range chs {
-		if n.MemberState.GetMemberListChunk(guildID, ch.ID) < 0 {
+	for _, chID := range m.members.subscribed() {
+		ch, err := n.Cabinet.Channel(chID)
+		if err != nil || ch.GuildID != guildID {
 			continue
 		}
-		if memberListID(n, &ch) == listID {
-			out = append(out, ch.ID)
+		if memberListID(n, listChannel(n, ch)) == listID {
+			out = append(out, chID)
 		}
 	}
 	return out
+}
+
+// memberRanges is the Op 14 `channels` map for guildID: the first range of the
+// member list of every channel some client currently displays, threads mapped
+// to the parent whose list Discord actually serves.
+func (m *Manager) memberRanges(n *ningen.State, guildID discord.GuildID) map[discord.ChannelID][][2]int {
+	ranges := map[discord.ChannelID][][2]int{}
+	for _, chID := range m.members.subscribed() {
+		ch, err := n.Cabinet.Channel(chID)
+		if err != nil || ch.GuildID != guildID {
+			continue
+		}
+		ranges[listChannel(n, ch).ID] = [][2]int{{0, 99}}
+	}
+	return ranges
+}
+
+// rangesKey identifies a channel set for the send-once check.
+func rangesKey(ranges map[discord.ChannelID][][2]int) string {
+	ids := make([]string, 0, len(ranges))
+	for id := range ranges {
+		ids = append(ids, id.String())
+	}
+	sort.Strings(ids)
+	return strings.Join(ids, ",")
+}
+
+// requestMemberLists sends the Op 14 GUILD_SUBSCRIBE that asks Discord for the
+// first range of every member list the guild's subscribers display — exactly
+// what the official client sends on channel open. Discord answers with a
+// GUILD_MEMBER_LIST_UPDATE per list (and nothing at all for a range it already
+// sent, which is why an existing list is re-emitted from the cache instead).
+// The command is sent only when the displayed set actually changed: the gateway
+// has a shared send budget (arikawa's limiter, 120 commands/min) and a client
+// that re-subscribes on every channel change would otherwise burn it.
+//
+// ningen's RequestMemberList is deliberately not used: its chunk arithmetic
+// panics ("makeslice: cap out of range") as soon as it already holds the list
+// for the computed id and that list has fewer than 100 visible members — which
+// is every second channel of a small guild.
+func (m *Manager) requestMemberLists(n *ningen.State, guildID discord.GuildID) {
+	if !guildID.IsValid() {
+		return
+	}
+	ranges := m.memberRanges(n.Offline(), guildID)
+	if len(ranges) == 0 {
+		return // nothing displayed: the existing subscription is left alone
+	}
+	if !m.members.markSent(guildID, rangesKey(ranges)) {
+		return // Discord already has exactly this set
+	}
+	panics.Go("session: guild subscribe", func() {
+		ctx, cancel := context.WithTimeout(context.Background(), gatewaySendTimeout)
+		defer cancel()
+		err := n.SendGateway(ctx, &gateway.GuildSubscribeCommand{
+			GuildID:    guildID,
+			Channels:   ranges,
+			Typing:     true,
+			Activities: true,
+		})
+		if err != nil {
+			// Forget the request so the next subscribe retries it.
+			m.members.clearSent(guildID)
+			redact.Logf("session: member list subscribe for guild %s: %v", guildID, err)
+		}
+	})
+}
+
+// ClientClosed implements socket.ClientCloser: a dropped connection releases
+// its member subscriptions, and a channel nobody displays any more loses its
+// tracked users, its pending re-emit, and its place in the next Op 14. The
+// gateway-side subscription is left as it is until the set is next sent.
+func (m *Manager) ClientClosed(c socket.Client) {
+	m.members.dropClient(c)
 }
 
 // installMemberHandlers wires member-list and presence gateway events.
@@ -331,9 +543,33 @@ func (m *Manager) installMemberHandlers(n *ningen.State) {
 		defer m.mu.Unlock()
 		return m.n == n && m.everReady
 	}
-	n.AddSyncHandler(func(*ningen.ConnectedEvent) {
-		if live() {
-			m.members.refreshDMIndex(n.Offline())
+	addSyncHandler(n, "member_connected", func(ev *ningen.ConnectedEvent) {
+		if !live() {
+			return
+		}
+		m.members.refreshDMIndex(n.Offline())
+		if _, ready := ev.Event.(*gateway.ReadyEvent); !ready {
+			return // a RESUME keeps ningen's member lists
+		}
+		// A re-IDENTIFY wiped ningen's lists and its own request state: ask
+		// again for every channel a client still displays, and drop the
+		// tracked users so presence routing cannot use pre-reconnect data.
+		m.members.resetLists()
+		off := n.Offline()
+		guilds := map[discord.GuildID]struct{}{}
+		for _, chID := range m.members.subscribed() {
+			ch, err := off.Cabinet.Channel(chID)
+			if err != nil {
+				continue
+			}
+			if !ch.GuildID.IsValid() {
+				m.scheduleMemberList(n, chID) // DM lists are synthesized
+				continue
+			}
+			guilds[ch.GuildID] = struct{}{}
+		}
+		for guildID := range guilds {
+			m.requestMemberLists(n, guildID)
 		}
 	})
 	dmChanged := func(ch discord.Channel) {
@@ -341,18 +577,18 @@ func (m *Manager) installMemberHandlers(n *ningen.State) {
 			m.members.refreshDMIndex(n.Offline())
 		}
 	}
-	n.AddSyncHandler(func(ev *gateway.ChannelCreateEvent) { dmChanged(ev.Channel) })
-	n.AddSyncHandler(func(ev *gateway.ChannelUpdateEvent) { dmChanged(ev.Channel) })
-	n.AddSyncHandler(func(ev *gateway.ChannelDeleteEvent) { dmChanged(ev.Channel) })
-	n.AddSyncHandler(func(ev *gateway.GuildMemberListUpdateEvent) {
+	addSyncHandler(n, "member_channel_create", func(ev *gateway.ChannelCreateEvent) { dmChanged(ev.Channel) })
+	addSyncHandler(n, "member_channel_update", func(ev *gateway.ChannelUpdateEvent) { dmChanged(ev.Channel) })
+	addSyncHandler(n, "member_channel_delete", func(ev *gateway.ChannelDeleteEvent) { dmChanged(ev.Channel) })
+	addSyncHandler(n, "member_list_update", func(ev *gateway.GuildMemberListUpdateEvent) {
 		if !live() {
 			return
 		}
-		for _, chID := range requestedChannels(n.Offline(), ev.GuildID, ev.ID) {
+		for _, chID := range m.listedChannels(n.Offline(), ev.GuildID, ev.ID) {
 			m.scheduleMemberList(n, chID)
 		}
 	})
-	n.AddSyncHandler(func(ev *gateway.PresenceUpdateEvent) {
+	addSyncHandler(n, "presence_update", func(ev *gateway.PresenceUpdateEvent) {
 		if !live() {
 			return
 		}
@@ -388,16 +624,24 @@ func (m *Manager) subscribeMembers(ctx context.Context, req *protocol.Request) (
 	if ch.GuildID.IsValid() && !off.HasPermissions(chID, discord.PermissionViewChannel) {
 		return nil, protocol.Errorf(protocol.CodeForbidden, "no permission to view channel %s", p.ChannelID)
 	}
-	if c := socket.ClientFromContext(ctx); c != nil {
+	c := socket.ClientFromContext(ctx)
+	if c != nil {
 		c.SubscribeMembers(p.ChannelID)
 	}
+	m.members.subscribe(chID, c)
 	if ch.GuildID.IsValid() {
 		// Op 14 with a channel range, exactly what the official client sends
 		// on channel open. The list arrives as GUILD_MEMBER_LIST_UPDATE; a
-		// list ningen already holds is re-emitted at once because Discord
-		// does not resend an unchanged range.
-		n.MemberState.RequestMemberList(ch.GuildID, chID, 0)
-		if _, err := n.MemberState.GetMemberListDirect(ch.GuildID, memberListID(off, ch)); err != nil {
+		// list we already hold is re-emitted at once because Discord does
+		// not resend an unchanged range.
+		_, missing := n.MemberState.GetMemberListDirect(ch.GuildID, memberListID(off, listChannel(off, ch)))
+		if missing != nil {
+			// Nothing to show yet: ask even if this exact set was asked for
+			// before (the earlier request may have been lost to a reconnect).
+			m.members.clearSent(ch.GuildID)
+		}
+		m.requestMemberLists(n, ch.GuildID)
+		if missing != nil {
 			return protocol.EmptyResult{}, nil
 		}
 	}
@@ -406,17 +650,24 @@ func (m *Manager) subscribeMembers(ctx context.Context, req *protocol.Request) (
 }
 
 // unsubscribeMembers implements the unsubscribe_members command; it is
-// idempotent (the gateway subscription is retained like the guild subscribe).
+// idempotent. When the last subscriber of a channel goes away its tracked
+// users and pending re-emit are dropped, so nothing accumulates across a
+// session's worth of channel switching; the channel simply stops appearing in
+// the guild's Op 14 the next time one is sent (no command is sent for an
+// unsubscribe — the gateway budget is better spent on lists we display).
 func (m *Manager) unsubscribeMembers(ctx context.Context, req *protocol.Request) (any, *protocol.Error) {
 	var p protocol.SubscribeMembersParams
 	if e := req.Params(&p); e != nil {
 		return nil, e
 	}
-	if _, e := parseSnowflake(p.ChannelID, "channel_id"); e != nil {
+	sf, e := parseSnowflake(p.ChannelID, "channel_id")
+	if e != nil {
 		return nil, e
 	}
-	if c := socket.ClientFromContext(ctx); c != nil {
+	c := socket.ClientFromContext(ctx)
+	if c != nil {
 		c.UnsubscribeMembers(p.ChannelID)
 	}
+	m.members.unsubscribe(discord.ChannelID(sf), c)
 	return protocol.EmptyResult{}, nil
 }

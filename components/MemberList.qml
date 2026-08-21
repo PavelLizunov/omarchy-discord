@@ -32,8 +32,10 @@ FocusScope {
   readonly property var rows: Api.memberRows(list)
   property string cursorId: ""
   readonly property int cursor: indexOfId(rows, cursorId)
-  readonly property color foreground: Color.foreground
-  readonly property color muted: Api.secondaryColor(Color.muted, Color.foreground, Color.background)
+  readonly property color foreground: Color.popups.text
+  // The pane paints its own popup surface (below): guard the secondary text
+  // against that pair, not the panel background.
+  readonly property color muted: Api.secondaryColor(Color.muted, Color.popups.text, Color.popups.background)
   readonly property string fontFamily: Style.font.family
   readonly property int avatarSize: Style.space(24)
 

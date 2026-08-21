@@ -22,6 +22,7 @@ import (
 
 	"github.com/mattcalayo/omarchy-discord/backend/internal/keyring"
 	"github.com/mattcalayo/omarchy-discord/backend/internal/media"
+	"github.com/mattcalayo/omarchy-discord/backend/internal/panics"
 	"github.com/mattcalayo/omarchy-discord/backend/internal/protocol"
 	"github.com/mattcalayo/omarchy-discord/backend/internal/redact"
 )
@@ -283,14 +284,15 @@ func (m *Manager) connectLocked(n *ningen.State, token string) {
 	m.installHandlers(n)
 	m.lifecycle, m.errText = protocol.LifecycleConnecting, ""
 	m.bump()
-	go m.runLoop(ctx, n, m.loopDone)
+	loop, done := m.runLoop, m.loopDone
+	panics.Go("session: connect loop", func() { loop(ctx, n, done) })
 }
 
 func (m *Manager) installHandlers(n *ningen.State) {
 	// Sync handlers run inside ningen's dispatch after its sub-states updated,
 	// so caches are consistent here. Keep them cheap and never block on the
 	// network: structure is read through Offline().
-	n.AddSyncHandler(func(ev *ningen.ConnectedEvent) {
+	addSyncHandler(n, "connected", func(ev *ningen.ConnectedEvent) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		if m.n != n {
@@ -314,7 +316,7 @@ func (m *Manager) installHandlers(n *ningen.State) {
 		m.bump()
 		m.pushStructureLocked(off)
 	})
-	n.AddSyncHandler(func(ev *ningen.DisconnectedEvent) {
+	addSyncHandler(n, "disconnected", func(ev *ningen.DisconnectedEvent) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		if m.n != n {
@@ -330,7 +332,7 @@ func (m *Manager) installHandlers(n *ningen.State) {
 			m.setLifecycleLocked(protocol.LifecycleConnecting, "")
 		}
 	})
-	n.AddSyncHandler(func(ev *read.UpdateEvent) {
+	addSyncHandler(n, "read_update", func(ev *read.UpdateEvent) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		if m.n != n || m.lifecycle != protocol.LifecycleReady {
@@ -358,8 +360,8 @@ func (m *Manager) installHandlers(n *ningen.State) {
 		}
 		m.pushStructureLocked(n.Offline())
 	}
-	n.AddSyncHandler(func(*gateway.GuildCreateEvent) { resync() })
-	n.AddSyncHandler(func(*gateway.GuildDeleteEvent) { resync() })
+	addSyncHandler(n, "guild_create", func(*gateway.GuildCreateEvent) { resync() })
+	addSyncHandler(n, "guild_delete", func(*gateway.GuildDeleteEvent) { resync() })
 }
 
 // pushStructureLocked bumps the generation (structure changed) and queues a

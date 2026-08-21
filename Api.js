@@ -156,13 +156,20 @@ function hasThreads(type) {
   return t === "text" || t === "announcement" || t === "forum"
 }
 
+// An archived thread is not an active one: list_threads drops it and the
+// flat list must not count it. `archived` is an additive wire field, so a
+// channel object without it is live.
+function isActiveThread(row) {
+  return !!row && String(row.type || "") === "thread" && row.archived !== true
+}
+
 // parent id -> number of active threads, from a raw list_channels result.
 function threadCounts(channels) {
   var out = {}
   var list = Array.isArray(channels) ? channels : []
   for (var i = 0; i < list.length; i++) {
     var row = list[i]
-    if (!row || String(row.type || "") !== "thread" || !row.parent_id) continue
+    if (!isActiveThread(row) || !row.parent_id) continue
     var pid = String(row.parent_id)
     out[pid] = (out[pid] || 0) + 1
   }
@@ -176,7 +183,7 @@ function threadsOf(channels, parentId) {
   var list = Array.isArray(channels) ? channels : []
   var out = []
   for (var i = 0; i < list.length; i++)
-    if (list[i] && String(list[i].type || "") === "thread" && String(list[i].parent_id || "") === pid) out.push(list[i])
+    if (isActiveThread(list[i]) && String(list[i].parent_id || "") === pid) out.push(list[i])
   out.sort(function(a, b) {
     var c = compareIds(b.last_message_id || "", a.last_message_id || "")
     return c !== 0 ? c : compareIds(b.id, a.id)

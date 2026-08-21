@@ -47,11 +47,16 @@ Item {
     runtimeCheck.running = true
   }
 
-  // Omarchy does not run install hooks when cloning a plugin, so the enabled
-  // service installs its bundled backend + unit the first time it loads.
-  function installBundledBackendIfNeeded() {
+  // Omarchy runs no install hooks when it clones or updates a plugin, so the
+  // enabled service installs its own runtime. `sync` covers both the first load
+  // and every later plugin version: it compares the shipped backend against the
+  // stamp scripts/setup.sh wrote into the runtime directory, runs setup.sh only
+  // when they differ, and restarts a running backend when the binary changed.
+  // Its fast path is a handful of stats, so running it once per Service load —
+  // and the shell recreates the Service on any write inside the plugin dir —
+  // costs nothing.
+  function syncRuntimeIfNeeded() {
     if (automaticSetupAttempted || setupBusy || !pluginDir || !runtimeChecked) return
-    if (runtimeAvailable) return
     automaticSetupAttempted = true
     setupBackend()
   }
@@ -60,7 +65,7 @@ Item {
     if (setupBusy || !pluginDir) return
     lastError = ""
     setupBusy = true
-    setupCommand.command = ["/usr/bin/bash", pluginDir + "/scripts/setup.sh"]
+    setupCommand.command = runtimeScript("sync")
     setupCommand.running = true
   }
 
@@ -103,7 +108,7 @@ Item {
     onExited: function(exitCode) {
       root.runtimeAvailable = exitCode === 0
       root.runtimeChecked = true
-      root.installBundledBackendIfNeeded()
+      root.syncRuntimeIfNeeded()
     }
   }
 
@@ -111,19 +116,22 @@ Item {
     id: setupCommand
     stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { waitForEnd: true }
+    // 0: already current, 10: installed or updated. See backend-runtime.sh.
     onExited: function(exitCode) {
       root.setupBusy = false
-      if (exitCode === 0) {
+      if (exitCode === 0 || exitCode === 10) {
         root.runtimeAvailable = true
         root.runtimeChecked = true
         root.lastError = ""
         root.refreshStatus()
-        root.setupSucceeded()
+        if (exitCode === 10) root.setupSucceeded()
         return
       }
       root.lastError = exitCode === 30
-        ? "No Discord backend is bundled for this machine and Go is not installed"
-        : "Discord backend setup could not be completed"
+        ? "No Discord backend ships for this machine and Go is not installed"
+        : (exitCode === 31
+          ? "The Discord backend could not be built; run scripts/setup.sh in the plugin directory for the build output"
+          : "Discord backend setup could not be completed")
       root.setupFailed(root.lastError)
     }
   }

@@ -134,6 +134,9 @@ var goldens = []struct {
 	}}}}), &typedResponse[ListEmojiResult]{}},
 	{"response_list_emoji_empty", OKResponse(64, ListEmojiResult{Guilds: []GuildEmoji{}}), &typedResponse[ListEmojiResult]{}},
 	{"event_channel_update_thread_create", NewChannelUpdate(ChannelChangeCreate, sampleThread), &ChannelUpdateEvent{}},
+	// An archived thread: it drops out of list_threads but stays in
+	// list_channels, so `archived` is what a client filters on.
+	{"event_channel_update_thread_archived", NewChannelUpdate(ChannelChangeUpdate, archivedThread), &ChannelUpdateEvent{}},
 	{"event_channel_update_delete", NewChannelUpdate(ChannelChangeDelete, Channel{ID: "1049931500000000000", GuildID: str("1000000000000000001"), Type: "thread", Name: "", Topic: "", ParentID: str("1049931213073821696"), Position: 0, LastMessageID: nil, Unread: UnreadRead, MentionCount: 0, Muted: false, Recipients: []User{}}), &ChannelUpdateEvent{}},
 	{"event_member_list_update", NewMemberListUpdate("1049931213073821696", str("1000000000000000001"),
 		[]MemberGroup{{ID: "1000000000000000050", Name: "Admins", Count: 1}, {ID: "online", Name: "Online", Count: 1}, {ID: "offline", Name: "Offline", Count: 1}},
@@ -149,6 +152,12 @@ var goldens = []struct {
 	{"event_presence_update", NewPresenceUpdate("2000000000000000001", "idle", "Listening to Spotify"), &PresenceUpdateEvent{}},
 	{"event_presence_update_offline", NewPresenceUpdate("2000000000000000001", "offline", ""), &PresenceUpdateEvent{}},
 }
+
+var archivedThread = func() Channel {
+	c := sampleThread
+	c.Archived = true
+	return c
+}()
 
 var sampleThread = Channel{ID: "1049931500000000000", GuildID: str("1000000000000000001"), Type: "thread", Name: "release planning", Topic: "", ParentID: str("1049931213073821696"), Position: 0, LastMessageID: str("1049931339989602304"), Unread: UnreadUnread, MentionCount: 0, Muted: false, LastReadMessageID: str("1049931302442426390"), Recipients: []User{}, MessageCount: 42, MemberCount: 5}
 

@@ -27,7 +27,7 @@ omarchy-discord/
 │   └── dist/x86_64/omarchy-discord-backend   # committed prebuilt (real file, never a symlink)
 ├── systemd/omarchy-discord.service # static user unit (no [Install] section)
 ├── scripts/                        # build-backend.sh, setup.sh, install-local.sh,
-│                                   # backend-runtime.sh, keyring-store.sh, remove-runtime.sh
+│                                   # backend-runtime.sh, remove-runtime.sh
 └── docs/                           # PLAN.md, CONVENTIONS.md, BACKEND_PROTOCOL.md, TECHNICAL.md
 ```
 
@@ -82,11 +82,22 @@ system** (150 ms debounce; dotfiles and `.git/` exempt). Therefore:
 
 ### Install flow
 
-`omarchy plugin add <repo> --enable`. The installer runs no hooks; the enabled Service
-installs the bundled backend binary + unit on first load (spotify
-`installBundledBackendIfNeeded` pattern). `scripts/install-local.sh` for dev: validate →
-`setup.sh` → symlink checkout into plugins dir (refusing to replace any existing path) →
-`omarchy-shell shell rescanPlugins` → poll `omarchy plugin list --json` → enable.
+`omarchy plugin add <repo> --enable`. The installer runs no hooks, and neither does
+`omarchy plugin update` (a `git merge --ff-only` in place), so the enabled Service
+owns both install and upgrade: `DaemonManager` runs `scripts/backend-runtime.sh sync`
+once per Service load, which reinstalls and `try-restart`s only when the shipped
+backend differs from the installed one (stamp file + mtime check — see §4 and
+`docs/TECHNICAL.md`, "Runtime install and upgrade"). The spotify
+`installBundledBackendIfNeeded` pattern is the first-load half of this.
+
+`scripts/install-local.sh` for dev: validate → `setup.sh` → `systemctl --user
+try-restart` → **rsync a copy** of the checkout into the plugins dir (`-a --delete`,
+excluding `.git`; never a symlink — `omarchy plugin validate` refuses symlinks, and a
+symlinked checkout would hot-reload the shell on every in-tree edit), refusing an
+existing path that is a symlink, a non-directory, or a directory without a
+`manifest.json` → `omarchy-shell shell rescanPlugins` → poll `omarchy plugin list
+--json` → enable. It copies rather than links, so **re-run it after every source
+change**.
 
 ---
 
@@ -543,14 +554,25 @@ cursor. The implementation patterns to copy are spotify's, verbatim:
 |---|---|---|
 | Build output | `$XDG_CACHE_HOME/omarchy-discord/target` | the plugin tree (hot reload kills builds) |
 | Installed binary | `~/.local/lib/omarchy-discord/omarchy-discord-backend` (dir 700, bin 755; override `OMARCHY_DISCORD_RUNTIME_DIR`) | the plugin tree |
+| Install stamp | `~/.local/lib/omarchy-discord/installed-version` (mode 600; the manifest version `setup.sh` installed from, its mtime the upgrade marker) | the plugin tree |
 | Shipped prebuilt | `backend/dist/x86_64/omarchy-discord-backend` (gitignore-negated, real file, selected by `uname -m`) | a symlink |
 | Socket | `$XDG_RUNTIME_DIR/omarchy-discord/backend.sock` (0600; parent dir created; stale file unlinked on bind; removed on shutdown) | — |
 | Media cache | `$XDG_CACHE_HOME/omarchy-discord/media/` (LRU capped by `mediaCacheMB`) | — |
 | Staged uploads | `$XDG_RUNTIME_DIR/omarchy-discord/staged/` | — |
 
-`build-backend.sh`: prebuilt-wins (if `dist/$(uname -m)/` binary is executable, just
-`install` it); else require the Go toolchain and build with output outside the tree,
-then `install`. Backend gitignore mirrors spotify's dist-negation block.
+`build-backend.sh`: prebuilt-wins (if `dist/$(uname -m)/omarchy-discord-backend` is a
+real executable file, `install -m 755` it into the runtime dir); a symlink there is
+refused outright; else require the Go toolchain and build with output outside the
+tree, then `install`. Only `x86_64` ships a prebuilt today, so other architectures
+need Go. Backend gitignore mirrors spotify's dist-negation block (verify with `git
+check-ignore -v backend/dist/x86_64/omarchy-discord-backend`).
+
+Exit codes, shared by `build-backend.sh`, `setup.sh` and `backend-runtime.sh sync`
+and mapped to distinct UI messages in `DaemonManager.qml`: **30** = no prebuilt for
+this architecture and no Go toolchain; **31** = the build or install failed; `sync`
+additionally uses **0** = already current and **10** = installed or updated. Never
+collapse 30 and 31 into one message — "Go is not installed" is wrong and confusing
+for a build that simply failed.
 
 ### systemd static user unit
 
@@ -574,6 +596,13 @@ PrivateTmp=true
 ProtectSystem=strict
 ```
 
+`ProtectSystem=strict` leaves `/usr` and the system hierarchy read-only while
+`ProtectHome` stays at its default `no`, so `~/.cache/omarchy-discord/` and
+`$XDG_RUNTIME_DIR/omarchy-discord/` remain writable — verified on the live unit and
+with a transient `systemd-run --user` unit carrying the same settings. Do not "fix"
+this with `ReadWritePaths`. `setup.sh` rewrites `ExecStart` in the installed copy when
+`OMARCHY_DISCORD_RUNTIME_DIR` is set, so the unit points at the binary it installed.
+
 Installed by `setup.sh` (`install -m 644` into `~/.config/systemd/user/`, then
 `systemctl --user daemon-reload`; warn — don't fix — if the user manually enabled it).
 Started/stopped on demand by QML through one shim script,
@@ -589,20 +618,20 @@ timer, gated on `uiVisible` and `lastActivityAt`).
 Config file (if one is needed): `~/.config/omarchy-discord/` mode 600, dir 700,
 preserved across setup reruns unless `--force-config` (timestamped `.bak` first).
 
-### Keyring — secret-tool over stdin, verbatim pattern
+### Keyring — secret-tool over stdin, inside the backend
 
 The token travels over **stdin, never argv** (argv is visible in `ps`), never a file.
-`scripts/keyring-store.sh` (adapted from spotify's, whole-file pattern):
+Unlike spotify — which shells out from QML through a `keyring-store.sh` — the Go
+backend owns the keyring end to end in `backend/internal/keyring`: it runs
+`secret-tool` as a child and writes the token to its stdin. There is no keyring shell
+script in this plugin, and the frontend never holds the token beyond the `login`
+command it immediately clears.
 
-```sh
-#!/bin/sh
-set -eu
-IFS= read -r user_token
-[ -z "$user_token" ] && exit 3
-printf '%s' "$user_token" | secret-tool store \
-  --label='Omarchy Discord user token' \
-  service quickshell-discord \
-  kind user-token
+Attributes (shared by store, lookup and clear):
+
+```
+secret-tool store --label='Omarchy Discord user token' \
+  service quickshell-discord kind user-token
 ```
 
 - Lookup: `["secret-tool", "lookup", "service", "quickshell-discord", "kind", "user-token"]`.
@@ -612,14 +641,14 @@ printf '%s' "$user_token" | secret-tool store \
   token = "" } }` — clear the property immediately after write.
 - Processes that may see the token consume stdout/stderr with discarding `SplitParser`
   handlers — never `StdioCollector` — so secrets can't land in the journal.
-- The Go backend reads the token from the keyring itself (libsecret/secret-tool child
-  with the same attributes) or receives it via the socket `login` command; either way
-  it holds it only in memory.
+- The backend reads the token from the keyring itself on start, or receives it via
+  the socket `login` command or the in-process QR flow; either way it holds it only
+  in memory.
 
 ### Teardown
 
-`scripts/remove-runtime.sh [--purge]`: stop unit, remove unit file + installed binary,
-`daemon-reload`; config dir moved to `.bak.<timestamp>` (deleted only with `--purge`
+`scripts/remove-runtime.sh [--purge]`: stop unit, remove unit file + installed binary
++ install stamp (so the runtime dir can be `rmdir`ed), `daemon-reload`; config dir moved to `.bak.<timestamp>` (deleted only with `--purge`
 after re-asserting the literal path); `--purge` also loops keyring clear and removes
 the cache dir.
 

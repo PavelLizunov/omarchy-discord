@@ -74,12 +74,16 @@ Item {
   // paints a focus border. Esc (or Tab around) hands focus back to `zone`.
   property string zone: "sidebar"
   property string column: "rail"
-  readonly property bool buttonFocused: logoutButton.activeFocus || closeButton.activeFocus || membersButton.activeFocus
+  readonly property bool buttonFocused: logoutButton.activeFocus || closeButton.activeFocus
+    || membersButton.activeFocus || startBackendButton.activeFocus
   // The member pane: toggle state lives in the service (survives a
   // re-summon); it is a zone only while visible and a channel is open.
   readonly property bool membersVisible: !!(service && service.membersWanted) && currentChannelId !== "" && ready
   // Parent channel id -> true while its threads are listed beneath it.
   property var expandedThreads: ({})
+  // Whether `t` from the timeline has a parent to expand (see
+  // currentThreadParent): false in DMs and on an unknown channel.
+  readonly property bool canToggleCurrentThreads: currentThreadParent() !== null
   readonly property string focusedZone: buttonFocused ? "" : zone
   // The composer's input or one of its chips owns the keyboard: plain keys
   // are text, only Alt chords and Tab are panel-level.
@@ -224,8 +228,11 @@ Item {
     var ctrl = (event.modifiers & Qt.ControlModifier) !== 0
     if (ctrl && key === Qt.Key_K) openSwitcher()
     else if (ctrl && key === Qt.Key_Slash) toggleCheatsheet()
-    else if (!textInputFocused() && !composerFocused && !showLogin && text === "/") openSwitcher()
-    else if (!textInputFocused() && !composerFocused && !showLogin && text === "?") toggleCheatsheet()
+    // Gated on the text input itself, not on the composer zone: an
+    // attachment chip owns the keyboard without being a text input, so / and
+    // ? keep working from there.
+    else if (!textInputFocused() && !showLogin && text === "/") openSwitcher()
+    else if (!textInputFocused() && !showLogin && text === "?") toggleCheatsheet()
     else return false
     event.accepted = true
     return true
@@ -470,7 +477,12 @@ Item {
     hint = ""
   }
 
-  function activateChannel(index) {
+  // `origin` is the zone the activation came from: Enter in the channel list,
+  // a click and a summon leave it empty and focus the composer (PLAN keyboard
+  // contract), while Alt+↑/↓ stepping passes its zone so the keyboard stays
+  // where it was — in the timeline (cursor on the newest row) or the member
+  // pane — instead of being dragged into the composer.
+  function activateChannel(index, origin) {
     var row = channelRows[index]
     if (!row || !service) return
     // A forum is not a channel to read: Enter lists its threads instead.
@@ -479,9 +491,10 @@ Item {
     hint = ""
     setChannelCursor(index)
     service.showChannel(String(row.id || ""), selectedGuildId)
-    // Opening a channel focuses the composer (PLAN keyboard contract).
     timelineView.focusNewest()
-    enterComposer()
+    if (origin === "timeline") enterTimeline()
+    else if (origin === "members" && membersVisible) enterMembers()
+    else enterComposer()
   }
 
   // t on a channel (or a thread: its parent): list / hide the active
@@ -493,7 +506,15 @@ Item {
     if (!row || !service || dmsSelected) return
     var id = String(row.id || "")
     if (String(row.type || "") === "thread") id = String(row.parent_id || "")
-    if (!id) return
+    toggleThreadsFor(id, String(row.id || ""))
+  }
+
+  // Expand / collapse a parent by id (the row may not be in the list yet —
+  // `t` from a thread's timeline expands the parent in a guild whose channels
+  // are still loading).
+  function toggleThreadsFor(parentId, cursorId) {
+    var id = String(parentId || "")
+    if (!id || !service) return
     var next = Api.shallowCopy(expandedThreads)
     if (next[id]) delete next[id]
     else {
@@ -503,22 +524,45 @@ Item {
     expandedThreads = next
     // The cursor is id-keyed: it stays on the row as the list reflows, or
     // moves up to the parent when the row was one of the threads hidden.
-    channelCursorId = next[id] ? String(row.id || "") : id
+    channelCursorId = next[id] ? String(cursorId || id) : id
   }
 
-  // t from the timeline: the open channel's threads, cursor on it.
+  // The parent the open channel's threads hang off: itself for a text /
+  // announcement / forum channel, its parent for a thread. null when `t`
+  // from the timeline has nothing to do (DMs, unknown channel).
+  function currentThreadParent() {
+    var row = currentChannel
+    if (!row) return null
+    var guildId = String(row.guild_id || "")
+    if (!guildId) return null
+    var type = String(row.type || "")
+    var id = type === "thread" ? String(row.parent_id || "")
+      : (Api.hasThreads(type) ? String(row.id || "") : "")
+    return id ? { guildId: guildId, id: id } : null
+  }
+
+  // t from the timeline: the open channel's threads (a thread's parent's),
+  // cursor on the open channel. The parent may live in another guild than
+  // the one the sidebar shows, so select that guild first.
   function toggleCurrentThreads() {
-    if (!currentChannelId) return
-    if (indexOfId(channelRows, currentChannelId) < 0) return
+    var target = currentThreadParent()
+    if (!target) return
+    if (selectedGuildId !== target.guildId) {
+      var guildIndex = indexOfId(guildRows, target.guildId)
+      if (guildIndex >= 0) selectGuild(guildIndex)
+    }
     zone = "sidebar"
     column = "channels"
-    toggleThreads(indexOfId(channelRows, currentChannelId))
+    toggleThreadsFor(target.id, currentChannelId)
     focusZone()
   }
 
   // --- member pane ---
   function toggleMembers() {
     if (!service) return
+    // The pane is a channel's member list: with nothing open there is
+    // nothing to show, so say so instead of arming it invisibly.
+    if (!currentChannelId) { hint = "Open a channel first"; return }
     service.setMembersWanted(!service.membersWanted)
     hint = ""
     if (!service.membersWanted && zone === "members") { zone = "composer"; focusZone() }
@@ -600,7 +644,8 @@ Item {
       : Api.isOpenableChannel
     var next = findChannel(from, delta, accept)
     if (next < 0 || next === from) return
-    activateChannel(next)
+    // Stepping keeps the keyboard where it is (timeline / member pane).
+    activateChannel(next, zone)
   }
 
   function focusZone() {
@@ -619,16 +664,22 @@ Item {
   // member list -> Members -> Log out -> Close -> rail. Stops that cannot
   // take focus right now (no open channel, hidden pane or button) are skipped.
   function cycleFocus(delta) {
-    var stops = ["rail", "channels", "timeline", "composer", "members", "membersButton", "logout", "close"]
+    var stops = ["rail", "channels", "timeline", "composer", "members", "startBackend",
+      "membersButton", "logout", "close"]
     var current = buttonFocused
-      ? (closeButton.activeFocus ? "close" : (membersButton.activeFocus ? "membersButton" : "logout"))
+      ? (closeButton.activeFocus ? "close"
+        : (membersButton.activeFocus ? "membersButton"
+          : (startBackendButton.activeFocus ? "startBackend" : "logout")))
       : (zone === "sidebar" ? column : zone)
     var index = stops.indexOf(current)
     for (var step = 0; step < stops.length; step++) {
       index = clampCursor(index + delta, stops.length)
       var stop = stops[index]
+      // No zones while the login / status screen covers the panel body.
+      if ((stop === "rail" || stop === "channels") && !ready) continue
       if ((stop === "timeline" || stop === "composer") && !currentChannelId) continue
       if (stop === "members" && !membersVisible) continue
+      if (stop === "startBackend" && !startBackendButton.visible) continue
       if (stop === "membersButton" && !membersButton.visible) continue
       if (stop === "logout" && !logoutButton.visible) continue
       focusStop(stop, delta)
@@ -641,6 +692,7 @@ Item {
     if (stop === "logout") { logoutButton.forceActiveFocus(); return }
     if (stop === "close") { closeButton.forceActiveFocus(); return }
     if (stop === "membersButton") { membersButton.forceActiveFocus(); return }
+    if (stop === "startBackend") { startBackendButton.forceActiveFocus(); return }
     if (stop === "members") { enterMembers(); return }
     if (stop === "channels") { enterChannels(); return }
     if (stop === "composer") {
@@ -697,8 +749,14 @@ Item {
     }
     if (tokenField.activeFocus) return
     if (!ready) {
-      if (key === Qt.Key_Escape) { root.requestClose(); event.accepted = true }
-      else if (text === "r") { retry(); event.accepted = true }
+      // The footer promises Tab reaches the buttons: cycleFocus skips every
+      // stop that cannot take focus right now, which down here leaves
+      // Start backend (when it is shown) and Close.
+      if (key === Qt.Key_Tab || key === Qt.Key_Backtab) cycleFocus(key === Qt.Key_Backtab || shift ? -1 : 1)
+      else if (key === Qt.Key_Escape) root.requestClose()
+      else if (text === "r") retry()
+      else return
+      event.accepted = true
       return
     }
     if (composerFocused) {
@@ -985,11 +1043,15 @@ Item {
               font.pixelSize: Style.font.body
             }
             Button {
+              id: startBackendButton
               anchors.horizontalCenter: parent.horizontalCenter
               visible: !!(root.service && root.service.daemon.runtimeAvailable
                 && !root.service.daemon.running)
               text: "Start backend"
               focusable: true
+              // Reached through cycleFocus like the header buttons; Qt's own
+              // tab chain would otherwise compete for Tab.
+              activeFocusOnTab: false
               foreground: root.foreground
               onClicked: if (root.service) root.service.startBackend()
             }
@@ -1752,9 +1814,11 @@ Item {
                   root.membersVisible ? "composerMembers" : "", "composerTail")
               }
               if (root.zone === "members") return Keymap.footer("members")
-              if (root.zone === "timeline") return Keymap.footer("timeline")
+              if (root.zone === "timeline")
+                return Keymap.footer("timeline", root.canToggleCurrentThreads ? "timelineThreads" : "", "timelineTail")
               if (root.column === "rail") return Keymap.footer("rail")
-              return Keymap.footer("channels", root.currentChannelId ? "channelsTimeline" : "", "channelsTail")
+              return Keymap.footer("channels", root.currentChannelId ? "channelsTimeline" : "",
+                root.currentChannelId ? "channelsMembers" : "", "channelsTail")
             }
             color: root.muted
             font.family: root.fontFamily

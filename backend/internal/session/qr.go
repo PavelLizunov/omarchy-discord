@@ -10,6 +10,7 @@ import (
 	"github.com/diamondburned/arikawa/v3/discord"
 	"github.com/diamondburned/ningen/v3"
 
+	"github.com/mattcalayo/omarchy-discord/backend/internal/panics"
 	"github.com/mattcalayo/omarchy-discord/backend/internal/protocol"
 	"github.com/mattcalayo/omarchy-discord/backend/internal/redact"
 	"github.com/mattcalayo/omarchy-discord/backend/internal/remoteauth"
@@ -120,7 +121,7 @@ func (m *Manager) StartQRLogin(ctx context.Context) *protocol.Error {
 	m.mu.Unlock()
 	m.opMu.Unlock()
 
-	go m.runQRFlow(fctx, f)
+	panics.Go("session: qr flow", func() { m.runQRFlow(fctx, f) })
 
 	// Every path flushes so the documented events (state_changed, qr_code)
 	// reach the socket before the response.

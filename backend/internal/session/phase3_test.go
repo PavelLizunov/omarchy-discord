@@ -304,8 +304,11 @@ func TestMemberListOps(t *testing.T) {
 	if _, e := m.Handle(ctx, req(t, `{"v":1,"id":1,"command":"subscribe_members","channel_id":"300000000000000002"}`)); e != nil {
 		t.Fatal(e)
 	}
-	if !client.HasMemberSub("300000000000000002") || n.MemberState.GetMemberListChunk(guildOmar, chGeneral) != 0 {
-		t.Fatal("subscription not registered / chunk not requested")
+	if !client.HasMemberSub("300000000000000002") || len(m.members.subscribed()) != 1 {
+		t.Fatal("subscription not registered")
+	}
+	if r := m.memberRanges(n.Offline(), guildOmar); len(r) != 1 || len(r[chGeneral]) != 1 {
+		t.Fatalf("member list not requested: %+v", r)
 	}
 	noEvent(t, m)
 	// Secret channel: no view permission.

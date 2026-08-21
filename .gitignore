@@ -1,5 +1,6 @@
-# Backend builds go to $XDG_CACHE_HOME/omarchy-discord/target — never here.
-backend/dist/
+# backend/.gitignore owns backend/: build output is ignored (builds go to
+# $XDG_CACHE_HOME/omarchy-discord/target, never into the tree), while the
+# shipped prebuilt at backend/dist/<arch>/ is deliberately committed.
 *.log
 .DS_Store
 .claude/prompts/

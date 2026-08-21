@@ -43,7 +43,7 @@ strings on the wire: a 64-bit id does not survive a JavaScript double.
 | `manifest.json` | Plugin id `quickshell.discord`, kinds `service` / `bar-widget` / `panel`, settings schema |
 | `Service.qml` | Socket client owner, state mirror (structure, channels, threads, messages, read state, typers, member list, server emoji), media cache mirror, notification fan-out, quick switcher loader, IPC handlers (`quickshell.discord.panel`, `.switcher`) |
 | `BackendClient.qml` | Reconnecting `Socket` behind a `Loader` (Quickshell sockets cannot reconnect in place), request correlation, redaction |
-| `DaemonManager.qml` | `scripts/backend-runtime.sh` shim: install check, unit start/stop/status |
+| `DaemonManager.qml` | `scripts/backend-runtime.sh` shim: install check, runtime sync (see "Runtime install and upgrade"), unit start/stop/status |
 | `BarWidget.qml` | Per-monitor mark + mention badge; left click panel, middle click configured action |
 | `Panel.qml` | Login / status screens, header, rail + channel list (threads), timeline column, composer, member pane, footer hints; every zone's keyboard routing |
 | `QuickSwitch.qml` | Full-screen overlay (`PanelWindow`, layer `Overlay`) with the Exclusive→OnDemand keyboard prime |
@@ -60,7 +60,7 @@ strings on the wire: a 64-bit id does not survive a JavaScript double.
 | `Keymap.js` | The one key table: footer states and cheatsheet sections both render from it |
 | `backend/` | Go module: `cmd/omarchy-discord-backend`, `internal/{socket,protocol,session,media,remoteauth,keyring,redact}` |
 | `systemd/omarchy-discord.service` | Static user unit with the hardening block |
-| `scripts/` | `setup.sh`, `build-backend.sh`, `install-local.sh`, `backend-runtime.sh`, `keyring-store.sh`, `remove-runtime.sh` |
+| `scripts/` | `setup.sh`, `build-backend.sh`, `install-local.sh`, `backend-runtime.sh`, `remove-runtime.sh` |
 | `components/harness/` | Offscreen Timeline harness and the Markdown node tests |
 
 ## State flow
@@ -107,10 +107,11 @@ the panel, which is destroyed on hide.
 1. The shell loads `Service.qml` synchronously while the plugin is enabled
    (services have no on-demand mode). Startup work is deferred behind a 0 ms timer
    so `shell` / `manifest` injection lands first.
-2. `DaemonManager.checkRequirements()` runs `scripts/backend-runtime.sh check`; a
-   missing runtime triggers `setup.sh`, which installs the bundled binary and unit
-   (`$XDG_CACHE_HOME/omarchy-discord/target` for any build output — never the tree,
-   which is watched by the shell's hot reload).
+2. `DaemonManager.checkRequirements()` runs `scripts/backend-runtime.sh check`,
+   then `scripts/backend-runtime.sh sync` once per Service load — the install and
+   upgrade path below. Any build output goes to
+   `$XDG_CACHE_HOME/omarchy-discord/target`, never the tree, which is watched by
+   the shell's hot reload.
 3. `keepAliveTimer` starts the unit whenever the socket is down and either
    `stayConnected` is On or a UI surface is visible; `idleTimer` stops it 15 min after
    the last surface closed when `stayConnected` is Off.
@@ -148,6 +149,52 @@ Esc ladder: dismiss overlay → composer chip cursor → edit/reply mode → com
 timeline (marking read) → channel list → rail → close the panel. Tab cycles rail →
 channels → timeline → composer (→ its chips) → member list → Members → Log out →
 Close; stops that cannot take focus are skipped.
+
+## Runtime install and upgrade
+
+Omarchy runs no install hooks when it clones (`omarchy plugin add`) or updates
+(`omarchy plugin update`, a `git merge --ff-only` into the plugin directory) a
+plugin, so the enabled Service installs and upgrades its own backend. One
+mechanism covers both: `scripts/backend-runtime.sh sync`, run once per Service
+load by `DaemonManager.syncRuntimeIfNeeded()`.
+
+`setup.sh` writes a stamp file, `~/.local/lib/omarchy-discord/installed-version`
+(mode 600, alongside the installed binary), containing the `manifest.json`
+version it installed from. `sync` treats the installed runtime as current when
+all of these hold, and exits 0 without doing anything else:
+
+- the binary and `~/.config/systemd/user/omarchy-discord.service` both exist;
+- the stamp's contents equal this checkout's manifest version;
+- nothing under the plugin's `backend/` is newer than the stamp's mtime
+  (`find -newer … -print -quit`).
+
+Otherwise it fingerprints the installed binary (`sha256sum`), runs `setup.sh`
+(whose own mtime check then decides whether the binary is actually rebuilt or
+reinstalled), fingerprints again, and runs `systemctl --user try-restart
+omarchy-discord.service` when the bytes changed — `try-restart`, so an idle
+backend stays stopped while a live session is handed the new binary at once.
+Exit codes: `0` already current, `10` installed or updated, `30` no prebuilt for
+this architecture and no Go toolchain, `31` the build or install failed;
+`DaemonManager` turns 30 and 31 into distinct UI messages and only treats 10 as
+"setup succeeded".
+
+Why this shape:
+
+- **A git-pulled update is caught even without a version bump.** `git merge`
+  rewrites the mtime of every file it changes, so a new backend is newer than
+  the stamp. A frontend-only update leaves `backend/` alone and correctly does
+  no work.
+- **It is cheap enough to run on every load.** The shell destroys and recreates
+  the Service on any write inside the plugin directory, so this runs on every
+  hot reload: the fast path is a few `stat`s, one small read and one
+  `find -quit` (~10 ms measured), and touches systemd only through the `check`
+  that already happened.
+- The `hello` response's `backend_version` is a useful cross-check in logs, but
+  it cannot be the trigger: the decision has to be made before the backend is
+  started, and while it is down there is nothing to ask.
+
+`scripts/install-local.sh` calls `setup.sh` directly (and `try-restart` itself),
+so a dev install leaves the stamp current and the next `sync` is a no-op.
 
 ## Media pipeline
 
@@ -189,8 +236,10 @@ later arrivals so continuous traffic cannot postpone the flush.
 
 - The user token never touches disk, argv, logs, the journal or the QML layer. It
   enters through `login` over the socket (the QML clears its copy immediately) or
-  the QR flow inside the backend, goes to GNOME Keyring via `secret-tool` over
-  stdin (`scripts/keyring-store.sh`), and is held in backend memory only.
+  the QR flow inside the backend, goes to GNOME Keyring by
+  `backend/internal/keyring` — a `secret-tool store` child fed over **stdin**,
+  never argv — and is held in backend memory only. No shell script handles the
+  token; the frontend never sees it.
 - Every error string crossing a boundary passes a redaction function (`Api.redact`
   in QML, `Redact` in Go: bearer headers, `token=` query params, `"token"` /
   `"ticket"` / `"encrypted_token"` JSON fields).
@@ -200,7 +249,12 @@ later arrivals so continuous traffic cannot postpone the flush.
   exactly as the official client requests them.
 - The socket is 0600 in an owner-only directory; there is no auth inside the
   protocol. The systemd unit carries `NoNewPrivileges`, `PrivateTmp`,
-  `ProtectSystem=strict`, `UMask=0077`.
+  `ProtectSystem=strict`, `UMask=0077` and no `[Install]` section.
+  `ProtectSystem=strict` makes `/usr` and the rest of the system hierarchy
+  read-only; `ProtectHome` is left at its default `no`, so the media cache under
+  `~/.cache/omarchy-discord/` and the socket and staged uploads under
+  `$XDG_RUNTIME_DIR` stay writable (verified against the live unit and with a
+  transient `systemd-run --user` unit carrying the same settings).
 - Opening a 1:1 DM with no history is refused (`empty_dm_refused`) — a known
   spam-flag trigger for third-party clients.
 
@@ -251,9 +305,39 @@ scripts/setup.sh --reinstall-backend
 scripts/remove-runtime.sh [--purge]
 ```
 
-`scripts/backend-runtime.sh check|unit|status|start|stop` is the only place QML
-touches systemctl. `omarchy-discord-backend check` prints the environment summary;
-`omarchy-discord-backend login` reads a token from stdin.
+`scripts/backend-runtime.sh check|unit|status|start|stop|sync` is the only place
+QML touches systemctl. `omarchy-discord-backend check` prints the environment
+summary; `omarchy-discord-backend login` reads a token from stdin.
+
+`build-backend.sh` installs `backend/dist/$(uname -m)/omarchy-discord-backend`
+when that file exists, is a real file (never a symlink — `omarchy plugin
+validate` refuses those) and is executable; otherwise it needs the Go toolchain
+and builds outside the tree. Only `x86_64` ships a prebuilt, so any other
+architecture needs Go installed.
+
+### Releasing
+
+The committed prebuilt is what makes the zero-toolchain install work, so it must
+be rebuilt and committed whenever anything under `backend/` changes — a plugin
+update ships the frontend and the binary together, and `sync` will install a
+stale prebuilt just as happily as a fresh one.
+
+```sh
+cd backend
+GOCACHE="${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-discord/gocache" \
+  CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' \
+  -o "${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-discord/target/omarchy-discord-backend" \
+  ./cmd/omarchy-discord-backend
+install -D -m 755 "${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-discord/target/omarchy-discord-backend" \
+  dist/x86_64/omarchy-discord-backend
+```
+
+`CGO_ENABLED=0` keeps the binary static (no libc or libsecret link — the keyring
+is reached by running `secret-tool`), `-trimpath` and `-ldflags='-s -w'` keep it
+reproducible and small. Build to `$XDG_CACHE_HOME`, never inside the tree, then
+copy the result in; `backend/.gitignore` ignores `dist/` except that one path, so
+`git add -f` is never needed (`git check-ignore -v
+backend/dist/x86_64/omarchy-discord-backend` should report the negation).
 
 ### Theme QA
 

@@ -74,6 +74,11 @@ type Channel struct {
 	// 0 for non-threads.
 	MessageCount int `json:"message_count"`
 	MemberCount  int `json:"member_count"`
+	// Archived is true for an archived thread. list_channels reports every
+	// cached thread including archived ones, while list_threads serves only
+	// the active set, so the flag is what lets a client count them the same
+	// way. Always false for non-threads.
+	Archived bool `json:"archived"`
 }
 
 // Request parameter shapes.

@@ -32,7 +32,7 @@ func (m *Manager) installMessageHandlers(n *ningen.State) {
 		route(chID, false, protocol.NewMessageUpdate(WireMessage(off, msg)))
 	}
 
-	n.AddSyncHandler(func(ev *gateway.MessageCreateEvent) {
+	addSyncHandler(n, "message_create", func(ev *gateway.MessageCreateEvent) {
 		if !live() {
 			return
 		}
@@ -41,7 +41,7 @@ func (m *Manager) installMessageHandlers(n *ningen.State) {
 		wire := WireMessage(off, &ev.Message)
 		route(ev.ChannelID, notify, protocol.NewMessageCreate(wire, notify, channelName(off, ev.ChannelID)))
 	})
-	n.AddSyncHandler(func(ev *gateway.MessageUpdateEvent) {
+	addSyncHandler(n, "message_update", func(ev *gateway.MessageUpdateEvent) {
 		if !live() {
 			return
 		}
@@ -57,13 +57,13 @@ func (m *Manager) installMessageHandlers(n *ningen.State) {
 		}
 		route(ev.ChannelID, false, protocol.NewMessageUpdate(WireMessage(off, msg)))
 	})
-	n.AddSyncHandler(func(ev *gateway.MessageDeleteEvent) {
+	addSyncHandler(n, "message_delete", func(ev *gateway.MessageDeleteEvent) {
 		if !live() {
 			return
 		}
 		route(ev.ChannelID, false, protocol.NewMessageDelete(ev.ChannelID.String(), optSnowflake(discord.Snowflake(ev.GuildID)), ev.ID.String()))
 	})
-	n.AddSyncHandler(func(ev *gateway.MessageDeleteBulkEvent) {
+	addSyncHandler(n, "message_delete_bulk", func(ev *gateway.MessageDeleteBulkEvent) {
 		if !live() {
 			return
 		}
@@ -71,17 +71,17 @@ func (m *Manager) installMessageHandlers(n *ningen.State) {
 			route(ev.ChannelID, false, protocol.NewMessageDelete(ev.ChannelID.String(), optSnowflake(discord.Snowflake(ev.GuildID)), id.String()))
 		}
 	})
-	n.AddSyncHandler(func(ev *gateway.MessageReactionAddEvent) {
+	addSyncHandler(n, "reaction_add", func(ev *gateway.MessageReactionAddEvent) {
 		if live() {
 			updateFromCache(ev.ChannelID, ev.MessageID)
 		}
 	})
-	n.AddSyncHandler(func(ev *gateway.MessageReactionRemoveEvent) {
+	addSyncHandler(n, "reaction_remove", func(ev *gateway.MessageReactionRemoveEvent) {
 		if live() {
 			updateFromCache(ev.ChannelID, ev.MessageID)
 		}
 	})
-	n.AddSyncHandler(func(ev *gateway.MessageReactionRemoveAllEvent) {
+	addSyncHandler(n, "reaction_remove_all", func(ev *gateway.MessageReactionRemoveAllEvent) {
 		if !live() {
 			return
 		}
@@ -95,12 +95,12 @@ func (m *Manager) installMessageHandlers(n *ningen.State) {
 		}
 		updateFromCache(ev.ChannelID, ev.MessageID)
 	})
-	n.AddSyncHandler(func(ev *gateway.MessageReactionRemoveEmojiEvent) {
+	addSyncHandler(n, "reaction_remove_emoji", func(ev *gateway.MessageReactionRemoveEmojiEvent) {
 		if live() {
 			updateFromCache(ev.ChannelID, ev.MessageID)
 		}
 	})
-	n.AddSyncHandler(func(ev *gateway.TypingStartEvent) {
+	addSyncHandler(n, "typing_start", func(ev *gateway.TypingStartEvent) {
 		if !live() {
 			return
 		}

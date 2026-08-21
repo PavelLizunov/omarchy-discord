@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/mattcalayo/omarchy-discord/backend/internal/panics"
 	"github.com/mattcalayo/omarchy-discord/backend/internal/protocol"
 	"github.com/mattcalayo/omarchy-discord/backend/internal/redact"
 )
@@ -25,6 +26,14 @@ type Backend interface {
 	Snapshot() []any
 	// Handle answers one decoded request. hello and ping never reach it.
 	Handle(ctx context.Context, req *protocol.Request) (result any, err *protocol.Error)
+}
+
+// ClientCloser is implemented by a Backend that keeps per-connection state
+// (member subscriptions) and needs it released when a connection ends. The
+// server calls ClientClosed exactly once per connection, after it has been
+// removed from the broadcast set.
+type ClientCloser interface {
+	ClientClosed(c Client)
 }
 
 // Client is the per-connection view handed to Backend.Handle through its
@@ -342,14 +351,23 @@ func (s *Server) handle(ctx context.Context, nc net.Conn) {
 	// the snapshot; clients resolve that with the generation stamp.)
 	s.mu.Lock()
 	s.conns[c] = struct{}{}
-	for _, ev := range s.backend.Snapshot() {
-		c.send(protocol.MustEncode(0, ev))
-	}
+	func() {
+		// A panic building the snapshot must not escape into Serve's
+		// accept loop; this client simply gets no snapshot.
+		defer panics.Recover("socket: snapshot")
+		for _, ev := range s.backend.Snapshot() {
+			c.send(protocol.MustEncode(0, ev))
+		}
+	}()
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
 		delete(s.conns, c)
 		s.mu.Unlock()
+		if cc, ok := s.backend.(ClientCloser); ok {
+			defer panics.Recover("socket: client closed")
+			cc.ClientClosed(c)
+		}
 	}()
 
 	sc := bufio.NewScanner(nc)
@@ -385,21 +403,33 @@ func (c *conn) dispatch(ctx context.Context, req *protocol.Request, t *ticket) {
 		t.wait(c)
 		defer t.release(c)
 	}
-	var result any
-	var perr *protocol.Error
-	switch req.Command {
-	case "hello":
-		result = protocol.Hello()
-	case "ping":
-		result = protocol.PingResult{Pong: true}
-	default:
-		result, perr = c.srv.backend.Handle(ctx, req)
-	}
+	result, perr := c.answer(ctx, req)
 	if perr != nil {
 		c.send(protocol.MustEncode(req.ID, protocol.ErrResponse(req.ID, perr)))
 		return
 	}
 	c.send(protocol.MustEncode(req.ID, protocol.OKResponse(req.ID, result)))
+}
+
+// answer runs one command. A panic in the backend (or in a library it calls)
+// fails that one request with internal_error instead of killing the process;
+// the redacted detail goes to the journal, never to the client.
+func (c *conn) answer(ctx context.Context, req *protocol.Request) (result any, perr *protocol.Error) {
+	defer func() {
+		// recover() only reports a panic to the function deferred directly by
+		// the panicking frame, so it cannot be delegated to a helper.
+		if r := recover(); r != nil {
+			panics.Log("socket: command "+req.Command, r)
+			result, perr = nil, protocol.Errorf(protocol.CodeInternalError, "internal error handling %s", req.Command)
+		}
+	}()
+	switch req.Command {
+	case "hello":
+		return protocol.Hello(), nil
+	case "ping":
+		return protocol.PingResult{Pong: true}, nil
+	}
+	return c.srv.backend.Handle(ctx, req)
 }
 
 // send queues a line; a client whose queue is full is dropped.

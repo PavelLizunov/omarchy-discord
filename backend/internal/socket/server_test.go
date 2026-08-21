@@ -38,6 +38,8 @@ func (f *fakeBackend) Handle(ctx context.Context, req *protocol.Request) (any, *
 	switch req.Command {
 	case "get_state":
 		return protocol.State{ProtocolVersion: 1, BackendVersion: protocol.BackendVersion, Lifecycle: protocol.LifecycleLoggedOut, Generation: 1}, nil
+	case "boom":
+		panic("backend exploded")
 	case "slow":
 		time.Sleep(100 * time.Millisecond)
 		return protocol.EmptyResult{}, nil
@@ -478,5 +480,66 @@ func TestRoutedMemberSubscriptions(t *testing.T) {
 	fmt.Fprintln(b, `{"v":1,"id":6,"command":"ping"}`)
 	if r := next(t, sb); r["id"] != float64(6) {
 		t.Fatalf("b: %v", r)
+	}
+}
+
+// closerBackend records the connections the server released.
+type closerBackend struct {
+	fakeBackend
+	mu     sync.Mutex
+	closed []Client
+}
+
+func (b *closerBackend) ClientClosed(c Client) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.closed = append(b.closed, c)
+}
+
+// A panicking command fails that one request with internal_error; the daemon
+// and the connection keep working. Without the recover, one library panic on a
+// request goroutine takes the whole process down.
+func TestPanicInCommandFailsOnlyThatRequest(t *testing.T) {
+	srv, _ := startServer(t, &fakeBackend{})
+	c, sc := dial(t, srv)
+	next(t, sc) // snapshot
+
+	fmt.Fprint(c, `{"v":1,"id":1,"command":"boom"}`+"\n")
+	res := next(t, sc)
+	if res["id"] != float64(1) || res["ok"] != false {
+		t.Fatalf("response: %v", res)
+	}
+	if e, _ := res["error"].(map[string]any); e == nil || e["code"] != protocol.CodeInternalError {
+		t.Fatalf("want internal_error, got %v", res["error"])
+	}
+	// The connection is still usable.
+	fmt.Fprint(c, `{"v":1,"id":2,"command":"ping"}`+"\n")
+	if res := next(t, sc); res["id"] != float64(2) || res["ok"] != true {
+		t.Fatalf("ping after panic: %v", res)
+	}
+}
+
+// A backend that tracks per-connection state is told when a connection ends.
+func TestClientClosedOnDisconnect(t *testing.T) {
+	b := &closerBackend{}
+	srv, _ := startServer(t, b)
+	c, sc := dial(t, srv)
+	next(t, sc) // snapshot
+	fmt.Fprint(c, `{"v":1,"id":1,"command":"subscribe_members","channel_id":"1"}`+"\n")
+	next(t, sc)
+	c.Close()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		b.mu.Lock()
+		n := len(b.closed)
+		b.mu.Unlock()
+		if n == 1 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("ClientClosed not called (%d)", n)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

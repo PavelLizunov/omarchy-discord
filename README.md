@@ -30,12 +30,21 @@ quick switcher, and the same views on a light theme._
 omarchy plugin add https://github.com/mattcalayo/omarchy-discord --enable
 ```
 
-The plugin runs no install hooks. The first time the enabled service loads it
-installs the bundled backend binary (`backend/dist/$(uname -m)/`) to
-`~/.local/lib/omarchy-discord/` and its static user unit to
-`~/.config/systemd/user/omarchy-discord.service`, then starts it. The unit is never
-enabled at login: the plugin starts it and keeps it connected while the
-`stayConnected` setting is On (the default). Requirements: Omarchy 4 with the
+No build step and no toolchain: the repo ships a prebuilt x86_64 backend at
+`backend/dist/x86_64/omarchy-discord-backend`. Omarchy runs no install hooks, so the
+enabled service does the install itself the first time it loads — the binary goes to
+`~/.local/lib/omarchy-discord/`, its static user unit to
+`~/.config/systemd/user/omarchy-discord.service`, and the unit is then started. On any
+other architecture that same step builds the backend from source and needs Go
+installed; until it can, the panel says so instead of showing the login screen.
+
+`omarchy plugin update quickshell.discord` upgrades the frontend and the backend
+together. On every load the service compares the backend it ships against the one
+installed, reinstalls when they differ, and restarts a running backend so the new
+binary takes over immediately.
+
+The unit is never enabled at login: the plugin starts it and keeps it connected while
+the `stayConnected` setting is On (the default). Requirements: Omarchy 4 with the
 Quickshell shell, `secret-tool` (GNOME keyring) for the token, `notify-send`,
 `wl-paste` for image paste, `xdg-open`.
 
@@ -47,22 +56,41 @@ cd omarchy-discord
 scripts/install-local.sh          # --section left|center|right
 ```
 
-`install-local.sh` validates the manifest, installs the backend and unit, copies the
-checkout into `~/.config/omarchy/plugins/quickshell.discord/` (a copy, not a
-symlink, because `omarchy plugin validate` refuses symlinks and in-tree edits would
-hot-reload the shell), rescans, and enables the widget. Re-run it after every
-change; the backend is rebuilt whenever a file under `backend/` is newer than the
-installed binary (`scripts/setup.sh --reinstall-backend` forces it). Without a
-bundled binary the script builds with Go, outside the plugin tree.
+`install-local.sh` validates the manifest, installs the backend and unit, rsyncs the
+checkout into `~/.config/omarchy/plugins/quickshell.discord/` (a copy, not a symlink,
+because `omarchy plugin validate` refuses symlinks and in-tree edits would hot-reload
+the shell), rescans, and enables the widget. **Re-run it after every change** — the
+plugin runs from that copy, not from your checkout. The backend is reinstalled
+whenever a file under `backend/` is newer than the installed binary
+(`scripts/setup.sh --reinstall-backend` forces it); on x86_64 that means installing
+the committed prebuilt, elsewhere building it with Go, always outside the plugin tree.
 `OMARCHY_DISCORD_RUNTIME_DIR` relocates the binary; setup rewrites the installed
-unit's `ExecStart` to match. See `docs/TECHNICAL.md` for the harnesses and the
-quality gate.
+unit's `ExecStart` to match. See `docs/TECHNICAL.md` for the harnesses, the quality
+gate, and how to refresh the committed prebuilt.
 
 ### Removal
 
 ```sh
-scripts/remove-runtime.sh          # --purge also clears the keyring entry and the media cache
+~/.config/omarchy/plugins/quickshell.discord/scripts/remove-runtime.sh --purge
 omarchy plugin remove quickshell.discord --yes
+```
+
+In that order, and don't skip the first line: removing the plugin directory leaves the
+backend behind as a systemd user unit holding a live Discord session and your token in
+the keyring. `remove-runtime.sh` stops the unit, deletes it and the installed binary,
+and reloads systemd. Without `--purge` it keeps the keyring entry and the media cache
+and moves `~/.config/omarchy-discord/` aside as a timestamped `.bak`; with `--purge` it
+also deletes `~/.config/omarchy-discord/` and `~/.cache/omarchy-discord/` and clears the
+`quickshell-discord` keyring entries.
+
+If the plugin directory is already gone, the same cleanup by hand:
+
+```sh
+systemctl --user stop omarchy-discord.service
+rm -f ~/.config/systemd/user/omarchy-discord.service
+rm -rf ~/.local/lib/omarchy-discord ~/.cache/omarchy-discord ~/.config/omarchy-discord
+systemctl --user daemon-reload
+secret-tool clear service quickshell-discord kind user-token
 ```
 
 ## Hyprland binds
@@ -119,8 +147,12 @@ or pane carries the focus border — and opening a channel focuses the composer.
 buttons, `Esc` walks back out.
 
 The tables below are generated from `Keymap.js`, the single key table the footer
-hints and the `Ctrl+/` cheatsheet render from (regenerate with
-`node -e` over `Keymap.sections()` when keys change).
+hints and the `Ctrl+/` cheatsheet render from. Regenerate them whenever a key
+changes:
+
+```sh
+node -e 'var s=require("fs").readFileSync("Keymap.js","utf8");eval(s);sections().forEach(function(x){if(!x.rows.length)return;console.log("**"+x.title+"**\n\n| Key | Action |\n|---|---|");x.rows.forEach(function(r){console.log("| `"+r.keys+"` | "+r.action+" |")});console.log("")})'
+```
 
 **Anywhere in the panel**
 
@@ -315,8 +347,9 @@ filename chips (avatars and emoji stay). Spoiler images stay covered until you p
 ## Settings
 
 Stored inline on the plugin's `shell.json` entry; edit with
-`omarchy bar set quickshell.discord <key> <value>` (or the bar widget's settings
-dialog). Changes apply live: the service re-reads its entry on every `shell.json`
+`omarchy bar set quickshell.discord <key> <value>`. Values are written as JSON
+strings unless you pass `--json`, so the one numeric setting needs it:
+`omarchy bar set quickshell.discord mediaCacheMB 1024 --json`. Changes apply live: the service re-reads its entry on every `shell.json`
 change, values are normalized (unknown enum values fall back to the default,
 `mediaCacheMB` is clamped to 64–4096).
 
@@ -349,8 +382,9 @@ background. The Phase 3 QA pass rendered every view on the five bundled light th
   (`systemctl --user status omarchy-discord` shows it as such); the plugin starts it.
 - **Environment check.** `~/.local/lib/omarchy-discord/omarchy-discord-backend check`
   prints a JSON summary (socket and runtime paths and whether they are writable,
-  media cache directory, `secret_tool`, `token_present`). `scripts/backend-runtime.sh check|status|start|stop` is the shim the
-  plugin itself uses.
+  media cache directory, `secret_tool`, `token_present`).
+  `scripts/backend-runtime.sh check|status|start|stop|sync` is the shim the plugin
+  itself uses; `sync` is the one that reinstalls the backend after a plugin update.
 - **Login required after a restart.** The token is stored with `secret-tool`; if the
   keyring is locked or unavailable the panel says so and the session will not survive
   a backend restart. Unlock the keyring and log in again.
@@ -362,6 +396,10 @@ background. The Phase 3 QA pass rendered every view on the five bundled light th
 - **Hot reload.** Any write inside `~/.config/omarchy/plugins/` reloads the whole
   plugin system. The backend survives that (it is a separate unit), the panel is
   recreated; never point builds, logs or caches into the plugin tree.
+- **The backend looks stale after an update.** The service reinstalls it on load, so
+  a shell restart (or any edit inside the plugin directory) re-runs the check;
+  `scripts/setup.sh --reinstall-backend` from the plugin directory forces it, followed
+  by `systemctl --user try-restart omarchy-discord.service`.
 - **Reset everything.** `scripts/remove-runtime.sh --purge`, then reinstall.
 
 ## Non-goals
