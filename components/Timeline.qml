@@ -33,8 +33,15 @@ FocusScope {
   property string selfId: ""
   property string lastReadMessageId: ""
   property bool active: false
+  // Someone is looking at this channel (timeline or composer zone focused):
+  // gates reachedBottom (ack-on-read). Defaults to `active`.
+  property bool viewing: active
   property var ctx: ({})
   property string cursorMessageId: ""
+  // Own message armed for deletion by a first D; a second D within
+  // deleteArmMs emits deleteRequested, anything else disarms.
+  property string armedDeleteId: ""
+  readonly property int deleteArmMs: 3000
 
   signal requestHistory(string beforeId)
   // `escape` is an illegal QML signal name (clashes with the JS global), hence:
@@ -44,6 +51,10 @@ FocusScope {
   signal copied()
   signal activateMessage(string messageId)
   signal reachedBottom()
+  // Message actions (R / D D / E on the cursor row).
+  signal replyRequested(string messageId)
+  signal deleteRequested(string messageId)
+  signal reactRequested(string messageId)
 
   function scrollToBottom() {
     adjusting = true
@@ -341,7 +352,7 @@ FocusScope {
   }
 
   function checkBottom() {
-    if (adjusting || !active || !rows.length || !list.atYEnd) return
+    if (adjusting || !viewing || !rows.length || !list.atYEnd) return
     if (newestId === reachedId) return
     reachedId = newestId
     reachedBottom()
@@ -374,6 +385,30 @@ FocusScope {
     if (url) openLink(url)
   }
 
+  function isOwnRow(index) {
+    var author = index >= 0 && rows[index] && rows[index].author ? rows[index].author : null
+    return !!(author && selfId && String(author.id || "") === selfId && !rows[index].pending)
+  }
+
+  function disarmDelete() {
+    disarmTimer.stop()
+    if (armedDeleteId) armedDeleteId = ""
+  }
+
+  // D on an own message arms; D again within the window deletes.
+  function requestDelete() {
+    var index = cursorIndex
+    if (index < 0 || !isOwnRow(index)) return
+    var id = cursorMessageId
+    if (armedDeleteId === id) {
+      disarmDelete()
+      deleteRequested(id)
+      return
+    }
+    armedDeleteId = id
+    disarmTimer.restart()
+  }
+
   function handleKey(event) {
     var key = event.key
     var text = event.text
@@ -381,12 +416,14 @@ FocusScope {
     var now = Date.now()
     var wasG = now - lastGAt <= doubleTapMs
     lastGAt = 0
+    var armed = armedDeleteId !== ""
+    if (armed && !(text === "d" || text === "D")) disarmDelete()
 
     if (alt && key === Qt.Key_H) moveZone("left")
     else if (alt && key === Qt.Key_L) moveZone("right")
     // Other Alt chords (Alt+Up/Down channel switching) belong to the panel.
     else if (alt) return
-    else if (key === Qt.Key_Escape) escapeRequested()
+    else if (key === Qt.Key_Escape) { if (!armed) escapeRequested() }
     else if (key === Qt.Key_Down || text === "j") moveCursor(1)
     else if (key === Qt.Key_Up || text === "k") moveCursor(-1)
     else if (key === Qt.Key_PageUp) pageMove(-1)
@@ -399,6 +436,9 @@ FocusScope {
     }
     else if (text === "y" || text === "Y") copyCursorMessage()
     else if (text === "o" || text === "O") openCursorLink()
+    else if (text === "r" || text === "R") { if (cursorIndex >= 0 && !rows[cursorIndex].pending) replyRequested(cursorMessageId) }
+    else if (text === "d" || text === "D") requestDelete()
+    else if (text === "e" || text === "E") { if (cursorIndex >= 0) reactRequested(cursorMessageId) }
     else return
     event.accepted = true
   }
@@ -414,13 +454,23 @@ FocusScope {
   onActiveChanged: {
     if (active) ensureCursor()
     checkBottom()
+    if (!active) disarmDelete()
   }
+  onViewingChanged: checkBottom()
   onChannelIdChanged: {
     pinned = true
     historyRequestedFor = ""
     reachedId = ""
     cursorMessageId = ""
     lastGAt = 0
+    disarmDelete()
+  }
+  onCursorMessageIdChanged: if (armedDeleteId && armedDeleteId !== cursorMessageId) disarmDelete()
+
+  Timer {
+    id: disarmTimer
+    interval: timeline.deleteArmMs
+    onTriggered: timeline.disarmDelete()
   }
 
   ListModel {
@@ -460,6 +510,8 @@ FocusScope {
         timeline.maybeRequestHistoryOnScroll()
       }
       onContentHeightChanged: if (timeline.pinned) Qt.callLater(timeline.stickIfPinned)
+      // The composer growing (chips, more lines) shrinks this view.
+      onHeightChanged: if (timeline.pinned) Qt.callLater(timeline.stickIfPinned)
       onAtYEndChanged: timeline.checkBottom()
 
       // Fixed height on purpose: a header that grows/shrinks with `loading`
@@ -558,6 +610,7 @@ FocusScope {
           selfId: timeline.selfId
           ctx: timeline.ctx
           cursor: timeline.active && row.mid !== "" && row.mid === timeline.cursorMessageId
+          armedDelete: row.mid !== "" && row.mid === timeline.armedDeleteId
           onClicked: {
             timeline.cursorMessageId = row.mid
             timeline.forceActiveFocus()

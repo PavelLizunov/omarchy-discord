@@ -8,12 +8,12 @@ import qs.Ui
 import "Api.js" as Api
 import "components" as Components
 
-// Phase 1 panel: login/status screens, then guild rail + channel list +
-// read-only timeline. Host contract: root Item with shell/manifest/service
-// injected, `opened`, open(payloadJson) (JSON string), close(). Destroyed on
-// hide unless the manifest sets keepLoaded, so authoritative state (selected
-// guild, open channel, messages) lives in Service.qml; this file only keeps
-// cursors.
+// Panel: login/status screens, then guild rail + channel list + timeline +
+// composer. Host contract: root Item with shell/manifest/service injected,
+// `opened`, open(payloadJson) (JSON string), close(). Destroyed on hide
+// unless the manifest sets keepLoaded, so authoritative state (selected
+// guild, open channel, messages, drafts, staged files) lives in Service.qml;
+// this file only keeps cursors.
 Item {
   id: root
 
@@ -24,6 +24,7 @@ Item {
   property bool closingFromHost: false
   // Exposed for offscreen harnesses (dispatchKey + state inspection).
   readonly property alias timeline: timelineView
+  readonly property alias composer: composerView
 
   readonly property string pluginId: manifest && manifest.id
     ? String(manifest.id) : "quickshell.discord"
@@ -42,7 +43,7 @@ Item {
     && (lifecycle === "logged_out" || lifecycle === "reauth_needed")
   readonly property string errorText: service ? Api.redact(service.lastError) : ""
 
-  // --- zones: "sidebar" (columns "rail" | "channels") and "timeline" ---
+  // --- zones: "sidebar" (columns "rail" | "channels"), "timeline", "composer" ---
   // `zone` is the last keyboard zone; the header buttons sit outside the
   // zones, so while one of them owns focus `focusedZone` is "" and no pane
   // paints a focus border. Esc (or Tab around) hands focus back to `zone`.
@@ -50,6 +51,9 @@ Item {
   property string column: "rail"
   readonly property bool buttonFocused: logoutButton.activeFocus || closeButton.activeFocus
   readonly property string focusedZone: buttonFocused ? "" : zone
+  // The composer's input or one of its chips owns the keyboard: plain keys
+  // are text, only Alt chords and Tab are panel-level.
+  readonly property bool composerFocused: composerView.activeFocus
   // Roving cursors keyed by id so a resync/reorder keeps the same row.
   property string guildCursorId: "dms"
   property string channelCursorId: ""
@@ -132,7 +136,7 @@ Item {
   }
 
   function textInputFocused() {
-    return tokenField.activeFocus
+    return tokenField.activeFocus || composerView.inputFocused
   }
 
   // --- host contract ---
@@ -151,7 +155,7 @@ Item {
     restoreView()
     if (requested && service) {
       service.showChannel(requested, guildIdForChannel(requested))
-      enterTimeline()
+      enterComposer()
     }
     Qt.callLater(function() {
       focusZone()
@@ -193,7 +197,7 @@ Item {
     guildCursorId = selectedGuildId || "dms"
     channelCursorId = currentChannelId
     if (currentChannelId) {
-      zone = "timeline"
+      zone = "composer"
       column = "channels"
     } else {
       zone = "sidebar"
@@ -315,7 +319,9 @@ Item {
     hint = ""
     setChannelCursor(index)
     service.showChannel(String(row.id || ""), selectedGuildId)
-    enterTimeline()
+    // Opening a channel focuses the composer (PLAN keyboard contract).
+    timelineView.focusNewest()
+    enterComposer()
   }
 
   function enterTimeline() {
@@ -334,13 +340,38 @@ Item {
     focusZone()
   }
 
+  function enterComposer() {
+    if (!currentChannelId) return
+    zone = "composer"
+    hint = ""
+    focusZone()
+  }
+
+  // Esc out of the composer: the channel was being read, so ack its newest
+  // row on the way to the timeline.
+  function leaveComposer(markRead) {
+    if (markRead && service && currentChannelId) service.markChannelRead(currentChannelId)
+    enterTimeline()
+  }
+
+  // Reply from the timeline's R: reply mode in the composer, focus there.
+  function replyTo(messageId) {
+    var message = service ? service.findMessage(currentChannelId, messageId) : null
+    if (!message) return
+    var author = message.author || {}
+    composerView.startReply(messageId, String(author.display_name || author.username || "someone"))
+    enterComposer()
+  }
+
   function moveZone(direction) {
     if (direction === "right") {
       if (zone === "sidebar" && column === "rail") { enterChannels(); return }
       if (zone === "sidebar" && currentChannelId) enterTimeline()
+      else if (zone === "timeline") enterComposer()
       return
     }
-    if (zone === "timeline") leaveTimeline(false)
+    if (zone === "composer") leaveComposer(false)
+    else if (zone === "timeline") leaveTimeline(false)
     else if (column === "channels") leaveChannels()
   }
 
@@ -359,33 +390,45 @@ Item {
   }
 
   function focusZone() {
-    if (zone === "timeline") timelineView.forceActiveFocus()
+    if ((zone === "timeline" || zone === "composer") && !currentChannelId) {
+      zone = "sidebar"
+      column = selectedGuildId ? "channels" : "rail"
+    }
+    if (zone === "composer") composerView.focusInput()
+    else if (zone === "timeline") timelineView.forceActiveFocus()
     else sidebarFocus.forceActiveFocus()
   }
 
-  // Tab order: rail -> channels -> timeline -> Log out -> Close -> rail.
-  // Stops that cannot take focus right now (no open channel, hidden button)
-  // are skipped.
+  // Tab order: rail -> channels -> timeline -> composer (then its chips) ->
+  // Log out -> Close -> rail. Stops that cannot take focus right now (no
+  // open channel, hidden button) are skipped.
   function cycleFocus(delta) {
-    var stops = ["rail", "channels", "timeline", "logout", "close"]
+    var stops = ["rail", "channels", "timeline", "composer", "logout", "close"]
     var current = buttonFocused ? (closeButton.activeFocus ? "close" : "logout")
-      : (zone === "timeline" ? "timeline" : column)
+      : (zone === "sidebar" ? column : zone)
     var index = stops.indexOf(current)
     for (var step = 0; step < stops.length; step++) {
       index = clampCursor(index + delta, stops.length)
       var stop = stops[index]
-      if (stop === "timeline" && !currentChannelId) continue
+      if ((stop === "timeline" || stop === "composer") && !currentChannelId) continue
       if (stop === "logout" && !logoutButton.visible) continue
-      focusStop(stop)
+      focusStop(stop, delta)
       return
     }
   }
 
-  function focusStop(stop) {
+  function focusStop(stop, delta) {
     hint = ""
     if (stop === "logout") { logoutButton.forceActiveFocus(); return }
     if (stop === "close") { closeButton.forceActiveFocus(); return }
     if (stop === "channels") { enterChannels(); return }
+    if (stop === "composer") {
+      zone = "composer"
+      // Shift+Tab backwards lands on the last chip first, then the input.
+      if (delta < 0 && composerView.chips.length) composerView.focusChip(composerView.chips.length - 1)
+      else composerView.focusInput()
+      return
+    }
     if (stop === "timeline") zone = "timeline"
     else { zone = "sidebar"; column = "rail" }
     focusZone()
@@ -414,10 +457,10 @@ Item {
     token = ""
   }
 
-  // Panel-level keys. The Timeline handles its own keys first when it has
-  // focus (j/k/gg/G/PgUp/Y/O/Esc/Alt+h/l) and only unhandled ones arrive here.
+  // Panel-level keys. The Timeline and the Composer handle their own keys
+  // first when they have focus and only unhandled ones arrive here.
   function handleKey(event) {
-    if (textInputFocused()) {
+    if (tokenField.activeFocus) {
       if (event.key === Qt.Key_Escape) {
         root.requestClose()
         event.accepted = true
@@ -431,6 +474,14 @@ Item {
     if (!ready) {
       if (key === Qt.Key_Escape) { root.requestClose(); event.accepted = true }
       else if (text === "r") { retry(); event.accepted = true }
+      return
+    }
+    if (composerFocused) {
+      // Everything but the channel-stepping chords is text (or chip keys).
+      if (alt && key === Qt.Key_Down) stepChannel(1, shift)
+      else if (alt && key === Qt.Key_Up) stepChannel(-1, shift)
+      else return
+      event.accepted = true
       return
     }
     if (key === Qt.Key_Tab || key === Qt.Key_Backtab) cycleFocus(key === Qt.Key_Backtab || shift ? -1 : 1)
@@ -480,7 +531,10 @@ Item {
   // Synthesized-key entry point for offscreen harnesses (mirrors the focus
   // chain: the timeline first when it owns the zone, then the panel).
   function dispatchKey(event) {
-    if (zone === "timeline" && ready && !textInputFocused() && !buttonFocused) timelineView.handleKey(event)
+    if (ready && !buttonFocused) {
+      if (zone === "composer" && composerFocused) composerView.handleKey(event)
+      else if (zone === "timeline" && !textInputFocused()) timelineView.handleKey(event)
+    }
     if (!event.accepted) handleKey(event)
     return event.accepted
   }
@@ -512,7 +566,8 @@ Item {
     id: ackTimer
     interval: 500
     onTriggered: {
-      if (!root.opened || root.focusedZone !== "timeline" || !root.currentChannelId) return
+      if (!root.opened || !root.currentChannelId) return
+      if (root.focusedZone !== "timeline" && root.focusedZone !== "composer") return
       if (!timelineView.pinned || !root.service) return
       root.service.markChannelRead(root.currentChannelId)
     }
@@ -1038,7 +1093,7 @@ Item {
                 id: timelineView
                 width: parent.width
                 height: parent.height - channelHeader.height - typingLine.height
-                  - composerPlaceholder.height - parent.spacing * 3
+                  - composerView.height - parent.spacing * 3
                 messages: root.currentMessages
                 hasMore: !!(root.currentEntry && root.currentEntry.hasMore)
                 loading: !!(root.currentEntry && root.currentEntry.loading)
@@ -1046,6 +1101,7 @@ Item {
                 selfId: root.service ? root.service.selfId : ""
                 lastReadMessageId: root.currentEntry ? String(root.currentEntry.unreadMarkerId || "") : ""
                 active: root.focusedZone === "timeline" && root.ready
+                viewing: (root.focusedZone === "timeline" || root.focusedZone === "composer") && root.ready
                 ctx: root.service ? root.service.markdownCtx : ({})
 
                 onRequestHistory: function(beforeId) {
@@ -1055,9 +1111,14 @@ Item {
                 onMoveZone: function(direction) { root.moveZone(direction) }
                 onOpenLink: function(url) { Quickshell.execDetached(["xdg-open", String(url)]) }
                 onCopied: if (root.service) root.service.succeed("Copied to clipboard")
-                onReachedBottom: if (root.focusedZone === "timeline" && root.opened) ackTimer.restart()
+                onReachedBottom: if (root.opened && (root.focusedZone === "timeline" || root.focusedZone === "composer")) ackTimer.restart()
                 onActiveFocusChanged: if (activeFocus && root.zone !== "timeline") root.zone = "timeline"
                 onPinnedChanged: root.publishPinned()
+                onReplyRequested: function(messageId) { root.replyTo(messageId) }
+                onDeleteRequested: function(messageId) {
+                  if (root.service) root.service.deleteMessage(root.currentChannelId, messageId)
+                }
+                onReactRequested: root.hint = "Reactions arrive in Phase 3."
               }
 
               Text {
@@ -1074,24 +1135,20 @@ Item {
                 font.italic: true
               }
 
-              // Where the composer goes in Phase 2: not focusable, not a zone.
-              BorderSurface {
-                id: composerPlaceholder
+              Components.Composer {
+                id: composerView
                 width: parent.width
-                height: Style.spacing.controlHeight + Style.spacing.sm * 2
-                radius: Style.cornerRadius
-                color: Style.normalFillFor(root.foreground, root.accent)
-                borderSpec: root.panelBorderSpec
+                height: implicitHeight
+                service: root.service
+                channelId: root.currentChannelId
+                channelName: root.currentChannel
+                  ? Api.channelGlyph(root.currentChannel.type) + String(root.currentChannel.name || "") : ""
+                active: root.focusedZone === "composer" && root.ready
 
-                Text {
-                  anchors.verticalCenter: parent.verticalCenter
-                  anchors.left: parent.left
-                  anchors.leftMargin: Style.spacing.rowPaddingX
-                  text: "Read-only in this phase. The composer arrives in Phase 2."
-                  color: Color.muted
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                }
+                onLeave: root.leaveComposer(true)
+                onMoveZone: function(direction) { root.moveZone(direction) }
+                onCycleFocus: function(delta) { root.cycleFocus(delta) }
+                onActiveFocusChanged: if (activeFocus && root.zone !== "composer") root.zone = "composer"
               }
             }
           }
@@ -1146,8 +1203,17 @@ Item {
                   : "r retries · Tab reaches buttons · Esc closes"
               if (root.buttonFocused)
                 return "Enter activates · Tab/Shift+Tab cycle · Esc back to " + (root.zone === "timeline" ? "timeline" : "sidebar")
+              if (root.zone === "composer") {
+                if (root.composer.chipFocused)
+                  return "←/→ move between attachments · x removes · Enter sends · Esc back to the input"
+                if (root.composer.editing)
+                  return "Enter saves the edit · Shift+Enter newline · Esc cancels"
+                var pasteHint = root.composer.chips.length ? " · Tab reaches attachments" : ""
+                return "Enter sends · Shift+Enter newline · ↑ edits your last message · Ctrl+V pastes an image"
+                  + pasteHint + " · Alt+h timeline · Esc marks read, back to timeline"
+              }
               if (root.zone === "timeline")
-                return "j/k move · gg/G top/newest · PgUp pages history · Y copies · O opens link · Alt+↑/↓ channel (Shift: unread) · Tab buttons · Esc marks read, back to sidebar"
+                return "j/k move · gg/G top/newest · R reply · D D delete yours · Y copy · O open link · Alt+↑/↓ channel (Shift: unread) · Alt+l composer · Esc marks read, back to sidebar"
               var timelineHint = root.currentChannelId ? " · Alt+l timeline" : ""
               if (root.column === "rail")
                 return "j/k move · Enter/l opens channels · r reloads · Tab buttons · Esc closes"

@@ -135,3 +135,38 @@ function isSelectableChannel(row) {
 function isUnread(row) {
   return !!row && String(row.unread || "read") !== "read"
 }
+
+// Rows in a timeline window: optimistic rows ("pending-N") sort after every
+// real snowflake, otherwise by id.
+function compareRows(a, b) {
+  var ap = !!(a && a.pending)
+  var bp = !!(b && b.pending)
+  if (ap !== bp) return ap ? 1 : -1
+  return compareIds(a && a.id, b && b.id)
+}
+
+// Clipboard paste: the image type to stage from `wl-paste --list-types`
+// output, preferring lossless; "" when the clipboard holds no image.
+var IMAGE_PREFERENCE = ["image/png", "image/jpeg", "image/webp", "image/gif"]
+
+function bestImageType(types) {
+  var list = Array.isArray(types) ? types.map(function(t) { return String(t || "").trim().toLowerCase() }) : []
+  for (var i = 0; i < IMAGE_PREFERENCE.length; i++)
+    if (list.indexOf(IMAGE_PREFERENCE[i]) >= 0) return IMAGE_PREFERENCE[i]
+  for (var j = 0; j < list.length; j++)
+    if (list[j].indexOf("image/") === 0 && list[j].indexOf("image/svg") !== 0) return list[j]
+  return ""
+}
+
+function imageExtension(mime) {
+  switch (String(mime || "")) {
+    case "image/png": return "png"
+    case "image/jpeg": return "jpg"
+    case "image/webp": return "webp"
+    case "image/gif": return "gif"
+    case "image/bmp": return "bmp"
+    case "image/tiff": return "tiff"
+    case "image/avif": return "avif"
+    default: return "img"
+  }
+}

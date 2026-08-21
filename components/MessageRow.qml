@@ -14,6 +14,8 @@ Item {
   property var message: ({})
   property bool grouped: false
   property bool cursor: false
+  // First D landed on this (own) row: show the confirm hint.
+  property bool armedDelete: false
   property string selfId: ""
   property var ctx: ({})
 
@@ -25,6 +27,8 @@ Item {
   readonly property string fontFamily: Style.font.family
   readonly property var author: message && message.author ? message.author : ({})
   readonly property bool system: !!(message && message.system)
+  // Optimistic row awaiting its gateway echo (Service.sendMessage).
+  readonly property bool pending: !!(message && message.pending)
   readonly property bool mentionsSelf: !!(message && message.mentions_self)
   readonly property bool edited: !!(message && message.edited_timestamp)
   readonly property var replyTo: message && message.reply_to ? message.reply_to : null
@@ -74,6 +78,20 @@ Item {
     onClicked: root.clicked()
   }
 
+  // Delete confirmation, top-right of the row.
+  Text {
+    visible: root.armedDelete
+    anchors.right: parent.right
+    anchors.top: parent.top
+    anchors.rightMargin: root.sidePad
+    anchors.topMargin: Style.spacing.sm
+    text: "D again to delete · Esc cancels"
+    color: Color.urgent
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.caption
+    font.bold: true
+  }
+
   Column {
     id: body
     anchors.left: parent.left
@@ -83,6 +101,7 @@ Item {
     anchors.rightMargin: root.sidePad
     anchors.topMargin: root.showHeader ? Style.spacing.sm : Style.spacing.xxs
     spacing: Style.spacing.xxs
+    opacity: root.pending ? 0.55 : 1
 
     // Reply line
     Text {

@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell
 import Quickshell.Io
 import qs.Commons
 
@@ -115,6 +116,34 @@ Item {
   // userId -> display_name, accumulated from message authors seen.
   property var knownUsers: ({})
   readonly property string selfId: user ? String(user.id || "") : ""
+
+  // --- composer state (survives panel destruction) ---
+  // channelId -> draft text. Mutated in place: nothing binds to it.
+  property var drafts: ({})
+  // channelId -> [{ path, filename, size, sent, total, uploading }] staged
+  // attachments (files under $XDG_RUNTIME_DIR/omarchy-discord/staged/).
+  // Replaced wholesale on change (chips bind to it).
+  property var staged: ({})
+  // Optimistic rows: request id -> pending row id, nonce -> pending row id.
+  // Own echoes are matched on the nonces *we* were handed back (other
+  // people's messages carry nonces too, BACKEND_PROTOCOL `message`).
+  property var pendingByNonce: ({})
+  // upload request id -> channelId, for routing upload_progress to chips.
+  property var uploadChannels: ({})
+  // channelId -> last typing command time (client-side throttle; the
+  // backend throttles again to one Discord call per 10 s).
+  property var lastTypingAt: ({})
+  readonly property int typingThrottleMs: 8000
+  property int pendingSeq: 0
+  // Both clipboard steps go through this so a harness can substitute a
+  // script: args are appended to wl-paste's argv.
+  property var clipboardCommand: function(args) { return ["wl-paste"].concat(args) }
+  readonly property string stagedDir: {
+    var runtime = String(Quickshell.env("XDG_RUNTIME_DIR") || "")
+    return runtime ? runtime + "/omarchy-discord/staged" : ""
+  }
+  // A failed send put its text back into the draft; the composer reloads it.
+  signal draftRestored(string channelId)
   // Any plain-unread channel anywhere (bar dot when there are no mentions).
   readonly property bool anyUnread: {
     for (var g = 0; g < guilds.length; g++)
@@ -563,6 +592,280 @@ Item {
     return ack(channelId, rows[rows.length - 1].id)
   }
 
+  // --- composer: drafts, optimistic send, edit/delete/react, typing, upload ---
+  function draftFor(channelId) {
+    var text = drafts[String(channelId || "")]
+    return text === undefined ? "" : String(text)
+  }
+
+  function setDraft(channelId, text) {
+    var id = String(channelId || "")
+    if (!id) return
+    if (text) drafts[id] = String(text)
+    else delete drafts[id]
+  }
+
+  function isOwn(message) {
+    return !!(message && message.author && selfId && String(message.author.id || "") === selfId)
+  }
+
+  // Newest own, non-pending message in the loaded window ("" when none).
+  function lastOwnMessageId(channelId) {
+    var rows = messagesFor(channelId)
+    for (var i = rows.length - 1; i >= 0; i--)
+      if (isOwn(rows[i]) && !rows[i].pending && !rows[i].system) return String(rows[i].id || "")
+    return ""
+  }
+
+  function findMessage(channelId, messageId) {
+    var rows = messagesFor(channelId)
+    var id = String(messageId || "")
+    for (var i = rows.length - 1; i >= 0; i--) if (String(rows[i].id || "") === id) return rows[i]
+    return null
+  }
+
+  function replyPreview(channelId, messageId) {
+    var target = findMessage(channelId, messageId)
+    if (!target) return { message_id: String(messageId || ""), author_display_name: "", preview: "" }
+    var author = target.author || {}
+    var text = String(target.content || "").replace(/\s+/g, " ").trim()
+    if (!text && Array.isArray(target.attachments) && target.attachments.length)
+      text = String(target.attachments[0].filename || "attachment")
+    if (text.length > 120) text = text.slice(0, 120)
+    return { message_id: String(messageId || ""),
+      author_display_name: String(author.display_name || author.username || ""), preview: text }
+  }
+
+  function pendingRow(channelId, content, replyTo) {
+    var me = user || {}
+    return {
+      id: "pending-" + (++pendingSeq),
+      channel_id: channelId,
+      guild_id: null,
+      author: { id: selfId, username: String(me.username || ""), display_name: String(me.display_name || me.username || ""),
+        avatar_url: me.avatar_url || null, bot: false },
+      content: String(content || ""),
+      timestamp: new Date().toISOString(),
+      edited_timestamp: null,
+      nonce: "",
+      reply_to: replyTo ? replyPreview(channelId, replyTo) : null,
+      attachments: [], embeds: [], reactions: [],
+      mentions_self: false, system: false,
+      pending: true
+    }
+  }
+
+  function removeRow(channelId, rowId) {
+    var entry = channelEntry(channelId)
+    if (!entry) return
+    var rows = entry.messages || []
+    var next = rows.filter(function(row) { return String(row.id || "") !== rowId })
+    if (next.length !== rows.length) patchChannelEntry(channelId, { messages: next })
+  }
+
+  function replaceRow(channelId, rowId, row) {
+    var entry = channelEntry(channelId)
+    if (!entry) return false
+    var rows = entry.messages || []
+    for (var i = rows.length - 1; i >= 0; i--) {
+      if (String(rows[i].id || "") !== rowId) continue
+      var next = rows.slice()
+      next[i] = row
+      patchChannelEntry(channelId, { messages: next })
+      return true
+    }
+    return false
+  }
+
+  function forgetNonceFor(rowId) {
+    var next = ({})
+    var changed = false
+    for (var nonce in pendingByNonce) {
+      if (pendingByNonce[nonce] === rowId) { changed = true; continue }
+      next[nonce] = pendingByNonce[nonce]
+    }
+    if (changed) pendingByNonce = next
+  }
+
+  // Optimistic send: the row shows immediately as pending; the gateway echo
+  // (same nonce) replaces it. Failure removes the row and hands the text
+  // back to the composer through the draft.
+  function sendMessage(channelId, content, replyTo) {
+    var id = String(channelId || "")
+    var text = String(content || "")
+    if (!id || !text.trim()) return false
+    if (!ready || !isOpen(id)) { fail("Not connected to Discord"); return false }
+    var row = pendingRow(id, text, replyTo)
+    var rowId = row.id
+    var fields = { channel_id: id, content: text }
+    if (replyTo) fields.reply_to = String(replyTo)
+    patchChannelEntry(id, { messages: messagesFor(id).concat([row]) })
+    send("send", fields, function(ok, result) {
+      if (!ok) {
+        root.removeRow(id, rowId)
+        root.setDraft(id, text)
+        root.draftRestored(id)
+        return
+      }
+      var messageId = result && result.message_id ? String(result.message_id) : ""
+      var nonce = result && result.nonce ? String(result.nonce) : ""
+      // The echo may have beaten the response: then the real row is already
+      // in the window and the pending one just goes away.
+      if (messageId && root.findMessage(id, messageId)) { root.removeRow(id, rowId); return }
+      if (!nonce || !root.findMessage(id, rowId)) { root.removeRow(id, rowId); return }
+      var next = Api.shallowCopy(root.pendingByNonce)
+      next[nonce] = rowId
+      root.pendingByNonce = next
+    })
+    noteActivity()
+    return true
+  }
+
+  function editMessage(channelId, messageId, content, callback) {
+    var text = String(content || "")
+    if (!text.trim() || !ready) return false
+    send("edit", { channel_id: String(channelId || ""), message_id: String(messageId || ""), content: text },
+      function(ok) { if (typeof callback === "function") callback(ok) })
+    return true
+  }
+
+  function deleteMessage(channelId, messageId) {
+    if (!ready) return false
+    send("delete", { channel_id: String(channelId || ""), message_id: String(messageId || "") }, null)
+    return true
+  }
+
+  function react(channelId, messageId, emoji) {
+    if (!ready) return false
+    send("react", { channel_id: String(channelId || ""), message_id: String(messageId || ""), emoji: String(emoji || "") }, null)
+    return true
+  }
+
+  function unreact(channelId, messageId, emoji) {
+    if (!ready) return false
+    send("unreact", { channel_id: String(channelId || ""), message_id: String(messageId || ""), emoji: String(emoji || "") }, null)
+    return true
+  }
+
+  // Own typing indicator, throttled per channel; silent on failure (a
+  // typing error is never worth a footer line).
+  function typing(channelId) {
+    var id = String(channelId || "")
+    if (!id || !ready || !isOpen(id)) return false
+    var now = Date.now()
+    var last = Number(lastTypingAt[id]) || 0
+    if (now - last < typingThrottleMs) return false
+    lastTypingAt[id] = now
+    backendClient.sendCommand("typing", { channel_id: id }, null)
+    return true
+  }
+
+  function stagedFor(channelId) {
+    var list = staged[String(channelId || "")]
+    return Array.isArray(list) ? list : []
+  }
+
+  function setStaged(channelId, list) {
+    var next = Api.shallowCopy(staged)
+    if (list && list.length) next[String(channelId || "")] = list
+    else delete next[String(channelId || "")]
+    staged = next
+  }
+
+  function stageFile(channelId, path, size) {
+    var file = String(path || "")
+    var filename = file.slice(file.lastIndexOf("/") + 1)
+    setStaged(channelId, stagedFor(channelId).concat([{ path: file, filename: filename,
+      size: Math.max(0, Number(size) || 0), sent: 0, total: 0, uploading: false }]))
+  }
+
+  // Remove a chip and its file on disk.
+  function unstage(channelId, path) {
+    var file = String(path || "")
+    var kept = stagedFor(channelId).filter(function(item) { return item.path !== file })
+    setStaged(channelId, kept)
+    if (file) Quickshell.execDetached(["rm", "-f", file])
+  }
+
+  function patchStaged(channelId, fields, filter) {
+    var list = stagedFor(channelId)
+    if (!list.length) return
+    setStaged(channelId, list.map(function(item) {
+      return filter && !filter(item) ? item : Api.assign(Api.shallowCopy(item), fields)
+    }))
+  }
+
+  // Send text + the staged files. The chips show upload_progress (routed by
+  // this request's id); success clears them and removes the staged files,
+  // failure leaves them in place with the error in the footer.
+  function upload(channelId, content, replyTo, callback) {
+    var id = String(channelId || "")
+    var files = stagedFor(id)
+    if (!id || !files.length) return false
+    if (!ready || !isOpen(id)) { fail("Not connected to Discord"); return false }
+    var paths = files.map(function(item) { return item.path })
+    var fields = { channel_id: id, paths: paths }
+    var text = String(content || "")
+    if (text) fields.content = text
+    if (replyTo) fields.reply_to = String(replyTo)
+    patchStaged(id, { uploading: true, sent: 0 })
+    var requestId = send("upload", fields, function(ok) {
+      var remaining = Api.shallowCopy(root.uploadChannels)
+      delete remaining[String(requestId)]
+      root.uploadChannels = remaining
+      if (ok) {
+        root.setStaged(id, [])
+        root.setDraft(id, "")
+        Quickshell.execDetached(["rm", "-f"].concat(paths))
+      } else root.patchStaged(id, { uploading: false })
+      if (typeof callback === "function") callback(ok)
+    })
+    if (!requestId) return false
+    var next = Api.shallowCopy(uploadChannels)
+    next[String(requestId)] = id
+    uploadChannels = next
+    noteActivity()
+    return true
+  }
+
+  function applyUploadProgress(message) {
+    var channelId = uploadChannels[String(message.upload_id)]
+    if (!channelId) return
+    var filename = String(message.filename || "")
+    patchStaged(channelId, { sent: Math.max(0, Number(message.bytes_sent) || 0),
+      total: Math.max(0, Number(message.bytes_total) || 0) },
+      function(item) { return item.filename === filename })
+  }
+
+  // Ctrl+V pipeline. Lists clipboard types; an image/* type is written to
+  // the staging dir and becomes a chip, anything else leaves the paste to
+  // the text input. `callback(staged)` runs once the decision is made.
+  function stageClipboardImage(channelId, callback) {
+    var id = String(channelId || "")
+    var done = function(staged) { if (typeof callback === "function") callback(staged) }
+    if (!id || !stagedDir || clipboardList.running || clipboardSave.running) { done(false); return }
+    clipboardList.onDone = function(types) {
+      var mime = Api.bestImageType(types)
+      if (!mime) { done(false); return }
+      var ext = Api.imageExtension(mime)
+      var target = root.stagedDir + "/paste-" + Qt.formatDateTime(new Date(), "yyyyMMdd-HHmmss")
+        + "-" + (++root.pendingSeq) + "." + ext
+      clipboardSave.onDone = function(ok, size) {
+        if (!ok) { root.fail("Could not read the image from the clipboard"); done(false); return }
+        root.stageFile(id, target, size)
+        done(true)
+      }
+      clipboardSave.target = target
+      clipboardSave.command = ["sh", "-c",
+        'umask 077; mkdir -p "$(dirname "$OD_OUT")" && chmod 700 "$(dirname "$OD_OUT")" && exec "$0" "$@" > "$OD_OUT"']
+        .concat(root.clipboardCommand(["--type", mime]))
+      clipboardSave.environment = ({ OD_OUT: target })
+      clipboardSave.running = true
+    }
+    clipboardList.command = clipboardCommand(["--list-types"])
+    clipboardList.running = true
+  }
+
   function typersFor(channelId) {
     var list = typers[String(channelId || "")]
     return Array.isArray(list) ? list : []
@@ -607,9 +910,18 @@ Item {
     for (var i = rows.length - 1; i >= 0; i--)
       if (String(rows[i].id || "") === id) return
     noteAuthors([row])
+    // Own echo of an optimistic send: re-key the pending row in place.
+    var nonce = String(row.nonce || "")
+    var pendingId = nonce ? pendingByNonce[nonce] : undefined
+    if (pendingId && isOwn(row)) {
+      forgetNonceFor(pendingId)
+      if (replaceRow(channelId, pendingId, row)) return
+    }
     var next = rows.concat([row])
-    if (rows.length && Api.compareIds(rows[rows.length - 1].id, id) > 0)
-      next.sort(function(a, b) { return Api.compareIds(a.id, b.id) })
+    var lastReal = rows.length - 1
+    while (lastReal >= 0 && rows[lastReal].pending) lastReal--
+    if (lastReal >= 0 && Api.compareIds(rows[lastReal].id, id) > 0)
+      next.sort(function(a, b) { return Api.compareRows(a, b) })
     var fields = { messages: next }
     var viewed = channelId === currentChannelId && !timelinePinned
     if (next.length > messageWindowCap && !viewed) {
@@ -829,6 +1141,9 @@ Item {
       case "typing_start":
         applyTypingStart(message)
         break
+      case "upload_progress":
+        applyUploadProgress(message)
+        break
       default:
         break
     }
@@ -841,6 +1156,8 @@ Item {
     readState = ({})
     typers = ({})
     knownUsers = ({})
+    pendingByNonce = ({})
+    uploadChannels = ({})
     typerTimer.running = false
   }
 
@@ -976,6 +1293,61 @@ Item {
     function toggle(): string { return root.togglePanel() }
     function open(): string { return root.openPanel(null) }
     function close(): string { return root.closePanel() }
+  }
+
+  // Clipboard pipeline processes (stageClipboardImage). Output is tiny
+  // (mime list / byte count), so collecting it is fine.
+  Process {
+    id: clipboardList
+    property var onDone: null
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var types = String(text || "").split("\n").map(function(t) { return t.trim() })
+          .filter(function(t) { return t !== "" })
+        var cb = clipboardList.onDone
+        clipboardList.onDone = null
+        if (typeof cb === "function") cb(types)
+      }
+    }
+    onExited: function(code) {
+      if (code === 0) return
+      var cb = clipboardList.onDone
+      clipboardList.onDone = null
+      if (typeof cb === "function") cb([])
+    }
+  }
+
+  Process {
+    id: clipboardSave
+    property var onDone: null
+    property string target: ""
+    onExited: function(code) {
+      var cb = clipboardSave.onDone
+      clipboardSave.onDone = null
+      if (code !== 0) {
+        Quickshell.execDetached(["rm", "-f", clipboardSave.target])
+        if (typeof cb === "function") cb(false, 0)
+        return
+      }
+      // Size read back separately so the write and the measurement stay
+      // two plain commands.
+      sizeProbe.onDone = cb
+      sizeProbe.command = ["stat", "-c", "%s", clipboardSave.target]
+      sizeProbe.running = true
+    }
+  }
+
+  Process {
+    id: sizeProbe
+    property var onDone: null
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var cb = sizeProbe.onDone
+        sizeProbe.onDone = null
+        var size = Number(String(text || "").trim())
+        if (typeof cb === "function") cb(true, isFinite(size) ? size : 0)
+      }
+    }
   }
 
   DaemonManager {

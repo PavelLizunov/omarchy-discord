@@ -6,11 +6,14 @@ Go backend, instead of the 1 GB Electron app. Same architecture as
 quickshell.spotify: QML owns everything visible, a systemd user unit owns the
 Discord connection, and a private JSON-lines socket joins them.
 
-**Status: Phase 1, read-only client.** Bar mark with mention badge and unread dot,
-token login, guild rail + channel list, a virtualized message timeline with history
-paging and markdown rendering, live read state (ack on read), and a typing line.
-No composer yet (Phase 2); threads and forums are listed but open in Phase 3; voice
-and stage channels are hidden entirely (voice is a non-goal). See `docs/PLAN.md` for
+**Status: Phase 2, participation.** Everything from Phase 1 (bar mark with mention
+badge and unread dot, token login, guild rail + channel list, virtualized timeline with
+history paging and markdown rendering, live read state, typing line) plus a composer:
+send, reply, edit, delete, outgoing typing, and image paste (`Ctrl+V` stages a
+clipboard image as an attachment chip; `Enter` uploads it). Reactions, the quick
+switcher, and the emoji picker are Phase 3; threads and forums are listed but open in
+Phase 3; voice and stage channels are hidden entirely (voice is a non-goal). See
+`docs/PLAN.md` for
 the roadmap and `docs/CONVENTIONS.md` for the mechanics contract.
 
 ## Install (development)
@@ -64,34 +67,50 @@ printf '%s' "$TOKEN" | ~/.local/lib/omarchy-discord/omarchy-discord-backend logi
 `login` reads the token from stdin. `omarchy-discord-backend check` prints an
 environment summary.
 
-## Keyboard (Phase 1 panel)
+## Keyboard
 
-Two focus zones: the **sidebar** (guild rail + channel list, `h`/`l` or arrows move
-between the two columns) and the **timeline**. Focus is always visible; the active
-column or timeline carries the focus border.
+Three focus zones: the **sidebar** (guild rail + channel list, `h`/`l` or arrows move
+between the two columns), the **timeline**, and the **composer**. Focus is always
+visible; the active column, timeline, or composer carries the focus border. Opening a
+channel focuses the composer.
 
 | Key | Action |
 |---|---|
-| `Alt+h` / `Alt+l` | Move focus zone: sidebar ↔ timeline |
+| `Alt+h` / `Alt+l` | Move focus zone: sidebar ↔ timeline ↔ composer |
 | `j` / `k`, arrows | Move the cursor in the focused column / timeline |
 | `Enter` (rail) | Select the server and focus its channel list |
-| `Enter` (channel list) | Open the channel and focus the timeline |
+| `Enter` (channel list) | Open the channel and focus the composer |
 | `h` / `l`, Left / Right | Rail ↔ channel list ↔ timeline |
-| `Alt+↑` / `Alt+↓` | Previous / next channel in the current list |
+| `Alt+↑` / `Alt+↓` | Previous / next channel in the current list (works from the composer too) |
 | `Alt+Shift+↑` / `Alt+Shift+↓` | Previous / next **unread** channel |
 | `gg` / `G`, Home / End, `PgUp` / `PgDn` | Timeline top (pages history) / newest / page |
+| `R` (timeline) | Reply to the focused message: reply line appears in the composer, `Esc` cancels it |
+| `D` `D` (timeline) | Delete the focused message if it is yours: the first `D` arms it for 3 s ("D again to delete"), the second deletes; `Esc` or moving disarms |
+| `E` (timeline) | Reactions: not yet, shows a hint (Phase 3) |
 | `Y` / `O` | Copy the focused message's text / open its first link or attachment |
-| `r` | Reload (structure, channel list, open channel; starts the backend if stopped) |
+| `Enter` (composer) | Send; with staged attachments, upload them with the text |
+| `Shift+Enter` (composer) | Newline |
+| `↑` (empty composer) | Edit your last message in the loaded window; `Enter` saves, `Esc` cancels |
+| `Ctrl+V` (composer) | Paste: an image on the clipboard becomes an attachment chip (screenshot → `Ctrl+V` → `Enter`); text pastes normally |
+| `Tab` / `Shift+Tab`, Left / Right (composer) | Move the cursor onto the attachment chips; `x` / Delete removes the focused chip; `Esc` returns to the input |
+| `r` (sidebar) | Reload (structure, channel list, open channel; starts the backend if stopped) |
+| `Esc` (composer) | Cancel reply/edit mode, else mark the channel read and focus the timeline |
 | `Esc` (timeline) | Mark the channel read and return to the sidebar |
 | `Esc` (channel list) | Back to the rail |
 | `Esc` (rail) | Close the panel |
-| `Tab` / `Shift+Tab` | Cycle rail → channel list → timeline → Log out → Close; `Esc` on a button returns to the last zone |
+| `Tab` / `Shift+Tab` | Cycle rail → channel list → timeline → composer (→ its chips) → Log out → Close; `Esc` on a button returns to the last zone |
 
-Reaching the bottom of the timeline while it is focused marks the channel read
-(debounced); scrolling back up never acks. Middle-clicking the bar mark opens the
-most recent unread DM. The open channel keeps a rolling window of the newest 500
-messages while you are at the bottom (older rows become pageable history again);
-nothing is trimmed while you are scrolled up.
+Reaching the bottom of the timeline while the timeline or the composer is focused
+marks the channel read (debounced); scrolling back up never acks. Sent messages show
+immediately as a muted pending row and are re-keyed when the gateway echoes them; a
+failed send removes the row and puts the text back into the composer with the error
+in the footer. Drafts and staged attachments are kept per channel while the shell
+runs. Staged images live in `$XDG_RUNTIME_DIR/omarchy-discord/staged/` (0700) and are
+removed once uploaded or when their chip is removed. Outgoing typing is sent at most
+once per 8 s per channel. Middle-clicking the bar mark opens the most recent unread DM.
+The open channel keeps a rolling window of the newest 500 messages while you are at
+the bottom (older rows become pageable history again); nothing is trimmed while you
+are scrolled up.
 
 ## Settings
 

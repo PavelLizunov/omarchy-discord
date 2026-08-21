@@ -292,6 +292,52 @@ cursor. The implementation patterns to copy are spotify's, verbatim:
 - Keymap per PLAN.md (Ctrl+K quick switcher, Alt+h/l zone moves, j/k roving, `R E Y O`
   message actions, `↑` edit-last in empty composer, Ctrl+/ cheatsheet).
 
+### Composer zone (`components/Composer.qml`)
+
+- The zone is a `FocusScope` whose keyboard owner is either the `TextArea` or a
+  zero-size `chipFocus` Item (chip cursor ≥ 0). Intercept keys on the **TextArea
+  itself** with `Keys.priority: Keys.BeforeItem`: key events go to the focused item
+  first, so a handler on an ancestor would only see what the TextArea left unaccepted.
+  Anything the composer does not accept bubbles to the panel `FocusScope`, which
+  treats a focused composer like a text input: only `Alt+↑/↓` (channel stepping) is
+  panel-level; single-letter shortcuts (`r` reload…) never fire while it has focus.
+- **Esc semantics** (innermost first): chip cursor → back to the input; edit mode →
+  cancel (draft restored); reply mode → cancel; else `leave()` → the panel marks the
+  channel read and focuses the timeline. The timeline's own Esc consumes the key while
+  a delete is armed (disarms) and otherwise goes to the sidebar.
+- **Enter** sends (`Shift+Enter` newlines); with staged chips it uploads instead;
+  in edit mode it saves. Empty text never sends. `↑` edits the newest own,
+  non-pending message only when the input is empty; the typed-but-unsent draft is
+  stashed and restored on cancel.
+- **Chip cursor**: `Tab`/`Shift+Tab` enter the chips from the input (forwards from
+  the first, backwards from the last when arriving via the panel's Tab cycle),
+  `←` at the input's start / `→` at its end also enter them, `←/→/h/l` move,
+  `x`/Delete/Backspace remove the focused chip **and its file**, `Tab` past the last
+  chip continues the panel cycle. Chips are never editable while their upload runs.
+- **State placement**: drafts (`Service.drafts`, mutated in place — nothing binds to
+  it) and staged attachments (`Service.staged`, replaced wholesale — chips bind to it)
+  live in Service so the panel can be destroyed between summons. The composer keeps
+  only modes (`editingId`, `replyToId`) and the chip cursor; both reset on channel
+  change.
+- **Optimistic rows** are ordinary message objects with `id: "pending-<n>"` and
+  `pending: true`; `Api.compareRows` sorts them after every real snowflake. The send
+  response's `nonce` maps to the pending row; the `message_create` echo with that
+  nonce (and our own author id) replaces it in place. An echo that beats the response
+  is appended normally and the response then just drops the pending row (matched by
+  `message_id`). Failure removes the row, writes the text back to the draft and emits
+  `draftRestored(channelId)`.
+- **Clipboard pipeline** runs in Service (`stageClipboardImage`): `wl-paste
+  --list-types` → best `image/*` (png > jpeg > webp > gif > any non-svg) → `sh -c
+  'umask 077; mkdir -p …; exec "$0" "$@" > "$OD_OUT"'` with `wl-paste --type <mime>`
+  → `stat -c %s`. Both wl-paste argv arrays come from the injectable
+  `clipboardCommand(args)` so a harness can substitute a script. No image type means
+  the TextArea's own `paste()` runs. Staged files:
+  `$XDG_RUNTIME_DIR/omarchy-discord/staged/paste-<yyyyMMdd-HHmmss>-<n>.<ext>`.
+- `upload_progress` events are routed by `upload_id` (the request id Service used)
+  to the channel and by `filename` to the chip; the chips show `bytes_sent/bytes_total`.
+- Ack-on-read: `Timeline.viewing` (timeline **or** composer zone focused) gates
+  `reachedBottom`; `active` (timeline zone only) still drives the cursor and border.
+
 ---
 
 ## 4. Backend conventions (lifecycle, packaging, keyring)
