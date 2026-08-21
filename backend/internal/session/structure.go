@@ -96,9 +96,9 @@ func lastReadMessageID(n *ningen.State, chID discord.ChannelID) *string {
 	return nil
 }
 
-// Guilds lists the account's guilds in the user's configured order (guild
-// folders, then legacy positions, then anything unlisted by name).
-func Guilds(n *ningen.State) ([]protocol.Guild, error) {
+// orderedGuilds returns the cached guilds in the user's configured order
+// (guild folders, then legacy positions, then anything unlisted by name).
+func orderedGuilds(n *ningen.State) ([]discord.Guild, error) {
 	gs, err := n.Cabinet.Guilds()
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return nil, err
@@ -130,7 +130,15 @@ func Guilds(n *ningen.State) ([]protocol.Guild, error) {
 		}
 		return strings.ToLower(gs[i].Name) < strings.ToLower(gs[j].Name)
 	})
+	return gs, nil
+}
 
+// Guilds lists the account's guilds as wire objects in display order.
+func Guilds(n *ningen.State) ([]protocol.Guild, error) {
+	gs, err := orderedGuilds(n)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]protocol.Guild, 0, len(gs))
 	for i, g := range gs {
 		var icon *string
@@ -242,6 +250,8 @@ func wireChannel(n *ningen.State, ch discord.Channel) protocol.Channel {
 		MentionCount:  mentionCount(n, ch.ID),
 		Muted:         n.ChannelIsMuted(ch.ID, unreadOpts),
 		Recipients:    make([]protocol.User, 0, len(ch.DMRecipients)),
+		MessageCount:  ch.MessageCount,
+		MemberCount:   ch.MemberCount,
 
 		LastReadMessageID: lastReadMessageID(n, ch.ID),
 	}

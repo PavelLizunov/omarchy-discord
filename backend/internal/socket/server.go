@@ -36,6 +36,13 @@ type Client interface {
 	// CloseChannel reports whether the channel was open.
 	CloseChannel(id string) bool
 	HasOpen(id string) bool
+	// SubscribeMembers / UnsubscribeMembers / HasMemberSub track the
+	// channels whose member list this client wants (subscribe_members); the
+	// set dies with the connection like the open set.
+	SubscribeMembers(id string)
+	// UnsubscribeMembers reports whether the channel was subscribed.
+	UnsubscribeMembers(id string) bool
+	HasMemberSub(id string) bool
 	// Push queues an event to this client only (per-request progress such
 	// as upload_progress); it shares the connection's writer with broadcasts.
 	Push(ev any)
@@ -59,10 +66,39 @@ func ClientFromContext(ctx context.Context) Client {
 // open. When All is set it is also delivered to every other client (a
 // message_create that should notify). Routed itself never hits the wire —
 // only Event is encoded.
+//
+// Open lists further channels any of which being open also qualifies, and
+// Members lists channels any of which being member-subscribed qualifies
+// (member_list_update, presence_update). A client receives a matching event
+// exactly once.
 type Routed struct {
 	ChannelID string
 	All       bool
+	Open      []string
+	Members   []string
 	Event     any
+}
+
+// matches reports whether a client with the given open and member sets gets
+// the event.
+func (r Routed) matches(open, members map[string]struct{}) bool {
+	if r.All {
+		return true
+	}
+	if _, ok := open[r.ChannelID]; ok && r.ChannelID != "" {
+		return true
+	}
+	for _, id := range r.Open {
+		if _, ok := open[id]; ok {
+			return true
+		}
+	}
+	for _, id := range r.Members {
+		if _, ok := members[id]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // DefaultPath computes $XDG_RUNTIME_DIR/omarchy-discord/backend.sock.
@@ -168,7 +204,7 @@ func (s *Server) Broadcast(ev any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for c := range s.conns {
-		if routed && !r.All && !c.hasOpenLocked(r.ChannelID) {
+		if routed && !r.matches(c.open, c.members) {
 			continue
 		}
 		c.send(line)
@@ -182,9 +218,10 @@ type conn struct {
 	once sync.Once
 	srv  *Server
 
-	// open is guarded by srv.mu so Broadcast's filter and open/close_channel
-	// never race.
-	open map[string]struct{}
+	// open and members are guarded by srv.mu so Broadcast's filter and
+	// open/close_channel / (un)subscribe_members never race.
+	open    map[string]struct{}
+	members map[string]struct{}
 
 	// lanes serializes open_channel/close_channel per channel id, in the order
 	// the requests were read. Without it a close could commit before a
@@ -270,16 +307,31 @@ func (c *conn) HasOpen(id string) bool {
 	return ok
 }
 
-func (c *conn) Push(ev any) { c.send(protocol.MustEncode(0, ev)) }
+func (c *conn) SubscribeMembers(id string) {
+	c.srv.mu.Lock()
+	defer c.srv.mu.Unlock()
+	c.members[id] = struct{}{}
+}
 
-// hasOpenLocked is HasOpen for callers already holding srv.mu.
-func (c *conn) hasOpenLocked(id string) bool {
-	_, ok := c.open[id]
+func (c *conn) UnsubscribeMembers(id string) bool {
+	c.srv.mu.Lock()
+	defer c.srv.mu.Unlock()
+	_, ok := c.members[id]
+	delete(c.members, id)
 	return ok
 }
 
+func (c *conn) HasMemberSub(id string) bool {
+	c.srv.mu.Lock()
+	defer c.srv.mu.Unlock()
+	_, ok := c.members[id]
+	return ok
+}
+
+func (c *conn) Push(ev any) { c.send(protocol.MustEncode(0, ev)) }
+
 func (s *Server) handle(ctx context.Context, nc net.Conn) {
-	c := &conn{nc: nc, out: make(chan []byte, queueDepth), done: make(chan struct{}), srv: s, open: map[string]struct{}{}, lanes: map[string]*ticket{}}
+	c := &conn{nc: nc, out: make(chan []byte, queueDepth), done: make(chan struct{}), srv: s, open: map[string]struct{}{}, members: map[string]struct{}{}, lanes: map[string]*ticket{}}
 	defer c.close()
 	go c.writer()
 	ctx = WithClient(ctx, c)

@@ -68,6 +68,9 @@ type Manager struct {
 	// replace them to avoid the network.
 	fetchTail   func(ctx context.Context, n *ningen.State, chID discord.ChannelID, limit uint) ([]discord.Message, error)
 	fetchBefore func(ctx context.Context, n *ningen.State, chID discord.ChannelID, before discord.MessageID, limit uint) ([]discord.Message, error)
+	// fetchChannel resolves an uncached thread for open_channel (one REST
+	// GET); tests replace it.
+	fetchChannel func(ctx context.Context, n *ningen.State, chID discord.ChannelID) (*discord.Channel, error)
 	// rest holds the write calls; now is the clock for throttles/progress.
 	rest restOps
 	now  func() time.Time
@@ -77,6 +80,10 @@ type Manager struct {
 	qrWait   time.Duration
 
 	typers typingThrottle
+	// members tracks displayed users for presence routing; memberDebounce is
+	// the member_list_update coalescing window (tests shorten it).
+	members        memberTracker
+	memberDebounce time.Duration
 	// media is the media cache (nil until Configure; fetch_media then fails).
 	media *media.Cache
 	// stagedDir is where QML stages pasted uploads; files under it are
@@ -105,7 +112,9 @@ type Manager struct {
 func New(kr Keyring) *Manager {
 	m := &Manager{kr: kr, events: make(chan any, 1024), lifecycle: protocol.LifecycleStarting, generation: 1}
 	m.runLoop = m.loop
-	m.fetchTail, m.fetchBefore = fetchTail, fetchBefore
+	m.fetchTail, m.fetchBefore, m.fetchChannel = fetchTail, fetchBefore, fetchChannel
+	m.memberDebounce = memberDebounce
+	m.members.reset()
 	m.rest, m.now = liveREST(), time.Now
 	m.runQR, m.newState, m.qrWait = liveQR, defaultNewState, qrFirstCodeWait
 	return m
@@ -334,6 +343,8 @@ func (m *Manager) installHandlers(n *ningen.State) {
 		m.bump()
 	})
 	m.installMessageHandlers(n)
+	m.installChannelHandlers(n)
+	m.installMemberHandlers(n)
 	resync := func() {
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -597,6 +608,16 @@ func (m *Manager) Handle(ctx context.Context, req *protocol.Request) (any, *prot
 		return m.fetchMedia(ctx, req)
 	case "set_config":
 		return m.setConfig(req)
+	case "quick_switch":
+		return m.quickSwitch(req)
+	case "list_threads":
+		return m.listThreads(req)
+	case "list_emoji":
+		return m.listEmoji()
+	case "subscribe_members":
+		return m.subscribeMembers(ctx, req)
+	case "unsubscribe_members":
+		return m.unsubscribeMembers(ctx, req)
 	case "start_qr_login":
 		if e := m.StartQRLogin(ctx); e != nil {
 			return nil, e

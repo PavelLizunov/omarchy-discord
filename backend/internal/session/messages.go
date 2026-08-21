@@ -310,6 +310,12 @@ func fetchBefore(ctx context.Context, n *ningen.State, chID discord.ChannelID, b
 	return n.Client.WithContext(ctx).MessagesBefore(chID, before, limit)
 }
 
+// fetchChannel is the one REST lookup open_channel makes for an uncached
+// thread (GET /channels/{id}).
+func fetchChannel(ctx context.Context, n *ningen.State, chID discord.ChannelID) (*discord.Channel, error) {
+	return n.Client.WithContext(ctx).Channel(chID)
+}
+
 // openChannel implements the open_channel command.
 func (m *Manager) openChannel(ctx context.Context, req *protocol.Request) (any, *protocol.Error) {
 	var p protocol.OpenChannelParams
@@ -328,7 +334,14 @@ func (m *Manager) openChannel(ctx context.Context, req *protocol.Request) (any, 
 	off := n.Offline()
 	ch, err := off.Cabinet.Channel(chID)
 	if err != nil {
-		return nil, protocol.Errorf(protocol.CodeUnknownChannel, "channel %s is not visible to this account", p.ChannelID)
+		// A thread the client learned of (a thread-starter system message,
+		// a link) may not be cached; ask Discord once and remember it.
+		fetched, ferr := m.fetchChannel(ctx, n, chID)
+		if ferr != nil || fetched == nil || !isThread(fetched.Type) {
+			return nil, protocol.Errorf(protocol.CodeUnknownChannel, "channel %s is not visible to this account", p.ChannelID)
+		}
+		n.Cabinet.ChannelSet(fetched, false)
+		ch = fetched
 	}
 	if ch.GuildID.IsValid() {
 		if !off.HasPermissions(chID, discord.PermissionViewChannel) {

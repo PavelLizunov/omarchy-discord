@@ -98,6 +98,9 @@ Item {
   // "url|size" -> true after a failed fetch; cleared per connection so a
   // binding never loops on a dead URL.
   property var mediaFailed: ({})
+  // "url|size" -> true once an evicted path has been dropped and re-fetched
+  // (one retry per key per connection, so a broken file never loops).
+  property var mediaRetried: ({})
   readonly property int avatarSize: 64
   readonly property int emojiSize: 32
 
@@ -119,6 +122,12 @@ Item {
   property var qr: null
   property bool qrBusy: false
   property int qrRevision: 0
+  // The backend replays the current qr_code on every connect while a flow
+  // runs; if it has not arrived qrReplayMs after a reconnect landed us in
+  // qr_pending with no code, the panel offers Cancel / Try again instead of
+  // waiting forever.
+  readonly property int qrReplayMs: 3000
+  property bool qrMissing: false
 
   // --- panel view state (the panel is destroyed on hide; this restores it) ---
   property string selectedGuildId: ""
@@ -222,6 +231,7 @@ Item {
     imagePreviews: imagePreviews,
     mediaPaths: mediaPaths,
     mediaPath: function(url, size) { return root.mediaPath(url, size) },
+    mediaError: function(path) { return root.mediaError(path) },
     emojiPath: function(id, animated) { return root.emojiPath(id, animated) }
   })
 
@@ -508,7 +518,9 @@ Item {
     send("open_channel", { channel_id: id }, function(ok, result) {
       if (!root.isOpen(id)) return
       if (!ok) {
-        root.patchChannelEntry(id, { loading: false })
+        // Not open on the backend: forget it here too, or every later write
+        // would fail with channel_not_open instead of this error.
+        root.forgetChannel(id)
         return
       }
       var rows = result && Array.isArray(result.messages) ? result.messages : []
@@ -579,13 +591,18 @@ Item {
   function closeChannel(channelId) {
     var id = String(channelId || "")
     if (!isOpen(id)) return
+    forgetChannel(id)
+    if (connected) backendClient.sendCommand("close_channel", { channel_id: id }, null)
+  }
+
+  // Drop a channel from the open set and the store (no backend call).
+  function forgetChannel(id) {
     openChannels = openChannels.filter(function(open) { return open !== id })
     setChannelEntry(id, null)
     var nextTypers = Api.shallowCopy(typers)
     delete nextTypers[id]
     typers = nextTypers
     if (currentChannelId === id) currentChannelId = ""
-    if (connected) backendClient.sendCommand("close_channel", { channel_id: id }, null)
   }
 
   function reopenChannels() {
@@ -841,9 +858,13 @@ Item {
     }))
   }
 
-  // Send text + the staged files. The chips show upload_progress (routed by
-  // this request's id); success clears them and removes the staged files,
-  // failure leaves them in place with the error in the footer.
+  // Send text + the staged files. The composer clears its input on submit
+  // (like sendMessage); the chips show upload_progress (routed by this
+  // request's id). Success clears them and removes the staged files, failure
+  // leaves them in place, puts the text back into the draft (draftRestored,
+  // as a failed send does) and the error in the footer. The draft is only
+  // cleared when it still holds the text that was sent, so anything typed
+  // during the upload survives.
   function upload(channelId, content, replyTo, callback) {
     var id = String(channelId || "")
     var files = stagedFor(id)
@@ -861,9 +882,15 @@ Item {
       root.uploadChannels = remaining
       if (ok) {
         root.setStaged(id, [])
-        root.setDraft(id, "")
+        if (text && root.draftFor(id) === text) root.setDraft(id, "")
         Quickshell.execDetached(["rm", "-f"].concat(paths))
-      } else root.patchStaged(id, { uploading: false })
+      } else {
+        root.patchStaged(id, { uploading: false })
+        if (text) {
+          root.setDraft(id, text)
+          root.draftRestored(id)
+        }
+      }
       if (typeof callback === "function") callback(ok)
     })
     if (!requestId) return false
@@ -1140,6 +1167,25 @@ Item {
     mediaPaths = next
   }
 
+  // An Image failed to load a cached path (the backend's LRU evicted it):
+  // forget the path so the bindings ask again, once per key per connection.
+  // Returns true when a re-fetch was triggered.
+  function mediaError(path) {
+    var file = String(path || "")
+    if (!file) return false
+    var dropped = []
+    for (var key in mediaPaths)
+      if (String(mediaPaths[key]) === file && !mediaRetried[key]) dropped.push(key)
+    if (!dropped.length) return false
+    var next = Api.shallowCopy(mediaPaths)
+    for (var i = 0; i < dropped.length; i++) {
+      mediaRetried[dropped[i]] = true
+      delete next[dropped[i]]
+    }
+    mediaPaths = next
+    return true
+  }
+
   // media_ready is keyed by url only; two sizes of one url share the event.
   // With a single size outstanding the path is adopted directly, otherwise
   // each size is re-requested (a completed one is now a cache hit).
@@ -1201,28 +1247,41 @@ Item {
     var last = Number(notifyLastAt[channelId]) || 0
     var isDm = message.guild_id === null || message.guild_id === undefined || String(message.guild_id) === ""
     if (now - last < notifyWindowMs) {
-      // Inside the per-channel window: hold it, one flush per window.
+      // Inside the per-channel window: hold it, one flush per window. The
+      // flush is due when the window ends, never later: a running timer is
+      // left alone so continuous traffic cannot postpone it.
       var held = notifyHeld[channelId]
       notifyHeld[channelId] = { message: message.message, channel_name: String(message.channel_name || ""),
         isDm: isDm, count: held ? held.count + 1 : 1 }
-      notifyFlushTimer.restart()
+      if (!notifyFlushTimer.running) scheduleNotifyFlush(last + notifyWindowMs - now)
       return
     }
     notifyLastAt[channelId] = now
     fireNotification(notificationArgs(message.message, String(message.channel_name || ""), isDm, 1))
   }
 
+  function scheduleNotifyFlush(ms) {
+    notifyFlushTimer.interval = Math.max(1, Math.ceil(ms))
+    notifyFlushTimer.restart()
+  }
+
+  // Fire every held notification whose window has ended; re-arm for the
+  // earliest one still inside its window.
   function flushNotifications() {
     var now = Date.now()
-    var again = false
+    var nextDue = -1
     for (var channelId in notifyHeld) {
       var held = notifyHeld[channelId]
-      if (now - (Number(notifyLastAt[channelId]) || 0) < notifyWindowMs) { again = true; continue }
+      var remaining = (Number(notifyLastAt[channelId]) || 0) + notifyWindowMs - now
+      if (remaining > 0) {
+        if (nextDue < 0 || remaining < nextDue) nextDue = remaining
+        continue
+      }
       delete notifyHeld[channelId]
       notifyLastAt[channelId] = now
       fireNotification(notificationArgs(held.message, held.channel_name, held.isDm, held.count))
     }
-    if (again) notifyFlushTimer.restart()
+    if (nextDue >= 0) scheduleNotifyFlush(nextDue)
   }
 
   // argv after "notify-send". Nothing but the preview text, the channel /
@@ -1262,14 +1321,38 @@ Item {
     backendClient.sendCommand("start_qr_login", null, function(ok, result, error) {
       root.qrBusy = false
       if (!ok) root.fail(error || "QR login is unavailable right now")
+      // Defensive: should the response beat the events, wait for them.
+      else root.watchQrReplay()
     })
     return true
   }
 
-  function cancelQrLogin() {
+  function cancelQrLogin(callback) {
     if (!connected) return false
-    backendClient.sendCommand("cancel_qr_login", null, null)
+    backendClient.sendCommand("cancel_qr_login", null, function(ok, result, error) {
+      if (typeof callback === "function") callback(ok)
+    })
     return true
+  }
+
+  // Cancel the flow the backend still reports and start a fresh one (the
+  // panel's Try again when the code never came back after a reconnect).
+  function restartQrLogin() {
+    if (lifecycle !== "qr_pending") return startQrLogin()
+    qrMissing = false
+    return cancelQrLogin(function() { root.startQrLogin() })
+  }
+
+  // In qr_pending with no code in hand (reconnected mid-flow, or a response
+  // that beat its events): the backend replays qr_code on connect, so wait
+  // qrReplayMs for it before flagging the code as missing.
+  function watchQrReplay() {
+    if (lifecycle === "qr_pending" && qr === null && !qrBusy) {
+      if (!qrReplayTimer.running) qrReplayTimer.restart()
+    } else {
+      qrReplayTimer.stop()
+      qrMissing = false
+    }
   }
 
   // Forget a finished QR attempt (back to the login choices).
@@ -1279,6 +1362,8 @@ Item {
 
   function applyQrEvent(name, message) {
     var current = qr || ({})
+    qrReplayTimer.stop()
+    qrMissing = false
     switch (name) {
       case "qr_code":
         qr = { stage: "code", url: String(message.url || ""), fingerprint: String(message.fingerprint || ""),
@@ -1331,6 +1416,7 @@ Item {
     if (next.error) lastError = Api.redact(String(next.error))
     // A session coming up (QR approved, token login) ends the QR view.
     if (qr && (now === "connecting" || now === "ready")) qr = null
+    watchQrReplay()
     if (now === "ready" && was !== "ready") {
       refreshStructure()
       // Open channels are per socket connection: re-open after every
@@ -1472,6 +1558,12 @@ Item {
   }
 
   Timer {
+    id: qrReplayTimer
+    interval: root.qrReplayMs
+    onTriggered: root.qrMissing = root.lifecycle === "qr_pending" && root.qr === null && !root.qrBusy
+  }
+
+  Timer {
     id: reconnectGraceTimer
     interval: 3000
     onTriggered: root.reconnectGraceActive = false
@@ -1546,9 +1638,12 @@ Item {
       // In-flight fetches died with the socket; let bindings ask again.
       root.mediaPending = ({})
       root.mediaFailed = ({})
+      root.mediaRetried = ({})
       if (backendClient.connected) root.sendConfig()
       else {
         root.qr = null
+        root.qrMissing = false
+        qrReplayTimer.stop()
         root.notifyHeld = ({})
       }
       if (!backendClient.connected) {

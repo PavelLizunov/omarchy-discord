@@ -75,6 +75,13 @@ Item {
     try { return String(ctx.mediaPath(String(url), size) || "") } catch (e) { return "" }
   }
 
+  // A cached file failed to load (evicted): tell the service so it drops
+  // the path and fetches again (once).
+  function mediaError(path) {
+    if (!path || !ctx || typeof ctx.mediaError !== "function") return
+    try { ctx.mediaError(String(path)) } catch (e) {}
+  }
+
   function emojiPath(id) {
     if (!id || !ctx || typeof ctx.emojiPath !== "function") return ""
     try { return String(ctx.emojiPath(String(id), false) || "") } catch (e) { return "" }
@@ -188,6 +195,7 @@ Item {
       sourceSize.width: root.avatarSize * 2
       sourceSize.height: root.avatarSize * 2
       source: root.avatarPath ? "file://" + root.avatarPath : ""
+      onStatusChanged: if (status === Image.Error) root.mediaError(root.avatarPath)
     }
     MultiEffect {
       id: avatarEffect
@@ -360,6 +368,7 @@ Item {
           sourceSize.width: embedRow.thumbSize * 2
           sourceSize.height: embedRow.thumbSize * 2
           source: embedRow.thumbPath ? "file://" + embedRow.thumbPath : ""
+          onStatusChanged: if (status === Image.Error) root.mediaError(embedRow.thumbPath)
 
           Rectangle {
             anchors.fill: parent
@@ -415,7 +424,7 @@ Item {
             sourceSize.width: embedRow.imageBox.width * 2
             sourceSize.height: embedRow.imageBox.height * 2
             source: embedRow.imagePath ? "file://" + embedRow.imagePath : ""
-            onStatusChanged: if (status === Image.Ready) {
+            onStatusChanged: if (status === Image.Error) root.mediaError(embedRow.imagePath); else if (status === Image.Ready) {
               // Fit the loaded size into the caps; paintedWidth follows.
               var box = root.previewSize({ width: implicitWidth, height: implicitHeight }, embedColumn.width)
               width = box.width
@@ -474,6 +483,7 @@ Item {
               sourceSize.width: chip.emojiPx * 2
               sourceSize.height: chip.emojiPx * 2
               source: chip.emojiFile ? "file://" + chip.emojiFile : ""
+              onStatusChanged: if (status === Image.Error) root.mediaError(chip.emojiFile)
             }
             Text {
               visible: chip.emojiFile === ""
@@ -563,6 +573,7 @@ Item {
         sourceSize.width: preview.box.width * 2
         sourceSize.height: preview.box.height * 2
         source: !preview.covered && preview.path ? "file://" + preview.path : ""
+        onStatusChanged: if (status === Image.Error) root.mediaError(preview.path)
       }
       MouseArea {
         width: preview.box.width

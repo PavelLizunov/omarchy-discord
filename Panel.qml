@@ -47,9 +47,15 @@ Item {
   // the login choices while a flow runs or has just ended (Try again).
   readonly property var qr: service ? service.qr : null
   readonly property string qrStage: qr ? String(qr.stage || "") : ""
+  // Gate on the lifecycle, the pending start and any qr object so the view
+  // never flashes the choices between a response and its events.
   readonly property bool qrView: showLogin && (lifecycle === "qr_pending"
-    || !!(service && service.qrBusy) || qrStage === "cancelled")
-  readonly property bool qrCancelable: lifecycle === "qr_pending" && (qrStage === "code" || qrStage === "scanned")
+    || !!(service && service.qrBusy) || qr !== null)
+  // Any running flow can be cancelled, code in hand or not (after a
+  // reconnect the code is replayed; until then Cancel must still work).
+  readonly property bool qrCancelable: lifecycle === "qr_pending" && qrStage !== "approved"
+  // Reconnected mid-flow and the replayed code never came: Try again.
+  readonly property bool qrMissing: !!(service && service.qrMissing)
   property int qrSecondsLeft: 0
   // The panel window owns keyboard focus (notification suppression).
   readonly property bool windowActive: opened && focusScope.Window.active
@@ -178,15 +184,20 @@ Item {
     if (service) service.startQrLogin()
   }
 
-  // Esc in the QR view: cancel a running flow, dismiss a finished one.
+  // Esc in the QR view: cancel a running flow, dismiss a finished one. An
+  // approved flow is past cancelling (the backend is exchanging the ticket).
   function leaveQr() {
     if (!service) return
-    if (qrCancelable) service.cancelQrLogin()
+    if (lifecycle === "qr_pending") { if (qrStage !== "approved") service.cancelQrLogin() }
     else service.dismissQr()
   }
 
   function qrStatusText() {
-    if (!qr) return "Starting QR login…"
+    if (!qr) {
+      if (qrMissing) return "The QR code did not come back after reconnecting."
+      return lifecycle === "qr_pending" && !(service && service.qrBusy)
+        ? "Reconnecting to QR login…" : "Starting QR login…"
+    }
     var user = qr.user || null
     var name = user ? String(user.username || "") : ""
     switch (qrStage) {
@@ -854,7 +865,7 @@ Item {
                     wrapMode: Text.WrapAnywhere
                     horizontalAlignment: Text.AlignHCenter
                     text: root.qr && root.qr.url && qrImage.status !== Image.Loading
-                      ? String(root.qr.url) : "Requesting a code…"
+                      ? String(root.qr.url) : (root.qrMissing ? "" : "Requesting a code…")
                     color: Color.muted
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
@@ -907,6 +918,7 @@ Item {
                     sourceSize.height: height * 2
                     readonly property string path: root.service ? root.service.mediaPath(root.qrAvatarUrl(), 64) : ""
                     source: path ? "file://" + path : ""
+                    onStatusChanged: if (status === Image.Error && root.service) root.service.mediaError(path)
                   }
                   MultiEffect {
                     id: qrAvatarEffect
@@ -952,13 +964,14 @@ Item {
               Button {
                 id: qrActionButton
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: root.qrStage === "cancelled" ? "Try again" : "Cancel"
+                text: root.qrStage === "cancelled" || root.qrMissing ? "Try again" : "Cancel"
                 focusable: true
                 activeFocusOnTab: false
                 foreground: root.foreground
                 enabled: !(root.service && root.service.qrBusy)
                 onClicked: {
-                  if (root.qrStage === "cancelled") root.startQrLogin()
+                  if (root.qrMissing) root.service.restartQrLogin()
+                  else if (root.qrStage === "cancelled") root.startQrLogin()
                   else root.leaveQr()
                 }
               }
@@ -1131,6 +1144,7 @@ Item {
                       readonly property string path: !guildRow.isDms && root.service && guildRow.row.icon_url
                         ? root.service.mediaPath(String(guildRow.row.icon_url), 64) : ""
                       source: path ? "file://" + path : ""
+                      onStatusChanged: if (status === Image.Error && root.service) root.service.mediaError(path)
                     }
                     MultiEffect {
                       id: guildIconEffect
@@ -1494,12 +1508,20 @@ Item {
             elide: Text.ElideRight
             text: {
               if (!root.ready) {
-                if (root.qrView) return root.qrCancelable ? "Esc cancels · Tab reaches Close" : "Enter tries again · Esc dismisses · Tab reaches Close"
+                if (root.qrView) {
+                  if (root.qrMissing) return "Enter tries again · Esc cancels · Tab reaches Close"
+                  return root.qrCancelable ? "Esc cancels · Tab reaches Close" : "Enter tries again · Esc dismisses · Tab reaches Close"
+                }
                 return root.showLogin ? "Enter activates · Tab cycles Scan QR, token, Log in, Close · Esc closes"
                   : "r retries · Tab reaches buttons · Esc closes"
               }
-              if (root.buttonFocused)
-                return "Enter activates · Tab/Shift+Tab cycle · Esc back to " + (root.zone === "timeline" ? "timeline" : "sidebar")
+              if (root.buttonFocused) {
+                // Esc goes where focusZone() goes: the last zone, unless it
+                // needs an open channel that is gone.
+                var back = (root.zone === "timeline" || root.zone === "composer") && !root.currentChannelId ? "sidebar"
+                  : (root.zone === "composer" ? "the composer" : root.zone)
+                return "Enter activates · Tab/Shift+Tab cycle · Esc back to " + back
+              }
               if (root.zone === "composer") {
                 if (root.composer.chipFocused)
                   return "←/→ move between attachments · x removes · Enter sends · Esc back to the input"

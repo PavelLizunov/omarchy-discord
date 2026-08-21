@@ -70,6 +70,10 @@ type Channel struct {
 	// Recipients is always an array: the DM/group-DM members, empty for guild
 	// channels.
 	Recipients []User `json:"recipients"`
+	// MessageCount and MemberCount are Discord's approximate thread counters;
+	// 0 for non-threads.
+	MessageCount int `json:"message_count"`
+	MemberCount  int `json:"member_count"`
 }
 
 // Request parameter shapes.
@@ -450,4 +454,128 @@ func NewQRApproved() QRApprovedEvent { return QRApprovedEvent{EventHeader: heade
 // NewQRCancelled builds a qr_cancelled event; errText is redacted.
 func NewQRCancelled(reason, errText string) QRCancelledEvent {
 	return QRCancelledEvent{EventHeader: header("qr_cancelled"), Reason: reason, Error: redact.Redact(errText)}
+}
+
+// Phase 3 parameter shapes: quick switcher, threads, member list, emoji.
+type (
+	QuickSwitchParams struct {
+		Query string `json:"query"`
+		// Limit defaults to 20 when absent or non-positive.
+		Limit int `json:"limit"`
+	}
+	ListThreadsParams struct {
+		ChannelID string `json:"channel_id"`
+	}
+	SubscribeMembersParams struct {
+		ChannelID string `json:"channel_id"`
+	}
+)
+
+// QuickSwitchEntry is one switcher candidate.
+type QuickSwitchEntry struct {
+	Channel Channel `json:"channel"`
+	// GuildName is null for DMs.
+	GuildName *string `json:"guild_name"`
+	// LastMessagePreview is the newest cached message collapsed to one line,
+	// "" when nothing is cached (never fetched).
+	LastMessagePreview string  `json:"last_message_preview"`
+	Score              float64 `json:"score"`
+}
+
+// MemberGroup is one section of a member list: "online", "offline", or a
+// hoisted role id.
+type MemberGroup struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+}
+
+// Member is one row of a member list.
+type Member struct {
+	User    MessageAuthor `json:"user"`
+	GroupID string        `json:"group_id"`
+	// Status is online, idle, dnd, or offline.
+	Status string `json:"status"`
+	// Activity is a one-line rendering of the primary activity, "" if none.
+	Activity string `json:"activity"`
+}
+
+// Emoji is a custom guild emoji usable in reactions.
+type Emoji struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Animated bool   `json:"animated"`
+	// URL is the CDN URL (gif for animated); fetch_media accepts a size hint.
+	URL string `json:"url"`
+}
+
+// GuildEmoji groups a guild's custom emoji.
+type GuildEmoji struct {
+	GuildID   string  `json:"guild_id"`
+	GuildName string  `json:"guild_name"`
+	Emoji     []Emoji `json:"emoji"`
+}
+
+// Phase 3 result shapes.
+type (
+	QuickSwitchResult struct {
+		Entries []QuickSwitchEntry `json:"entries"`
+	}
+	ListThreadsResult struct {
+		Threads []Channel `json:"threads"`
+	}
+	ListEmojiResult struct {
+		Guilds []GuildEmoji `json:"guilds"`
+	}
+)
+
+// Channel change kinds carried by channel_update.
+const (
+	ChannelChangeCreate = "create"
+	ChannelChangeUpdate = "update"
+	ChannelChangeDelete = "delete"
+)
+
+// Phase 3 event shapes.
+type (
+	ChannelUpdateEvent struct {
+		EventHeader
+		Change  string  `json:"change"`
+		Channel Channel `json:"channel"`
+	}
+	MemberListUpdateEvent struct {
+		EventHeader
+		ChannelID string        `json:"channel_id"`
+		GuildID   *string       `json:"guild_id"`
+		Groups    []MemberGroup `json:"groups"`
+		Members   []Member      `json:"members"`
+	}
+	PresenceUpdateEvent struct {
+		EventHeader
+		UserID   string `json:"user_id"`
+		Status   string `json:"status"`
+		Activity string `json:"activity"`
+	}
+)
+
+// NewChannelUpdate builds a channel_update event.
+func NewChannelUpdate(change string, ch Channel) ChannelUpdateEvent {
+	return ChannelUpdateEvent{EventHeader: header("channel_update"), Change: change, Channel: ch}
+}
+
+// NewMemberListUpdate builds a member_list_update event; nil slices become
+// empty arrays.
+func NewMemberListUpdate(channelID string, guildID *string, groups []MemberGroup, members []Member) MemberListUpdateEvent {
+	if groups == nil {
+		groups = []MemberGroup{}
+	}
+	if members == nil {
+		members = []Member{}
+	}
+	return MemberListUpdateEvent{EventHeader: header("member_list_update"), ChannelID: channelID, GuildID: guildID, Groups: groups, Members: members}
+}
+
+// NewPresenceUpdate builds a presence_update event.
+func NewPresenceUpdate(userID, status, activity string) PresenceUpdateEvent {
+	return PresenceUpdateEvent{EventHeader: header("presence_update"), UserID: userID, Status: status, Activity: activity}
 }

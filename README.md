@@ -62,8 +62,10 @@ Scan QR → token field → Log in → Close, `Enter` activates, `Esc` closes.
 Settings › Scan QR Code, scan it, and confirm on the phone. The panel follows along
 ("Logging in as … — confirm on your phone", then "Approved, connecting…"). The code is
 valid for about two minutes; when it expires, is declined, or you press `Esc`, a
-[Try again] button produces a fresh one. No password or captcha is involved; the token
-the phone hands over goes straight into the keyring.
+[Try again] button produces a fresh one. If the backend connection blips mid-flow the
+code comes back on its own (briefly "Reconnecting to QR login…"); should it not, the
+panel offers [Try again] and `Esc` still cancels. No password or captcha is involved;
+the token the phone hands over goes straight into the keyring.
 
 **Paste a token** instead: paste a user token into the field and press Enter. The token
 goes over the socket to the backend, which stores it in the GNOME keyring via
@@ -119,8 +121,10 @@ Reaching the bottom of the timeline while the timeline or the composer is focuse
 marks the channel read (debounced); scrolling back up never acks. Sent messages show
 immediately as a muted pending row and are re-keyed when the gateway echoes them; a
 failed send removes the row and puts the text back into the composer with the error
-in the footer. Drafts and staged attachments are kept per channel while the shell
-runs. Staged images live in `$XDG_RUNTIME_DIR/omarchy-discord/staged/` (0700) and are
+in the footer. An upload clears the input the same way the moment you press Enter
+(the chips show its progress), so whatever you type meanwhile, in that channel or
+another, is left alone; a failed upload hands its text back too. Drafts and staged
+attachments are kept per channel while the shell runs. Staged images live in `$XDG_RUNTIME_DIR/omarchy-discord/staged/` (0700) and are
 removed once uploaded or when their chip is removed. Outgoing typing is sent at most
 once per 8 s per channel. Middle-clicking the bar mark opens the most recent unread DM.
 The open channel keeps a rolling window of the newest 500 messages while you are at
@@ -143,7 +147,8 @@ per-channel settings as the backend evaluates them (muted channels never notify)
 Suppressed regardless: your own messages, anything while your Discord status is Do Not
 Disturb, and messages in the channel you are looking at (panel open, focused, on that
 channel). Bursts are rate-limited to one notification per channel every 3 s; held
-messages fold into the next one as "(+N more)". The summary is "Author in #channel"
+messages fold into one "(+N more)" notification when that window ends, even while
+messages keep arriving. The summary is "Author in #channel"
 ("Author" for a DM), the body the first ~200 characters of the message as plain text,
 plus a paperclip when it carries attachments.
 

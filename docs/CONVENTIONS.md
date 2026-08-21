@@ -193,7 +193,10 @@ Skip rules, in order (`notifySkipReason` returns the name, `""` means notify):
 surface is visible and `channel_id === currentChannelId`). Rate limit: one
 notification per channel per 3 s (`notifyWindowMs`); arrivals inside the window are
 held (`notifyHeld`, last message wins, count accumulates) and flushed by one timer as a
-single notification with `(+N more)`.
+single notification with `(+N more)`. The timer is armed for the earliest held
+channel's window end and never re-armed by later arrivals, so continuous traffic
+cannot postpone a flush; `flushNotifications` re-arms for whatever is still inside
+its window.
 
 ### Media (fetch_media mirror)
 
@@ -201,9 +204,13 @@ single notification with `(+N more)`.
 `mediaPending["url|size"]` in place (nothing binds to it, so the call is safe inside
 bindings) and sends `fetch_media`. Resolution writes `mediaPaths` wholesale (a cache-hit
 response or `media_ready`). `media_ready` is keyed by `url` only: one outstanding size
-adopts the path directly, several outstanding sizes are re-requested (the finished one
-is now a cache hit). Failures go to `mediaFailed` so a binding never loops; both maps
-reset per socket connection. `markdownCtx` carries `mediaPath`, `emojiPath(id)`
+adopts the path directly, several outstanding sizes are re-requested and each key
+resolves only from its own size-specific `cached: true` response (the finished one is
+now a cache hit). Failures go to `mediaFailed` so a binding never loops. A cached path
+the backend's LRU has since evicted fails in the `Image`: every consumer reports
+`Image.Error` through `Service.mediaError(path)` (rows via `ctx.mediaError`), which
+drops the key from `mediaPaths` so the binding fetches again — once per key
+(`mediaRetried`). All three maps reset per socket connection. `markdownCtx` carries `mediaPath`, `emojiPath(id)`
 (`https://cdn.discordapp.com/emojis/<id>.png` at size 32, PNG even for animated —
 rich text cannot animate), `emojiSize` (`font.body × 1.4`), `imagePreviews`, and reads
 `mediaPaths`, so rows re-render when media lands without touching the service.
@@ -345,8 +352,14 @@ cursor. The implementation patterns to copy are spotify's, verbatim:
 - **Login screen** (Panel.qml `loginStops`): its own Tab cycle — Scan QR (default
   focus) → token field → Log in → Close; in the QR view Cancel/Try again → Close. All
   stops are `focusable` qs.Ui Buttons / the TextField with `activeFocusOnTab: false`
-  so Qt's chain never competes. `Esc` cancels a running QR flow (`cancel_qr_login`),
-  dismisses a finished one, else closes the panel. `showLogin` includes `qr_pending`.
+  so Qt's chain never competes. `Esc` cancels a running QR flow (`cancel_qr_login`) —
+  code in hand or not — dismisses a finished one, else closes the panel. `showLogin`
+  includes `qr_pending`; the QR view is gated on `qr_pending || qrBusy || qr !== null`
+  so it never flashes the choices between a response and its events. A socket
+  reconnect during `qr_pending` nulls `qr` and waits for the backend's replayed
+  `qr_code` ("Reconnecting to QR login…"); when none arrives within `qrReplayMs`
+  (3 s) `qrMissing` flips and the action button becomes Try again
+  (`restartQrLogin`: cancel, then start).
 
 ### Composer zone (`components/Composer.qml`)
 
@@ -362,7 +375,12 @@ cursor. The implementation patterns to copy are spotify's, verbatim:
   channel read and focuses the timeline. The timeline's own Esc consumes the key while
   a delete is armed (disarms) and otherwise goes to the sidebar.
 - **Enter** sends (`Shift+Enter` newlines); with staged chips it uploads instead;
-  in edit mode it saves. Empty text never sends. `↑` edits the newest own,
+  in edit mode it saves. Empty text never sends. Both send and upload clear the input
+  and reply mode synchronously on Enter — the completion callback never touches the
+  composer, which may be showing another channel by then; the chips alone show upload
+  progress. A failed upload restores its text like a failed send (`draftRestored`);
+  while the composer is in edit mode a restore merges into `savedDraft` instead of
+  the input. `↑` edits the newest own,
   non-pending message only when the input is empty; the typed-but-unsent draft is
   stashed and restored on cancel.
 - **Chip cursor**: `Tab`/`Shift+Tab` enter the chips from the input (forwards from

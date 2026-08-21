@@ -117,7 +117,40 @@ var goldens = []struct {
 	{"event_qr_cancelled_declined", NewQRCancelled(QRReasonDeclined, ""), &QRCancelledEvent{}},
 	{"event_qr_cancelled_expired", NewQRCancelled(QRReasonExpired, ""), &QRCancelledEvent{}},
 	{"event_qr_cancelled_error", NewQRCancelled(QRReasonError, "remoteauth: ticket exchange failed: http 400"), &QRCancelledEvent{}},
+	// Phase 3.
+	{"response_quick_switch", OKResponse(60, QuickSwitchResult{Entries: []QuickSwitchEntry{
+		{Channel: sampleThread, GuildName: str("Omarchy"), LastMessagePreview: "shall we?", Score: 12.97},
+		{Channel: Channel{ID: "1049931213073821696", GuildID: nil, Type: "dm", Name: "ada", Topic: "", ParentID: nil, Position: 0, LastMessageID: str("1049931302442426390"), Unread: UnreadRead, MentionCount: 0, Muted: false,
+			Recipients: []User{{ID: "2000000000000000001", Username: "ada", DisplayName: "ada", AvatarURL: ""}}}, GuildName: nil, LastMessagePreview: "", Score: 7},
+	}}), &typedResponse[QuickSwitchResult]{}},
+	{"response_quick_switch_empty", OKResponse(60, QuickSwitchResult{Entries: []QuickSwitchEntry{}}), &typedResponse[QuickSwitchResult]{}},
+	{"response_list_threads", OKResponse(61, ListThreadsResult{Threads: []Channel{sampleThread}}), &typedResponse[ListThreadsResult]{}},
+	{"response_list_threads_empty", OKResponse(61, ListThreadsResult{Threads: []Channel{}}), &typedResponse[ListThreadsResult]{}},
+	{"response_subscribe_members", OKResponse(62, EmptyResult{}), &typedResponse[EmptyResult]{}},
+	{"response_unsubscribe_members", OKResponse(63, EmptyResult{}), &typedResponse[EmptyResult]{}},
+	{"response_list_emoji", OKResponse(64, ListEmojiResult{Guilds: []GuildEmoji{{GuildID: "1000000000000000001", GuildName: "Omarchy", Emoji: []Emoji{
+		{ID: "1000000000000000099", Name: "omarchy", Animated: false, URL: "https://cdn.discordapp.com/emojis/1000000000000000099.png"},
+		{ID: "1000000000000000098", Name: "partyblob", Animated: true, URL: "https://cdn.discordapp.com/emojis/1000000000000000098.gif"},
+	}}}}), &typedResponse[ListEmojiResult]{}},
+	{"response_list_emoji_empty", OKResponse(64, ListEmojiResult{Guilds: []GuildEmoji{}}), &typedResponse[ListEmojiResult]{}},
+	{"event_channel_update_thread_create", NewChannelUpdate(ChannelChangeCreate, sampleThread), &ChannelUpdateEvent{}},
+	{"event_channel_update_delete", NewChannelUpdate(ChannelChangeDelete, Channel{ID: "1049931500000000000", GuildID: str("1000000000000000001"), Type: "thread", Name: "", Topic: "", ParentID: str("1049931213073821696"), Position: 0, LastMessageID: nil, Unread: UnreadRead, MentionCount: 0, Muted: false, Recipients: []User{}}), &ChannelUpdateEvent{}},
+	{"event_member_list_update", NewMemberListUpdate("1049931213073821696", str("1000000000000000001"),
+		[]MemberGroup{{ID: "1000000000000000050", Name: "Admins", Count: 1}, {ID: "online", Name: "Online", Count: 1}, {ID: "offline", Name: "Offline", Count: 1}},
+		[]Member{
+			{User: sampleAuthor, GroupID: "1000000000000000050", Status: "online", Activity: "Playing Factorio"},
+			{User: MessageAuthor{ID: "183627919046737920", Username: "m", DisplayName: "m", AvatarURL: "https://cdn.discordapp.com/avatars/183627919046737920/a.png?size=64", Bot: false}, GroupID: "online", Status: "dnd", Activity: ""},
+			{User: MessageAuthor{ID: "2000000000000000002", Username: "lin", DisplayName: "lin", AvatarURL: "?size=64", Bot: true}, GroupID: "offline", Status: "offline", Activity: ""},
+		}), &MemberListUpdateEvent{}},
+	{"event_member_list_update_dm", NewMemberListUpdate("1049931213073821696", nil,
+		[]MemberGroup{{ID: "online", Name: "Online", Count: 1}},
+		[]Member{{User: sampleAuthor, GroupID: "online", Status: "idle", Activity: "🌙 sleepy"}}), &MemberListUpdateEvent{}},
+	{"event_member_list_update_empty", NewMemberListUpdate("1049931213073821696", str("1000000000000000001"), nil, nil), &MemberListUpdateEvent{}},
+	{"event_presence_update", NewPresenceUpdate("2000000000000000001", "idle", "Listening to Spotify"), &PresenceUpdateEvent{}},
+	{"event_presence_update_offline", NewPresenceUpdate("2000000000000000001", "offline", ""), &PresenceUpdateEvent{}},
 }
+
+var sampleThread = Channel{ID: "1049931500000000000", GuildID: str("1000000000000000001"), Type: "thread", Name: "release planning", Topic: "", ParentID: str("1049931213073821696"), Position: 0, LastMessageID: str("1049931339989602304"), Unread: UnreadUnread, MentionCount: 0, Muted: false, LastReadMessageID: str("1049931302442426390"), Recipients: []User{}, MessageCount: 42, MemberCount: 5}
 
 var (
 	sampleAuthor = MessageAuthor{ID: "2000000000000000001", Username: "ada", DisplayName: "Ada", AvatarURL: "https://cdn.discordapp.com/avatars/2000000000000000001/b.png?size=64", Bot: false}
@@ -311,6 +344,37 @@ func TestGoldenRequests(t *testing.T) {
 		}},
 		{"request_start_qr_login", 50, "start_qr_login", nil},
 		{"request_cancel_qr_login", 51, "cancel_qr_login", nil},
+		{"request_quick_switch", 60, "quick_switch", func(t *testing.T, r *Request) {
+			var p QuickSwitchParams
+			if e := r.Params(&p); e != nil || p.Query != "gen" || p.Limit != 10 {
+				t.Fatalf("quick_switch params: %v %+v", e, p)
+			}
+		}},
+		{"request_quick_switch_empty", 60, "quick_switch", func(t *testing.T, r *Request) {
+			var p QuickSwitchParams
+			if e := r.Params(&p); e != nil || p.Query != "" || p.Limit != 0 {
+				t.Fatalf("quick_switch params: %v %+v", e, p)
+			}
+		}},
+		{"request_list_threads", 61, "list_threads", func(t *testing.T, r *Request) {
+			var p ListThreadsParams
+			if e := r.Params(&p); e != nil || p.ChannelID != "1049931213073821696" {
+				t.Fatalf("list_threads params: %v %+v", e, p)
+			}
+		}},
+		{"request_subscribe_members", 62, "subscribe_members", func(t *testing.T, r *Request) {
+			var p SubscribeMembersParams
+			if e := r.Params(&p); e != nil || p.ChannelID != "1049931213073821696" {
+				t.Fatalf("subscribe_members params: %v %+v", e, p)
+			}
+		}},
+		{"request_unsubscribe_members", 63, "unsubscribe_members", func(t *testing.T, r *Request) {
+			var p SubscribeMembersParams
+			if e := r.Params(&p); e != nil || p.ChannelID != "1049931213073821696" {
+				t.Fatalf("unsubscribe_members params: %v %+v", e, p)
+			}
+		}},
+		{"request_list_emoji", 64, "list_emoji", nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

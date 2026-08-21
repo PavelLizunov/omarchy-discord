@@ -125,17 +125,15 @@ FocusScope {
       })
       return true
     }
+    // Both paths clear the input now, so text typed while the request runs
+    // is never wiped by its completion (which may land after a channel
+    // switch). Failure hands the text back through draftRestored.
     if (chips.length) {
-      var replyId = replyToId
-      return service.upload(channelId, content, replyId, function(ok) {
-        // Failure keeps the chips and the text; the error lands in the footer.
-        if (!ok) return
-        composer.setText("")
-        if (composer.replyToId === replyId) composer.cancelReply()
-      })
+      if (!service.upload(channelId, content, replyToId)) return false
+    } else {
+      if (!content.trim()) return false
+      if (!service.sendMessage(channelId, content, replyToId)) return false
     }
-    if (!content.trim()) return false
-    if (!service.sendMessage(channelId, content, replyToId)) return false
     clearInput()
     cancelReply()
     return true
@@ -230,13 +228,17 @@ FocusScope {
   Connections {
     target: composer.service
     ignoreUnknownSignals: true
-    // A failed send hands its text back; anything typed since stays below it.
+    // A failed send hands its text back; anything typed since stays below
+    // it. While editing, the input shows the message being edited, so the
+    // text merges into the stashed draft that comes back when editing ends.
     function onDraftRestored(channelId) {
-      if (channelId !== composer.channelId || composer.editing) return
+      if (channelId !== composer.channelId) return
       var restored = composer.service.draftFor(channelId)
-      var current = input.text
-      composer.setText(current ? restored + "\n" + current : restored)
-      composer.service.setDraft(channelId, input.text)
+      var current = composer.editing ? composer.savedDraft : input.text
+      var merged = current ? restored + "\n" + current : restored
+      if (composer.editing) composer.savedDraft = merged
+      else composer.setText(merged)
+      composer.service.setDraft(channelId, merged)
     }
   }
 

@@ -23,10 +23,28 @@ import (
 type fakeClient struct {
 	mu     sync.Mutex
 	open   map[string]bool
+	subs   map[string]bool
 	pushed []any
 }
 
-func newFakeClient() *fakeClient { return &fakeClient{open: map[string]bool{}} }
+func newFakeClient() *fakeClient { return &fakeClient{open: map[string]bool{}, subs: map[string]bool{}} }
+func (f *fakeClient) SubscribeMembers(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.subs[id] = true
+}
+func (f *fakeClient) UnsubscribeMembers(id string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ok := f.subs[id]
+	delete(f.subs, id)
+	return ok
+}
+func (f *fakeClient) HasMemberSub(id string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.subs[id]
+}
 func (f *fakeClient) OpenChannel(id string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
