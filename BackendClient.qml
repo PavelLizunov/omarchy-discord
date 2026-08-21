@@ -135,7 +135,12 @@ Item {
           var client = root
           var sock = this
           Qt.callLater(function() {
-            if (client && client.activeSocket === sock && sock.connected) client.sendCommand("hello", null, null)
+            // A plugin reload can destroy root/sock between scheduling and
+            // running; destroyed wrappers throw on access, so guard with try.
+            try {
+              if (client && sock && client.activeSocket === sock && sock.connected)
+                client.sendCommand("hello", null, null)
+            } catch (e) { /* torn down during reload; the next Socket greets */ }
           })
         } else root.lifecycle = ""
       }
