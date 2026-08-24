@@ -30,6 +30,7 @@ Item {
   readonly property alias cheatsheet: cheatsheetView
   readonly property alias picker: pickerView
   readonly property alias members: membersView
+  readonly property alias controls: headerControls
   // A modal overlay (cheatsheet / emoji picker) owns the keyboard.
   readonly property bool overlayShown: cheatsheetView.shown || pickerView.shown
 
@@ -42,6 +43,45 @@ Item {
   readonly property string fontFamily: Style.font.family
   readonly property var panelBorderSpec: Border.flat(Color.popups.border,
     Math.max(1, Style.normalBorderWidth))
+  // The controls row is a Button tall, which is more than controlHeight once
+  // the focus ring's reserved border is counted; both hosts reserve that so
+  // the ring is never clipped by the pane below.
+  readonly property real controlsRowHeight: Math.max(Style.spacing.controlHeight, headerControls.height)
+  // The three buttons at their natural width, the gaps between them included
+  // (a Row skips an invisible child and the gap it would have taken). Their
+  // visibility conditions are repeated here rather than read off `visible`,
+  // which answers EFFECTIVE visibility: while the top strip hosts the row
+  // that answer depends on controlsInHeader, and reading it would close the
+  // loop. `ready` is the other half of both conditions and controlsInHeader
+  // already demands it.
+  readonly property real controlButtonsWidth:
+    (currentChannelId !== "" ? membersButton.width + Style.spacing.controlGap : 0)
+    + logoutButton.width + Style.spacing.controlGap
+    + closeButton.width
+  // What the channel-title row can give the controls while still leaving the
+  // title its gap. Driven by the timeline column's width alone, so nothing in
+  // the row can feed back into it.
+  readonly property real channelHeaderRoom: channelHeader.width - Style.spacing.sm * 2
+    - Style.spacing.controlGap
+  // The channel name is the one thing that row exists to show, so it keeps a
+  // floor and the status gives way first. When even the buttons plus that
+  // floor do not fit — a narrow window, more so with the member pane open —
+  // the controls go back to the top strip. Hosting them regardless would push
+  // the row off the left edge of the timeline column and paint it over the
+  // channel list and the guild rail.
+  readonly property real channelTitleFloor: Style.space(120)
+  readonly property bool controlsInHeader: ready
+    && channelHeaderRoom - controlButtonsWidth >= channelTitleFloor
+  // The status is whatever is left over the title floor, still under its own
+  // cap; on the full-width top strip only the cap applies. Too narrow to read
+  // is worse than absent — a zero width drops it, and the Row then skips the
+  // gap it would have taken too.
+  readonly property real statusWidthBudget: {
+    if (!controlsInHeader) return Style.space(200)
+    var room = channelHeaderRoom - controlButtonsWidth - channelTitleFloor
+      - Style.spacing.controlGap
+    return room >= Style.space(80) ? Math.min(Style.space(200), room) : 0
+  }
 
   readonly property string lifecycle: service ? service.lifecycle : ""
   readonly property bool connected: !!(service && service.connected)
@@ -69,7 +109,7 @@ Item {
 
   // --- zones: "sidebar" (columns "rail" | "channels"), "timeline", "composer",
   // "members" (only while the member pane is shown) ---
-  // `zone` is the last keyboard zone; the header buttons sit outside the
+  // `zone` is the last keyboard zone; the panel controls sit outside the
   // zones, so while one of them owns focus `focusedZone` is "" and no pane
   // paints a focus border. Esc (or Tab around) hands focus back to `zone`.
   property string zone: "sidebar"
@@ -443,10 +483,14 @@ Item {
 
   function ensureCursors() {
     if (guildCursor < 0) guildCursorId = "dms"
-    if (channelCursor < 0 || !Api.isSelectableChannel(channelRows[channelCursor])) {
-      var first = findChannel(-1, 1, Api.isSelectableChannel)
-      channelCursorId = first >= 0 ? String(channelRows[first].id || "") : ""
-    }
+    if (channelCursor >= 0 && Api.isSelectableChannel(channelRows[channelCursor])) return
+    // The open channel wins over row zero: entering a guild clears the cursor
+    // and the restored channel only appears once its list lands, so this is
+    // what puts the cursor on the channel that just opened.
+    var at = indexOfId(channelRows, currentChannelId)
+    if (at < 0) at = findChannel(-1, 1, Api.isSelectableChannel)
+    if (at >= 0) setChannelCursor(at)
+    else channelCursorId = ""
   }
 
   // --- navigation ---
@@ -462,10 +506,21 @@ Item {
   }
 
   function enterChannels() {
-    selectGuild(guildCursor < 0 ? 0 : guildCursor)
+    var index = guildCursor < 0 ? 0 : guildCursor
+    // Read before selectGuild mutates the selection: re-entering the server
+    // that already owns the open channel must not tear the timeline down.
+    var target = index >= 0 && index < guildRows.length ? String(guildRows[index].id || "") : ""
+    var owned = target !== "" && target === selectedGuildId && currentChannelId !== ""
+    selectGuild(index)
     zone = "sidebar"
     column = "channels"
     hint = ""
+    // Open the channel this server was last left on. When its list is already
+    // cached this resolves synchronously, which is why it runs before the
+    // cursor fixup below; otherwise ensureCursors() catches the cursor up when
+    // the list lands. Focus deliberately stays in the channel column — unlike
+    // activateChannel this never drags the keyboard into the composer.
+    if (!owned && service) service.enterGuild(target)
     if (currentChannelId && indexOfId(channelRows, currentChannelId) >= 0)
       channelCursorId = currentChannelId
     ensureCursors()
@@ -788,9 +843,11 @@ Item {
   }
 
   function handleSidebarKey(key, text) {
+    // The rail is the end of the Esc ladder: Esc is consumed here so walking
+    // back out can never close the panel. Closing is the Close button, the
+    // window close, the bar widget, or the quickshell.discord.panel IPC.
     if (key === Qt.Key_Escape) {
       if (column === "channels") leaveChannels()
-      else root.requestClose()
       return true
     }
     if (column === "rail") {
@@ -908,6 +965,81 @@ Item {
         height: 0
       }
 
+      // The panel controls, declared once and reparented between two hosts:
+      // the channel-title row while the client is up, a slim top strip during
+      // the login / QR / status screens. cycleFocus(), focusStop(),
+      // buttonFocused and loginStops() address these buttons by id, so a
+      // second copy would break the Tab cycle (and duplicate ids are illegal
+      // anyway). Anchorless on purpose — anchors cannot survive a reparent;
+      // each host slot sizes itself to the row instead.
+      Row {
+        id: headerControls
+        parent: root.controlsInHeader ? channelControlsSlot : topControlsSlot
+        spacing: Style.spacing.controlGap
+
+        Text {
+          anchors.verticalCenter: parent.verticalCenter
+          // The status shares a row with the channel title now, so it takes
+          // what that row can spare (statusWidthBudget) and drops out
+          // entirely — the Row skips it and its gap — before the title is
+          // squeezed.
+          width: Math.min(implicitWidth, root.statusWidthBudget)
+          visible: width > 0
+          elide: Text.ElideRight
+          text: root.service ? root.service.statusText
+            + (root.service.user ? " · " + String(root.service.user.display_name
+              || root.service.user.username || "") : "") : ""
+          color: root.muted
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+        }
+
+        // All three buttons are reached through the panel's own Tab cycle
+        // (cycleFocus); Qt's tab chain would otherwise capture Tab while a
+        // button has focus and bounce between them.
+        Button {
+          id: membersButton
+          visible: root.ready && root.currentChannelId !== ""
+          text: "Members"
+          active: root.membersVisible
+          focusable: true
+          activeFocusOnTab: false
+          foreground: root.foreground
+          tooltipText: "Show / hide the member list (m)"
+          onClicked: root.toggleMembers()
+        }
+        Button {
+          id: logoutButton
+          visible: root.ready
+          text: "Log out"
+          focusable: true
+          activeFocusOnTab: false
+          foreground: root.foreground
+          onClicked: if (root.service) root.service.logout()
+        }
+        Button {
+          id: closeButton
+          text: "Close"
+          focusable: true
+          activeFocusOnTab: false
+          foreground: root.foreground
+          onClicked: root.requestClose()
+        }
+      }
+
+      // The channel a guild entry restored (Service.resolveGuildEntry): its
+      // list may only have landed a moment ago, by which point ensureCursors()
+      // has already parked the cursor on the first row.
+      Connections {
+        target: root.service
+        ignoreUnknownSignals: true
+        function onGuildEntered(guildId, channelId) {
+          if (guildId !== root.selectedGuildId) return
+          var at = root.indexOfId(root.channelRows, channelId)
+          if (at >= 0) root.setChannelCursor(at)
+        }
+      }
+
       // Modal overlays above the whole panel; each returns the keyboard to
       // the last zone when it closes.
       Components.Cheatsheet {
@@ -931,75 +1063,23 @@ Item {
         anchors.margins: Style.spacing.panelPadding
         spacing: Style.spacing.panelGap
 
-        // Header
+        // The login / QR / status screens have no channel-title row to host
+        // the controls, and neither does a channel-title row too narrow to
+        // hold them, so a slim strip at the top right takes them. It is
+        // hidden (not zero-height) otherwise, so the Column drops its
+        // panelGap too and the body reclaims the whole space.
         Item {
+          id: topStrip
           width: parent.width
-          height: Style.spacing.controlHeight
+          height: root.controlsRowHeight
+          visible: !root.controlsInHeader
 
-          Row {
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: Style.spacing.controlGap
-
-            DiscordIcon {
-              anchors.verticalCenter: parent.verticalCenter
-              iconSize: Style.font.heading
-              color: root.foreground
-            }
-            Text {
-              anchors.verticalCenter: parent.verticalCenter
-              text: "Omarchy Discord"
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.title
-            }
-            Text {
-              anchors.verticalCenter: parent.verticalCenter
-              text: root.service ? root.service.statusText
-                + (root.service.user ? " · " + String(root.service.user.display_name
-                  || root.service.user.username || "") : "") : ""
-              color: root.muted
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-            }
-          }
-
-          Row {
+          Item {
+            id: topControlsSlot
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            spacing: Style.spacing.controlGap
-
-            // Both header buttons are reached through the panel's own Tab
-            // cycle (cycleFocus); Qt's tab chain would otherwise capture Tab
-            // while a button has focus and bounce between the two.
-            Button {
-              id: membersButton
-              visible: root.ready && root.currentChannelId !== ""
-              text: "Members"
-              active: root.membersVisible
-              focusable: true
-              activeFocusOnTab: false
-              foreground: root.foreground
-              tooltipText: "Show / hide the member list (m)"
-              onClicked: root.toggleMembers()
-            }
-            Button {
-              id: logoutButton
-              visible: root.ready
-              text: "Log out"
-              focusable: true
-              activeFocusOnTab: false
-              foreground: root.foreground
-              onClicked: if (root.service) root.service.logout()
-            }
-            Button {
-              id: closeButton
-              text: "Close"
-              focusable: true
-              activeFocusOnTab: false
-              foreground: root.foreground
-              onClicked: root.requestClose()
-            }
+            width: headerControls.width
+            height: headerControls.height
           }
         }
 
@@ -1007,8 +1087,11 @@ Item {
         Item {
           id: body
           width: parent.width
-          height: parent.height - Style.spacing.controlHeight - footer.height
-            - parent.spacing * 2
+          // A Column skips invisible children and the gap they would have
+          // added, so the top strip's height and its gap only count while it
+          // is shown.
+          height: parent.height - footer.height - parent.spacing
+            - (topStrip.visible ? topStrip.height + parent.spacing : 0)
 
           // Status (backend down / starting / connecting)
           Column {
@@ -1049,7 +1132,7 @@ Item {
                 && !root.service.daemon.running)
               text: "Start backend"
               focusable: true
-              // Reached through cycleFocus like the header buttons; Qt's own
+              // Reached through cycleFocus like the panel controls; Qt's own
               // tab chain would otherwise compete for Tab.
               activeFocusOnTab: false
               foreground: root.foreground
@@ -1622,11 +1705,18 @@ Item {
               height: parent.height
               spacing: Style.spacing.xs
 
-              // Channel header: name + topic
+              // Channel header: name + topic on the left, the panel controls
+              // (status + Members / Log out / Close) right-aligned on the
+              // same row.
               Item {
                 id: channelHeader
                 width: parent.width
-                height: Style.spacing.controlHeight
+                height: root.controlsRowHeight
+                // The controls cannot overflow this row (controlsInHeader
+                // hosts them elsewhere long before that), but they are
+                // reparented in and out of it and a single frame of stale
+                // geometry would paint over the channel list and the rail.
+                clip: true
 
                 Text {
                   id: channelTitle
@@ -1634,8 +1724,12 @@ Item {
                   anchors.leftMargin: Style.spacing.sm
                   anchors.verticalCenter: parent.verticalCenter
                   // Thread titles ("#parent › thread") can be long: elide
-                  // before the column edge, leaving the topic what is left.
-                  width: Math.min(implicitWidth, parent.width - Style.spacing.sm * 2)
+                  // before the controls, leaving the topic what is left.
+                  // channelTitleFloor keeps this above zero while the
+                  // controls are hosted here; the clamp covers the rest.
+                  width: Math.min(implicitWidth, Math.max(0, parent.width
+                    - Style.spacing.sm * 2 - channelControlsSlot.width
+                    - Style.spacing.controlGap))
                   elide: Text.ElideRight
                   text: root.currentChannelTitle || "No channel open"
                   color: root.currentChannelId ? root.foreground : root.muted
@@ -1645,16 +1739,28 @@ Item {
                 }
                 Text {
                   anchors.left: channelTitle.right
-                  anchors.right: parent.right
+                  anchors.right: channelControlsSlot.left
                   anchors.leftMargin: Style.spacing.controlGap
-                  anchors.rightMargin: Style.spacing.sm
+                  anchors.rightMargin: Style.spacing.controlGap
                   anchors.verticalCenter: parent.verticalCenter
-                  visible: root.currentTopic !== ""
+                  visible: root.currentTopic !== "" && width > 0
                   text: "· " + root.currentTopic
                   elide: Text.ElideRight
                   color: root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.bodySmall
+                }
+                // Reserved seat for the panel controls, declared last so they
+                // paint above the title and topic. Zero-width while the
+                // controls live in the top strip, and always present so the
+                // two Texts have a legal sibling to anchor against.
+                Item {
+                  id: channelControlsSlot
+                  anchors.right: parent.right
+                  anchors.rightMargin: Style.spacing.sm
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: root.controlsInHeader ? headerControls.width : 0
+                  height: headerControls.height
                 }
               }
 

@@ -167,7 +167,7 @@ activates, `Esc` walks back out, and focus is always visible. Three focus zones 
 | `R` · `E` · `Y` · `O` | On the focused message: reply · react · copy text · open link or attachment |
 | `↑` in composer | Edit your last message |
 | `Ctrl+V` | Paste — stages an image attachment when the clipboard holds one |
-| `Esc` | Composer → timeline (marking read) → close panel |
+| `Esc` | Composer → timeline (marking read) → channel list → server rail (does not close) |
 | `Ctrl+/` | Full cheatsheet overlay |
 
 Opening a channel focuses the composer; opening the panel from a Hyprland bind takes

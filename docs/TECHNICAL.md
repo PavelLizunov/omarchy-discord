@@ -45,7 +45,7 @@ strings on the wire: a 64-bit id does not survive a JavaScript double.
 | `BackendClient.qml` | Reconnecting `Socket` behind a `Loader` (Quickshell sockets cannot reconnect in place), request correlation, redaction |
 | `DaemonManager.qml` | `scripts/backend-runtime.sh` shim: install check, runtime sync (see "Runtime install and upgrade"), unit start/stop/status |
 | `BarWidget.qml` | Per-monitor mark + mention badge; left click panel, middle click configured action |
-| `Panel.qml` | Login / status screens, header, rail + channel list (threads), timeline column, composer, member pane, footer hints; every zone's keyboard routing |
+| `Panel.qml` | Login / status screens, rail + channel list (threads), timeline column with the channel-title row (status + Members / Log out / Close — one row, reparented to a strip of its own on the login screens and whenever the channel-title row is too narrow to keep the channel name), composer, member pane, footer hints; every zone's keyboard routing |
 | `QuickSwitch.qml` | Full-screen overlay (`PanelWindow`, layer `Overlay`) with the Exclusive→OnDemand keyboard prime |
 | `components/Timeline.qml` | Virtualized message list with a diffed `ListModel`, history paging, cursor, spoilers, ack-on-bottom |
 | `components/MessageRow.qml` | One message: avatar, header, reply line, rich text, attachments, embeds, reactions |
@@ -99,7 +99,8 @@ the panel, which is destroyed on hide.
 - **Settings**: self-served from `shell.shellConfig` (the plugin's inline entry in
   `bar.layout.*`), normalized, re-read on every `shellConfigChanged`; writes go
   through `shell.updateEntryInline` with a merge so unknown keys survive. Small
-  opaque state (`frequentEmoji`) rides on the same entry as a JSON string.
+  opaque state (`frequentEmoji`, `lastChannels`) rides on the same entry as a JSON
+  string.
 - **Media**: see "Media pipeline".
 
 ## Lifecycle
@@ -146,7 +147,12 @@ zone for the cheatsheet, and `missingFooterIds()` must stay empty (harness
 assertion). The README's keyboard tables are generated from it.
 
 Esc ladder: dismiss overlay → composer chip cursor → edit/reply mode → composer →
-timeline (marking read) → channel list → rail → close the panel. Tab cycles rail →
+timeline (marking read) → channel list → rail, where Esc is consumed and does
+nothing; the panel closes from the Close button, the window close, the bar widget or
+`quickshell.discord.panel toggle`. Esc on the login and backend-down screens still
+closes — neither has a zone to fall back to. Entering a server (rail Enter/l/→, a
+guild tile click, Tab or Alt+l into the channel column) opens that server's
+last-visited channel. Tab cycles rail →
 channels → timeline → composer (→ its chips) → member list → Members → Log out →
 Close; stops that cannot take focus are skipped.
 
@@ -269,8 +275,17 @@ nothing injects keys into the live Wayland session.
 - `components/harness/run.sh` — the Timeline harness: a scratch config root of
   symlinks (nothing is written into the plugin tree), `qs -p` it, drive it over IPC
   (`qs -p "$ROOT" ipc call harness key j`).
-- `node components/harness/markdown.test.js` — Markdown.js unit tests (escaping,
-  mentions, spoilers, never-throws on garbage).
+- `node --test components/harness/markdown.test.js` — Markdown.js unit tests
+  (escaping, mentions, spoilers, never-throws on garbage).
+- `node --test components/harness/api.test.js` — the pure Api.js helpers behind the
+  per-guild last-visited channel (`parseLastChannels`, `bumpLastChannel`,
+  `guildEntryChannel`).
+- `components/harness/run-panel.sh` — the contract harness: Panel.qml against a mock
+  service (the Esc ladder ends at the rail, entering a guild asks the service, the
+  controls stay Tab-reachable on the status screen) and the real Service.qml with no
+  socket (`enterGuild` / `resolveGuildEntry`: remembered channel, the general and
+  first-channel fallbacks, the parked retry, the stale guards). Exits non-zero on the
+  first failed check.
 - The full-panel harnesses used for each phase live outside the tree (a Python mock
   backend speaking protocol v1 with a control socket, a `PanelWindow` shim for the
   switcher, one `shell.qml` per scenario that checks state and grabs screenshots).
@@ -290,8 +305,10 @@ Before a commit touching the frontend:
    members "not found on type QObject": the shell's singletons are untyped to the
    linter).
 2. `omarchy plugin validate .` (exit 0, silent).
-3. `node components/harness/markdown.test.js`.
-4. The offscreen harnesses above, with screenshots inspected.
+3. `node --test components/harness/markdown.test.js` and
+   `node --test components/harness/api.test.js`.
+4. `components/harness/run-panel.sh` (exit 0).
+5. The offscreen harnesses above, with screenshots inspected.
 
 Before a commit touching `backend/`: `gofmt -l`, `go vet ./...`, `go test ./...`,
 `go build ./...` with `GOCACHE` and `-o` outside the tree (golden fixtures for every

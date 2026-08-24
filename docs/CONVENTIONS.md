@@ -363,11 +363,14 @@ cursor. The implementation patterns to copy are spotify's, verbatim:
   single-key shortcuts additionally require `!textInputFocused()`. Modal popups take
   `focus: true` and return it with
   `onClosed: Qt.callLater(() => focusScope.forceActiveFocus())`.
-- **Esc ladder**: one `Keys.onEscapePressed` on the FocusScope walks, in order:
-  dismiss transient popup → clear search text → collapse search → leave zone
-  (composer → timeline, marking read) → two-stage close (first Esc arms — close
-  affordance turns `Color.urgent` — second Esc within the timeout closes; any
-  navigation disarms).
+- **Esc ladder**: one `Keys.onPressed` on the FocusScope (`Panel.handleKey`) walks,
+  in order: dismiss transient popup → composer chip cursor → composer edit / reply
+  mode → leave the composer (marking read) → leave the timeline (marking read) →
+  channel list → server rail. **The rail is the end of the ladder**: Esc there is
+  consumed and does nothing — it must not close the panel. Closing is the Close
+  button, closing the window, the bar widget, or the `quickshell.discord.panel` IPC.
+  Esc on the login screen and the backend-down screen still closes, since neither
+  has a zone to fall back to.
 - **Focus on open** is an acceptance criterion: `open()` →
   `Qt.callLater(forceActiveFocus)` for the FloatingWindow panel; KeyboardPanel's
   Exclusive→OnDemand prime for the quick switcher and bar popup. Opening a channel
@@ -397,8 +400,8 @@ cursor. The implementation patterns to copy are spotify's, verbatim:
   request per event.
 - **Member pane** (`components/MemberList.qml`): toggled with `m` outside text inputs,
   `Alt+m` everywhere (the composer claims it on its TextArea and emits
-  `membersRequested`, else the TextArea would type an "m"), and the header Members
-  button. The toggle (`Service.membersWanted`) lives in the service so a re-summoned
+  `membersRequested`, else the TextArea would type an "m"), and the Members button
+  on the channel-title row. The toggle (`Service.membersWanted`) lives in the service so a re-summoned
   panel keeps it; `Service.syncMembers()` subscribes the current channel while the
   pane is wanted **and** the full panel is registered visible, and unsubscribes on
   channel change, toggle off, panel close / destruction (`setUiVisible("full-panel",
@@ -423,6 +426,18 @@ cursor. The implementation patterns to copy are spotify's, verbatim:
   emits `switcherRequested` / `cheatsheetRequested`), `/` and `?` only outside text
   inputs. While a modal overlay is shown (`Panel.overlayShown`) `handleKey` ignores
   everything; the overlay accepts every key itself.
+- **Guild entry**: entering a guild from the rail (Enter / `l` / `→`, a guild tile
+  click, or Tab / `Alt+l` into the channel column — `j`/`k` cursor movement never
+  opens anything) opens that guild's last-visited channel, falling back to a channel
+  named `general` (case-insensitive) then to the first openable channel in list
+  order; the DM pseudo-guild (`"dms"`) restores only what was remembered, because a
+  DM inbox has no default and auto-opening an untouched DM trips the virgin-DM guard
+  (§6). The map is `Service.lastChannels` — a recency-ordered `[{ g, c }]` persisted
+  as a JSON string under `lastChannels` on the shell.json entry via `persistOpaque`,
+  capped by `Api.LAST_CHANNEL_CAP` — recorded from the `open_channel` response (the
+  only place the guild id is authoritative) and restored through
+  `Service.enterGuild` / `resolveGuildEntry`, with the single `pendingGuildEntry`
+  slot as the stale guard for a list that has not landed yet.
 - **Login screen** (Panel.qml `loginStops`): its own Tab cycle — Scan QR (default
   focus) → token field → Log in → Close; in the QR view Cancel/Try again → Close. All
   stops are `focusable` qs.Ui Buttons / the TextField with `activeFocusOnTab: false`

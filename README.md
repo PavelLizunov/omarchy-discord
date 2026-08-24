@@ -143,8 +143,10 @@ Four focus zones: the **sidebar** (server rail + channel list; `h`/`l` or the ar
 move between the two columns), the **timeline**, the **composer**, and the **member
 list** while it is shown (`m`). Focus is always visible — the active column, timeline,
 or pane carries the focus border — and opening a channel focuses the composer.
-`Alt+h` / `Alt+l` move between zones, `Tab` cycles every stop including the header
-buttons, `Esc` walks back out.
+`Alt+h` / `Alt+l` move between zones, `Tab` cycles every stop including the panel
+controls on the channel-title row, and `Esc` walks back out as far as the server
+rail, where it stops; the panel closes from the Close button, the bar widget, or the
+Hyprland bind. Entering a server opens the channel it was last left on.
 
 The tables below are generated from `Keymap.js`, the single key table the footer
 hints and the `Ctrl+/` cheatsheet render from. Regenerate them whenever a key
@@ -166,8 +168,8 @@ node -e 'var s=require("fs").readFileSync("Keymap.js","utf8");eval(s);sections()
 | `Tab / Shift+Tab` | Cycle rail → channels → timeline → composer (and its attachments) → member list → Members → Log out → Close |
 | `r` | Reload state, the channel list and the open channel (outside text inputs) |
 | `r` | While the backend is down: start it, or re-pull state |
-| `Esc` | Walk back out: composer → timeline (marking read) → channel list → server rail → close the panel |
-| `Esc` | From a header button: back to the last zone |
+| `Esc` | Walk back out: composer → timeline (marking read) → channel list → server rail, where it stops — Esc never closes the panel |
+| `Esc` | From a panel button: back to the last zone |
 
 **Sidebar — servers and channels**
 
@@ -175,7 +177,7 @@ node -e 'var s=require("fs").readFileSync("Keymap.js","utf8");eval(s);sections()
 |---|---|
 | `j / k · ↑ / ↓` | Move the cursor (servers in the rail, channels in the list) |
 | `g / G · Home / End` | First / last row |
-| `Enter · l · →` | Rail: open the server's channel list |
+| `Enter · l · →` | Rail: open the server's channel list and the channel it was last left on (a server also falls back to #general, then its first channel; Direct messages restore only what you left open) |
 | `Enter` | Channel list: open the channel or thread (the composer takes focus); on a forum: show its threads |
 | `t` | Channel list: show / hide the channel's active threads beneath it (from the timeline: the open channel's) |
 | `h · ← · Esc` | Channel list: back to the server rail |

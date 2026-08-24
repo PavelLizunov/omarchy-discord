@@ -224,6 +224,82 @@ function isSelectableChannel(row) {
   return t !== "category" && t !== "voice" && t !== "stage"
 }
 
+// --- last-visited channel per guild ---
+// Persisted as a JSON string on the plugin's shell.json entry. A
+// recency-ordered [{ g, c }] array rather than a { guildId: channelId } map
+// because the cap needs an eviction order: re-assigning an existing key does
+// not move it in a JS object, so object key order is insertion order, not
+// recency, and the "oldest" entry could not be identified.
+var LAST_CHANNEL_CAP = 32
+
+function parseLastChannels(raw) {
+  try {
+    var data = JSON.parse(String(raw || ""))
+    if (!Array.isArray(data)) return []
+    var out = []
+    for (var i = 0; i < data.length && out.length < LAST_CHANNEL_CAP; i++) {
+      var item = data[i]
+      if (!item || !item.g || !item.c) continue
+      out.push({ g: String(item.g), c: String(item.c) })
+    }
+    return out
+  } catch (e) {
+    return []
+  }
+}
+
+function lastChannelFor(list, guildId) {
+  var id = String(guildId || "")
+  var source = Array.isArray(list) ? list : []
+  for (var i = 0; i < source.length; i++)
+    if (source[i] && String(source[i].g) === id) return String(source[i].c)
+  return ""
+}
+
+// Returns the SAME array reference when the pair is already at the head, so
+// the caller can skip the shell.json write on the common repeat-open case.
+function bumpLastChannel(list, guildId, channelId) {
+  var g = String(guildId || "")
+  var c = String(channelId || "")
+  var source = Array.isArray(list) ? list : []
+  if (!g || !c) return source
+  if (source.length && source[0] && String(source[0].g) === g && String(source[0].c) === c) return source
+  var out = [{ g: g, c: c }]
+  for (var i = 0; i < source.length && out.length < LAST_CHANNEL_CAP; i++) {
+    if (!source[i] || String(source[i].g) === g) continue
+    out.push({ g: String(source[i].g), c: String(source[i].c) })
+  }
+  return out
+}
+
+// The channel to open when a guild is entered: the remembered one, else a
+// channel named "general", else the first openable row. The two lists are
+// deliberately different — the remembered id is validated against the RAW
+// channel list because that is the only one carrying thread rows (a
+// remembered thread must still resolve), while the default walks
+// visibleChannels() so it can never land on an arbitrary thread out of the
+// hundreds list_channels ships. `allowDefault` is false for the DM
+// pseudo-guild: a server has a default channel, a DM inbox does not, and
+// auto-opening an untouched DM trips the backend's virgin-DM guard.
+function guildEntryChannel(channels, remembered, allowDefault) {
+  var list = Array.isArray(channels) ? channels : []
+  var want = String(remembered || "")
+  if (want) {
+    for (var i = 0; i < list.length; i++)
+      if (list[i] && String(list[i].id || "") === want && isOpenableChannel(list[i])) return want
+  }
+  if (!allowDefault) return ""
+  var visible = visibleChannels(list)
+  var first = ""
+  for (var v = 0; v < visible.length; v++) {
+    var row = visible[v]
+    if (!isOpenableChannel(row)) continue
+    if (String(row.name || "").toLowerCase() === "general") return String(row.id || "")
+    if (!first) first = String(row.id || "")
+  }
+  return first
+}
+
 // Member pane rows from a member_list_update: every group as a header
 // (Discord's total count), its served members beneath it, in wire order.
 // Members whose group is unknown get a header named after the group id.
@@ -304,4 +380,12 @@ function imageExtension(mime) {
     case "image/avif": return "avif"
     default: return "img"
   }
+}
+
+// Node test hook; harmless under QML (no `module` there).
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { visibleChannels: visibleChannels, isOpenableChannel: isOpenableChannel,
+    isSelectableChannel: isSelectableChannel, LAST_CHANNEL_CAP: LAST_CHANNEL_CAP,
+    parseLastChannels: parseLastChannels, lastChannelFor: lastChannelFor,
+    bumpLastChannel: bumpLastChannel, guildEntryChannel: guildEntryChannel }
 }

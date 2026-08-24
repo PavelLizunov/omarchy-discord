@@ -156,6 +156,16 @@ Item {
   // --- panel view state (the panel is destroyed on hide; this restores it) ---
   property string selectedGuildId: ""
   property string currentChannelId: ""
+  // Last-visited channel per guild, most recent first: [{ g: guildId,
+  // c: channelId }] with "dms" as the DM pseudo-guild. Persisted as a JSON
+  // string on the shell.json entry (lastChannelKey), capped by
+  // Api.LAST_CHANNEL_CAP. Entering a guild reopens its entry.
+  property var lastChannels: []
+  readonly property string lastChannelKey: "lastChannels"
+  // The guild the user just entered whose channel list has not landed yet.
+  // The single slot IS the stale guard: a newer entry invalidates the older
+  // one, the same discipline as channelsSeq but with only one live intent.
+  property string pendingGuildEntry: ""
 
   // --- message store ---
   // Channel ids this client has opened (per socket connection: re-sent to the
@@ -214,6 +224,10 @@ Item {
   }
   // A failed send put its text back into the draft; the composer reloads it.
   signal draftRestored(string channelId)
+  // A guild entry resolved to a channel (see resolveGuildEntry). The channel
+  // list may only have landed just now, by which point the panel has already
+  // parked its cursor on the first row, so it needs telling where to move it.
+  signal guildEntered(string guildId, string channelId)
   // Any plain-unread channel anywhere (bar dot when there are no mentions).
   readonly property bool anyUnread: {
     for (var g = 0; g < guilds.length; g++)
@@ -387,12 +401,21 @@ Item {
     applySettings(entry)
     var frequent = Emoji.parseFrequent(entry[frequentEmojiKey])
     if (JSON.stringify(frequent) !== JSON.stringify(frequentEmoji)) frequentEmoji = frequent
+    var visits = Api.parseLastChannels(entry[lastChannelKey])
+    if (JSON.stringify(visits) !== JSON.stringify(lastChannels)) lastChannels = visits
   }
 
   // Small opaque state on the same shell.json entry (spotify pattern):
   // merged over the current entry so settings are carried forward.
   function persistOpaque(key, value) {
-    var entry = Api.shallowCopy(configuredEntry() || {})
+    var current = configuredEntry()
+    // Nothing to merge over: shell.json is mid-rewrite, or failed to parse and
+    // the shell fell back to the builtin config where we are not listed (see
+    // stopBackendIfDisabled). Writing now would replace every setting on the
+    // entry with just this key. The state here is best-effort — a skipped
+    // write costs one remembered channel, a clobbered entry costs the lot.
+    if (!current) return
+    var entry = Api.shallowCopy(current)
     entry[key] = value
     if (shell && typeof shell.updateEntryInline === "function")
       shell.updateEntryInline(pluginId, entry)
@@ -511,6 +534,33 @@ Item {
     return channelsLoading[String(guildId || "")] === true
   }
 
+  // Entering a guild (rail Enter/l/→, a guild tile click, Tab into the
+  // channel column) opens the channel it was last left on. The list may still
+  // be loading, so the intent is parked and retried from every list_channels
+  // response and from onDmsChanged.
+  function enterGuild(guildId) {
+    pendingGuildEntry = String(guildId || "")
+    resolveGuildEntry()
+  }
+
+  function resolveGuildEntry() {
+    var id = pendingGuildEntry
+    if (!id) return
+    // The user navigated away, or closed the panel before the list landed:
+    // drop the intent rather than opening a channel nobody asked for.
+    if (id !== selectedGuildId || !visibleSurfaces["full-panel"]) { pendingGuildEntry = ""; return }
+    var rows = id === "dms" ? (Array.isArray(dms) ? dms : []) : channelsFor(id)
+    var loading = id === "dms" ? structureBusy : isLoadingChannels(id)
+    // Stay parked while the list is still on its way; anything else (an
+    // empty guild, a failed list_channels) is as resolved as it will get.
+    if (!rows.length && loading) return
+    pendingGuildEntry = ""
+    var target = Api.guildEntryChannel(rows, Api.lastChannelFor(lastChannels, id), id !== "dms")
+    if (!target) return
+    if (target !== currentChannelId) showChannel(target, id)
+    guildEntered(id, target)
+  }
+
   function loadChannels(guildId, force) {
     var id = String(guildId || "")
     if (!id || !ready) return
@@ -527,10 +577,14 @@ Item {
       var nextLoading = Api.shallowCopy(root.channelsLoading)
       delete nextLoading[id]
       root.channelsLoading = nextLoading
-      if (!ok || !result || !Array.isArray(result.channels)) return
-      var next = Api.shallowCopy(root.channelsByGuild)
-      next[id] = result.channels
-      root.channelsByGuild = next
+      if (ok && result && Array.isArray(result.channels)) {
+        var next = Api.shallowCopy(root.channelsByGuild)
+        next[id] = result.channels
+        root.channelsByGuild = next
+      }
+      // Also on failure: a parked guild entry that is never unparked would
+      // fire later against whatever guild the user has moved on to.
+      root.resolveGuildEntry()
     })
   }
 
@@ -769,7 +823,18 @@ Item {
       })
       if (channel && root.currentChannelId === id) {
         var guildId = channel.guild_id ? String(channel.guild_id) : "dms"
-        if (root.selectedGuildId !== guildId) root.selectedGuildId = guildId
+        // A parked guild entry means the user has already navigated to another
+        // server whose channel list has not landed yet. Reverting the
+        // selection to this response's guild would also make resolveGuildEntry
+        // fail its identity guard and silently drop that entry.
+        if (root.selectedGuildId !== guildId && !root.pendingGuildEntry)
+          root.selectedGuildId = guildId
+        // The one place a visit is recorded: the response's guild_id is
+        // authoritative, while showChannel's argument is "" for a summon
+        // whose channel structure is not loaded (guildIdForChannel misses),
+        // which would file the channel under whatever guild the sidebar
+        // happened to show. A channel that fails to open is never recorded.
+        root.noteChannelVisit(guildId, id)
         if (guildId !== "dms") root.loadChannels(guildId)
       }
     })
@@ -1054,6 +1119,16 @@ Item {
   function noteEmojiUse(emoji) {
     frequentEmoji = Emoji.bumpFrequent(frequentEmoji, emoji)
     persistOpaque(frequentEmojiKey, JSON.stringify(frequentEmoji))
+  }
+
+  // Remember where each guild was last left. The identity check is
+  // load-bearing: a reconnect's reopenChannels() and the panel's `r` reload
+  // both re-open the current channel, and neither should rewrite shell.json.
+  function noteChannelVisit(guildId, channelId) {
+    var next = Api.bumpLastChannel(lastChannels, guildId, channelId)
+    if (next === lastChannels) return
+    lastChannels = next
+    persistOpaque(lastChannelKey, JSON.stringify(lastChannels))
   }
 
   // The unicode catalogue is the shell's own (omarchy.emojis data file),
@@ -1838,6 +1913,10 @@ Item {
   // Forget loaded messages (session gone). The open set is kept so the
   // channels are re-opened when a session comes back.
   function clearMessages() {
+    // Both teardown paths (logout, session lost) funnel through here, so this
+    // is where a parked guild entry is discarded — it must not fire minutes
+    // later against a reconnected session.
+    pendingGuildEntry = ""
     channelData = ({})
     readState = ({})
     typers = ({})
@@ -1882,6 +1961,9 @@ Item {
   onPluginDirChanged: daemonManager.pluginDir = pluginDir
   onMediaCacheMBChanged: sendConfig()
   onCurrentChannelIdChanged: syncMembers()
+  // The DM list arrives through list_dms, not list_channels, so the "dms"
+  // pseudo-guild needs its own retry for a parked entry.
+  onDmsChanged: resolveGuildEntry()
 
   Component.onCompleted: {
     // Deferred so shell/manifest injection lands before any startup work.

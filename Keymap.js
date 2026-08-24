@@ -52,12 +52,16 @@ var ENTRIES = [
     action: "Reload state, the channel list and the open channel (outside text inputs)" },
   { id: "global.retry", zone: "global", keys: "r", hint: "retries",
     action: "While the backend is down: start it, or re-pull state" },
-  { id: "global.esc", zone: "global", keys: "Esc", hint: "closes",
-    action: "Walk back out: composer → timeline (marking read) → channel list → server rail → close the panel" },
+  { id: "global.esc", zone: "global", keys: "Esc", hint: "back out",
+    action: "Walk back out: composer → timeline (marking read) → channel list → server rail, where it stops — Esc never closes the panel" },
+  // Footer-only: the login / backend-down screens have no zone to fall back
+  // to, so Esc there really does close.
+  { id: "global.escClose", zone: "global", cheatsheet: false, keys: "Esc", hint: "closes",
+    action: "Close the panel" },
   { id: "global.activate", zone: "global", cheatsheet: false, keys: "Enter", hint: "activates",
     action: "Activate the focused button" },
   { id: "global.escBack", zone: "global", keys: "Esc", hint: "back to the last zone",
-    action: "From a header button: back to the last zone" },
+    action: "From a panel button: back to the last zone" },
 
   // --- sidebar ---
   { id: "rail.move", zone: "sidebar", keys: "j / k · ↑ / ↓", hintKeys: "j/k", hint: "move",
@@ -65,7 +69,7 @@ var ENTRIES = [
   { id: "rail.ends", zone: "sidebar", keys: "g / G · Home / End", hintKeys: "g/G", hint: "first/last",
     action: "First / last row" },
   { id: "rail.enter", zone: "sidebar", keys: "Enter · l · →", hintKeys: "Enter/l", hint: "opens channels",
-    action: "Rail: open the server's channel list" },
+    action: "Rail: open the server's channel list and the channel it was last left on (a server also falls back to #general, then its first channel; Direct messages restore only what you left open)" },
   { id: "channels.open", zone: "sidebar", keys: "Enter", hint: "opens channel",
     action: "Channel list: open the channel or thread (the composer takes focus); on a forum: show its threads" },
   { id: "channels.threads", zone: "sidebar", keys: "t", hint: "threads",
@@ -175,7 +179,7 @@ var FOOTER = {
   qrRunning: ["qr.cancel", "qr.tab"],
   qrDone: ["qr.again", "qr.dismiss", "qr.tab"],
   qrMissing: ["qr.again", "qr.cancel", "qr.tab"],
-  down: ["global.retry", "global.tab", "global.esc"],
+  down: ["global.retry", "global.tab", "global.escClose"],
   buttons: ["global.activate", "global.tabCycle", "global.escBack"],
   composer: ["composer.send", "composer.newline", "composer.editLast", "composer.paste"],
   composerTail: ["global.zoneLeft", "composer.esc"],
@@ -190,7 +194,10 @@ var FOOTER = {
     "timeline.copy", "timeline.open"],
   timelineThreads: ["timeline.threads"],
   timelineTail: ["global.members", "global.channelStep", "global.zoneComposer", "timeline.esc"],
-  rail: ["rail.move", "rail.enter", "global.switcher", "global.cheatsheet", "global.reload", "global.tab", "global.esc"],
+  // No Esc hint on the rail: it is the end of the ladder and does nothing
+  // there, and a hint for a key that does nothing is noise. Tab is the
+  // discoverable route to the Close button.
+  rail: ["rail.move", "rail.enter", "global.switcher", "global.cheatsheet", "global.reload", "global.tab"],
   channels: ["rail.move", "channels.open", "channels.threads", "channels.back", "global.channelStep"],
   channelsTimeline: ["channels.timeline"],
   // The member pane belongs to an open channel: no channel, no `m` hint.
