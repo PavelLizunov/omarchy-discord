@@ -98,10 +98,20 @@ var ENTRIES = [
     action: "Copy the message text (plus attachment URLs) to the clipboard" },
   { id: "timeline.open", zone: "timeline", keys: "O", hint: "open link",
     action: "Open the first link, attachment (from the cache when present) or embed" },
+  { id: "timeline.copyLink", zone: "timeline", keys: "L", hint: "copy link",
+    action: "Copy the first link, attachment or embed URL to the clipboard (a link hovered with the mouse offers a Copy link chip)" },
+  // Footer-only pairing of O and L: the timeline footer is already long
+  // enough to elide, and two separate hints cost eight more characters.
+  { id: "timeline.links", zone: "timeline", cheatsheet: false, keys: "O / L", hint: "open/copy link",
+    action: "Open or copy the first link, attachment or embed" },
+  { id: "timeline.copySelection", zone: "timeline", keys: "Ctrl+C", hint: "copies selection",
+    action: "Copy the highlighted text (drag the mouse over a message to highlight it); Y still copies the whole message" },
+  { id: "timeline.escSelection", zone: "timeline", cheatsheet: false, keys: "Esc", hint: "clears the selection",
+    action: "Clear the text selection" },
   { id: "timeline.enter", zone: "timeline", keys: "Enter", hint: "reveals spoilers",
     action: "Reveal the message's spoiler images" },
   { id: "timeline.esc", zone: "timeline", keys: "Esc", hint: "marks read, back to sidebar",
-    action: "Mark the channel read and go back to the channel list (cancels an armed delete first)" },
+    action: "Mark the channel read and go back to the channel list (cancels an armed delete, then clears a text selection, first)" },
 
   // --- composer ---
   { id: "composer.send", zone: "composer", keys: "Enter", hint: "sends",
@@ -191,8 +201,11 @@ var FOOTER = {
   // timeline.threads is appended only while the open channel has a parent to
   // expand (Panel.canToggleCurrentThreads): in a DM `t` does nothing.
   timeline: ["timeline.move", "timeline.ends", "timeline.reply", "timeline.react", "timeline.delete",
-    "timeline.copy", "timeline.open"],
+    "timeline.copy", "timeline.links"],
   timelineThreads: ["timeline.threads"],
+  // Prepended (not appended) while a selection exists: the footer Text elides
+  // on the right, and these two are the only keys that act on the selection.
+  timelineSelection: ["timeline.copySelection", "timeline.escSelection"],
   timelineTail: ["global.members", "global.channelStep", "global.zoneComposer", "timeline.esc"],
   // No Esc hint on the rail: it is the end of the ladder and does nothing
   // there, and a hint for a key that does nothing is noise. Tab is the

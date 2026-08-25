@@ -1786,6 +1786,7 @@ Item {
                 onMoveZone: function(direction) { root.moveZone(direction) }
                 onOpenLink: function(url) { Quickshell.execDetached(["xdg-open", String(url)]) }
                 onCopied: if (root.service) root.service.succeed("Copied to clipboard")
+                onLinkCopied: if (root.service) root.service.succeed("Copied link to clipboard")
                 onReachedBottom: if (root.opened && (root.focusedZone === "timeline" || root.focusedZone === "composer")) ackTimer.restart()
                 onActiveFocusChanged: if (activeFocus && root.zone !== "timeline") root.zone = "timeline"
                 onPinnedChanged: root.publishPinned()
@@ -1921,7 +1922,8 @@ Item {
               }
               if (root.zone === "members") return Keymap.footer("members")
               if (root.zone === "timeline")
-                return Keymap.footer("timeline", root.canToggleCurrentThreads ? "timelineThreads" : "", "timelineTail")
+                return Keymap.footer(root.timeline.hasSelection ? "timelineSelection" : "", "timeline",
+                  root.canToggleCurrentThreads ? "timelineThreads" : "", "timelineTail")
               if (root.column === "rail") return Keymap.footer("rail")
               return Keymap.footer("channels", root.currentChannelId ? "channelsTimeline" : "",
                 root.currentChannelId ? "channelsMembers" : "", "channelsTail")

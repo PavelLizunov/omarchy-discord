@@ -47,6 +47,12 @@ FocusScope {
   // Message ids whose spoiler attachments were revealed (Enter / click).
   // Replaced wholesale; reset on channel change.
   property var revealed: ({})
+  // The one MessageRow holding a mouse selection. Selection lives in a
+  // per-message TextEdit, so it can never span two rows and at most one row
+  // can own it; QML nulls the reference when the delegate is destroyed, and
+  // releaseSelection() does the same on the way out.
+  property var selectionOwner: null
+  readonly property bool hasSelection: !!selectionOwner && selectionOwner.hasSelection
 
   signal requestHistory(string beforeId)
   // `escape` is an illegal QML signal name (clashes with the JS global), hence:
@@ -54,6 +60,7 @@ FocusScope {
   signal moveZone(string direction)
   signal openLink(string url)
   signal copied()
+  signal linkCopied()
   signal activateMessage(string messageId)
   signal reachedBottom()
   // Message actions (R / D D / E on the cursor row).
@@ -386,6 +393,49 @@ FocusScope {
     copied()
   }
 
+  function noteSelection(item) {
+    if (selectionOwner === item) return
+    if (selectionOwner) selectionOwner.clearSelection()
+    selectionOwner = item
+  }
+
+  // Called from the delegate's destruction: a row scrolled out of the cache
+  // buffer must not leave the timeline believing it still holds a selection.
+  function releaseSelection(item) {
+    if (selectionOwner === item) selectionOwner = null
+  }
+
+  function clearSelection() {
+    if (selectionOwner) selectionOwner.clearSelection()
+    selectionOwner = null
+  }
+
+  // Ctrl+C. A rich-text TextEdit hands the selection back with Qt's own
+  // separators — U+2028 where the renderer emitted <br>, U+2029 at block
+  // boundaries — never "\n", so an unnormalised paste runs every line
+  // together in whatever app receives it.
+  function copySelection() {
+    if (!hasSelection) return
+    var text = String(selectionOwner.selection).replace(/[\u2028\u2029]/g, "\n")
+    if (!text) return
+    Quickshell.clipboardText = text
+    copied()
+  }
+
+  // The clipboard wants the shareable URL, so unlike openCursorLink this
+  // never substitutes the cached local path.
+  function copyLink(url) {
+    var link = String(url || "")
+    if (!link) return
+    Quickshell.clipboardText = link
+    linkCopied()
+  }
+
+  function copyCursorLink() {
+    if (cursorIndex < 0) return
+    copyLink(Markdown.firstLink(rows[cursorIndex]))
+  }
+
   // O: first link in the text, else the first attachment (opened from its
   // cached local file when the media cache already has it, so it is instant
   // and works offline), else the first embed URL.
@@ -468,11 +518,29 @@ FocusScope {
     var armed = armedDeleteId !== ""
     if (armed && text !== "D") disarmDelete()
 
+    // Ctrl+C copies the mouse selection (Y still copies the whole message).
+    // Every other Ctrl chord belongs to the panel (Ctrl+K, Ctrl+/), and so
+    // does Ctrl+C with nothing selected.
+    if ((event.modifiers & Qt.ControlModifier) !== 0) {
+      if (key !== Qt.Key_C || !hasSelection) return
+      copySelection()
+      event.accepted = true
+      return
+    }
+
     if (alt && key === Qt.Key_H) moveZone("left")
     else if (alt && key === Qt.Key_L) moveZone("right")
     // Other Alt chords (Alt+Up/Down channel switching) belong to the panel.
     else if (alt) return
-    else if (key === Qt.Key_Escape) { if (!armed) escapeRequested() }
+    // Esc peels innermost-first and is consumed either way: the armed delete
+    // was already disarmed above, then the text selection (transient, visible
+    // and timeline-local), then the zone itself.
+    else if (key === Qt.Key_Escape) {
+      if (!armed) {
+        if (hasSelection) clearSelection()
+        else escapeRequested()
+      }
+    }
     else if (key === Qt.Key_Down || text === "j") moveCursor(1)
     else if (key === Qt.Key_Up || text === "k") moveCursor(-1)
     else if (key === Qt.Key_PageUp) pageMove(-1)
@@ -486,6 +554,7 @@ FocusScope {
     // "anywhere" keys honest — notably r, which reloads.
     else if (text === "Y") copyCursorMessage()
     else if (text === "O") openCursorLink()
+    else if (text === "L") copyCursorLink()
     else if (text === "R") { if (cursorIndex >= 0 && !rows[cursorIndex].pending) replyRequested(cursorMessageId) }
     else if (text === "D") requestDelete()
     else if (text === "E") { if (cursorIndex >= 0) reactRequested(cursorMessageId) }
@@ -504,7 +573,7 @@ FocusScope {
   onActiveChanged: {
     if (active) ensureCursor()
     checkBottom()
-    if (!active) disarmDelete()
+    if (!active) { disarmDelete(); clearSelection() }
   }
   onViewingChanged: checkBottom()
   onChannelIdChanged: {
@@ -515,6 +584,7 @@ FocusScope {
     lastGAt = 0
     revealed = ({})
     disarmDelete()
+    clearSelection()
   }
   onCursorMessageIdChanged: if (armedDeleteId && armedDeleteId !== cursorMessageId) disarmDelete()
 
@@ -676,6 +746,19 @@ FocusScope {
             timeline.cursorMessageId = row.mid
             timeline.reactionToggled(row.mid, emoji)
           }
+          onCopyLinkRequested: function(url) {
+            timeline.cursorMessageId = row.mid
+            timeline.copyLink(url)
+          }
+          // Claiming the zone is load-bearing: a drag started while the
+          // composer owns the keyboard would otherwise send Ctrl+C to the
+          // composer's own copy. Clicking a row already does the same.
+          onSelected: {
+            timeline.noteSelection(messageRow)
+            timeline.cursorMessageId = row.mid
+            timeline.forceActiveFocus()
+          }
+          Component.onDestruction: timeline.releaseSelection(messageRow)
         }
       }
     }

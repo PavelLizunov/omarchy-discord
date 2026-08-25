@@ -35,8 +35,15 @@ test("inline formatting", () => {
 test("code", () => {
   assert.equal(r("`x<y`"), "<code style=\"font-family:'mono';background-color:#c;\">x&lt;y</code>")
   assert.equal(r("`**not bold**`"), "<code style=\"font-family:'mono';background-color:#c;\">**not bold**</code>")
-  assert.equal(r("```js\nlet a = 1;\n```"), "<pre style=\"font-family:'mono';background-color:#c;\">let a = 1;</pre>")
-  assert.equal(r("```\n<b>\n```"), "<pre style=\"font-family:'mono';background-color:#c;\">&lt;b&gt;</pre>")
+  assert.equal(r("```js\nlet a = 1;\n```"), "<pre style=\"font-family:'mono';background-color:#c;white-space:pre-wrap;\">let a = 1;</pre>")
+  assert.equal(r("```\n<b>\n```"), "<pre style=\"font-family:'mono';background-color:#c;white-space:pre-wrap;\">&lt;b&gt;</pre>")
+  // A fenced block wraps an overlong token instead of running off the row
+  // (white-space:pre-wrap), while still keeping its newlines and indentation.
+  assert.equal(r("```\n  a\n  b\n```"), "<pre style=\"font-family:'mono';background-color:#c;white-space:pre-wrap;\">  a\n  b</pre>")
+  // forceSpoilerColor rewrites the style of a spoilered fence: it strips the
+  // colours, never the wrap declaration.
+  assert.equal(r("||```\nx\n```||"),
+    "<span style=\"background-color:#s;color:#s\"><pre style=\"font-family:'mono';white-space:pre-wrap;background-color:#s;color:#s\">x</pre></span>")
   assert.equal(p("```js\nlet a = 1;\n```"), "let a = 1;")
 })
 

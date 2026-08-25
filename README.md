@@ -195,8 +195,10 @@ node -e 'var s=require("fs").readFileSync("Keymap.js","utf8");eval(s);sections()
 | `D D` | Delete your own message (press D twice within 3 s) |
 | `Y` | Copy the message text (plus attachment URLs) to the clipboard |
 | `O` | Open the first link, attachment (from the cache when present) or embed |
+| `L` | Copy the first link, attachment or embed URL to the clipboard (a link hovered with the mouse offers a Copy link chip) |
+| `Ctrl+C` | Copy the highlighted text (drag the mouse over a message to highlight it); `Y` still copies the whole message |
 | `Enter` | Reveal the message's spoiler images |
-| `Esc` | Mark the channel read and go back to the channel list (cancels an armed delete first) |
+| `Esc` | Mark the channel read and go back to the channel list (cancels an armed delete, then clears a text selection, first) |
 
 **Composer**
 

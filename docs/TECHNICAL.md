@@ -286,6 +286,13 @@ nothing injects keys into the live Wayland session.
   socket (`enterGuild` / `resolveGuildEntry`: remembered channel, the general and
   first-channel fallbacks, the parked retry, the stale guards). Exits non-zero on the
   first failed check.
+- `components/harness/run-selection.sh` — selectable message text: a long URL in a
+  fenced code block wraps inside the column, the body `TextEdit` never takes
+  activeFocus (so j/k/G/Y survive a drag), one row owns the selection at a time,
+  Ctrl+C copies it with real newlines while `Y` still copies the whole message, Esc
+  peels the selection before the zone, and a hovered link offers the copy chip.
+  QtTest synthesizes every pointer event inside the harness window. Exits non-zero on
+  the first failed check.
 - The full-panel harnesses used for each phase live outside the tree (a Python mock
   backend speaking protocol v1 with a control socket, a `PanelWindow` shim for the
   switcher, one `shell.qml` per scenario that checks state and grabs screenshots).
@@ -307,7 +314,8 @@ Before a commit touching the frontend:
 2. `omarchy plugin validate .` (exit 0, silent).
 3. `node --test components/harness/markdown.test.js` and
    `node --test components/harness/api.test.js`.
-4. `components/harness/run-panel.sh` (exit 0).
+4. `components/harness/run-panel.sh` and `components/harness/run-selection.sh`
+   (exit 0).
 5. The offscreen harnesses above, with screenshots inspected.
 
 Before a commit touching `backend/`: `gofmt -l`, `go vet ./...`, `go test ./...`,

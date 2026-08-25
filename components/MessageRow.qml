@@ -28,11 +28,39 @@ Item {
   property string selfId: ""
   property var ctx: ({})
 
+  // The link the copy chip is offering. Sticky on purpose: it survives
+  // hoveredLink going empty, so crossing the gap from the link to the chip
+  // (which covers the text and ends the hover) cannot dismiss it.
+  property string hoverLink: ""
+
   signal clicked()
   signal linkActivated(string url)
   signal revealRequested()
   // A reaction chip was clicked (wire-form emoji).
   signal reactionClicked(string emoji)
+  // The mouse selected text in this row (Timeline keeps the single owner).
+  signal selected()
+  // The copy chip of a hovered link was clicked.
+  signal copyLinkRequested(string url)
+
+  // Selection lives in the body TextEdit, so it can never span two rows.
+  readonly property bool hasSelection: content.selectionStart !== content.selectionEnd
+  readonly property string selection: content.selectedText
+
+  function clearSelection() { content.deselect() }
+
+  // Feed from every element that carries anchors. Never clears synchronously:
+  // the chip covers the text it is offered for, so the moment it appears the
+  // hover ends, and a direct binding would oscillate. The grace timer is what
+  // breaks that loop.
+  function noteHoverLink(link) {
+    if (link) {
+      linkChipTimer.stop()
+      hoverLink = String(link)
+    } else {
+      linkChipTimer.restart()
+    }
+  }
 
   readonly property color foreground: Color.foreground
   readonly property color muted: Api.secondaryColor(Color.muted, Color.foreground, Color.background)
@@ -109,12 +137,21 @@ Item {
   implicitHeight: Math.max(body.implicitHeight + (showHeader ? Style.spacing.sm : Style.spacing.xxs) * 2,
     showHeader ? avatar.anchors.topMargin + avatarSize + Style.spacing.sm : 0)
 
+  // A row that gets a different message must never keep the old chip.
+  onMessageChanged: { linkChipTimer.stop(); hoverLink = "" }
+
+  Timer {
+    id: linkChipTimer
+    interval: 600
+    onTriggered: root.hoverLink = ""
+  }
+
   BorderSurface {
     anchors.fill: parent
     radius: Style.cornerRadius
     color: root.cursor ? Style.hoverFillFor(root.foreground, root.accent)
       : (root.mentionsSelf ? Util.alpha(Color.urgent, 0.08)
-        : (mouse.containsMouse ? Style.hoverFillFor(root.foreground, root.accent) : "transparent"))
+        : (rowHover.hovered ? Style.hoverFillFor(root.foreground, root.accent) : "transparent"))
     borderSpec: root.cursor
       ? Border.controlSpec("hover-cursor", root.foreground, root.accent)
       : Border.none()
@@ -132,12 +169,19 @@ Item {
     color: Color.urgent
   }
 
+  // The body TextEdit sits above this MouseArea and takes every press and
+  // hover over the message text itself, so the row keeps a HoverHandler (a
+  // pointer handler still sees what the covered MouseArea loses) for the
+  // hover fill, and the text carries its own TapHandler for the click.
   MouseArea {
     id: mouse
     anchors.fill: parent
-    hoverEnabled: true
+    hoverEnabled: false
     acceptedButtons: Qt.LeftButton
     onClicked: root.clicked()
+  }
+  HoverHandler {
+    id: rowHover
   }
 
   // Delete confirmation, top-right of the row.
@@ -283,12 +327,29 @@ Item {
       }
     }
 
-    // Content
-    Text {
+    // Content. A read-only TextEdit rather than a Text so the mouse can
+    // select it. `activeFocusOnPress: false` is the whole focus mechanism:
+    // without it a press here steals activeFocus from the Timeline FocusScope
+    // and strands the roving cursor (j/k/G/Y/Esc all die). With it the drag
+    // still selects, and `persistentSelection` keeps the band painted while
+    // the keyboard stays with the timeline.
+    //
+    // Text.Wrap is Qt's WrapAtWordBoundaryOrAnywhere: prose breaks on words
+    // and a 200-character URL breaks mid-token. WordWrap would not, and
+    // WrapAnywhere would break ordinary prose mid-word.
+    TextEdit {
+      id: content
       width: parent.width
       visible: text !== ""
-      textFormat: root.system ? Text.PlainText : Text.RichText
-      wrapMode: Text.Wrap
+      readOnly: true
+      selectByMouse: true
+      selectByKeyboard: false
+      activeFocusOnPress: false
+      persistentSelection: true
+      selectionColor: Style.selectionFillFor(root.foreground, root.accent)
+      selectedTextColor: root.foreground
+      textFormat: root.system ? TextEdit.PlainText : TextEdit.RichText
+      wrapMode: TextEdit.Wrap
       text: root.system ? String(root.message.content || "")
         : root.html + (root.edited ? " <span style=\"color:" + root.muted + "\">(edited)</span>" : "")
       color: root.system ? root.muted : root.foreground
@@ -296,6 +357,14 @@ Item {
       font.pixelSize: Style.font.body
       font.italic: root.system
       onLinkActivated: function(link) { root.linkActivated(link) }
+      onHoveredLinkChanged: root.noteHoverLink(hoveredLink)
+      onSelectedTextChanged: if (selectedText !== "") root.selected()
+
+      // The row MouseArea never sees a click on the text any more; a drag
+      // produces no tap, so selecting never moves the cursor.
+      TapHandler {
+        onSingleTapped: root.clicked()
+      }
     }
     // Edited marker for messages with empty content (attachment-only edits).
     Text {
@@ -405,6 +474,7 @@ Item {
             font.pixelSize: Style.font.body
             font.bold: true
             onLinkActivated: function(link) { root.linkActivated(link) }
+            onHoveredLinkChanged: root.noteHoverLink(hoveredLink)
           }
           Text {
             width: parent.width
@@ -516,6 +586,60 @@ Item {
             visible: chipMouse.containsMouse
             text: (chip.me ? "Remove your " : "React with ") + chip.emoji
           }
+        }
+      }
+    }
+  }
+
+  // Declared after `body` on purpose: same-z siblings paint in declaration
+  // order, so anything before the content column would sit under the text.
+  // Inactive while nothing is hovered, so a row that is only scrolled past
+  // pays one empty Loader and one idle Timer.
+  Loader {
+    active: root.hoverLink !== "" && !root.armedDelete
+    anchors.right: parent.right
+    anchors.top: parent.top
+    anchors.rightMargin: root.sidePad
+    anchors.topMargin: Style.spacing.xxs
+    z: 1
+    sourceComponent: copyLinkChip
+  }
+
+  Component {
+    id: copyLinkChip
+
+    // Opaque popup background so the chip occludes the text under it on every
+    // theme. No tooltip carrying the URL: a 200-character tooltip has no
+    // wrapMode and would render ~1800 px wide.
+    BorderSurface {
+      radius: Style.cornerRadius
+      color: Color.popups.background
+      borderSpec: Border.controlSpec(copyMouse.containsMouse ? "hover-cursor" : "normal",
+        root.foreground, root.accent)
+      implicitWidth: copyLabel.implicitWidth + Style.spacing.md * 2
+      implicitHeight: copyLabel.implicitHeight + Style.spacing.xxs * 2
+
+      Text {
+        id: copyLabel
+        anchors.centerIn: parent
+        text: "Copy link"
+        color: copyMouse.containsMouse ? root.accent : root.muted
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+
+      MouseArea {
+        id: copyMouse
+        anchors.fill: parent
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        // The chip keeps itself alive while the pointer is on it: the text
+        // underneath is no longer hovered, so nothing else would.
+        onEntered: linkChipTimer.stop()
+        onExited: linkChipTimer.restart()
+        onClicked: {
+          root.copyLinkRequested(root.hoverLink)
+          linkChipTimer.restart()
         }
       }
     }

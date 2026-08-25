@@ -379,6 +379,30 @@ cursor. The implementation patterns to copy are spotify's, verbatim:
   message actions, `↑` edit-last in empty composer, Ctrl+/ cheatsheet). `Enter` on a
   timeline row reveals its covered spoiler images first, then activates; `O` opens an
   attachment from its cached local path when the cache has it.
+- **Timeline text selection**: the message body is a `TextEdit { readOnly: true;
+  selectByMouse: true; activeFocusOnPress: false; persistentSelection: true }`, not a
+  `Text`. `activeFocusOnPress: false` is the whole focus mechanism — the drag selects
+  while the Timeline FocusScope keeps `activeFocus`, so the roving cursor and every
+  zone key survive; `persistentSelection` keeps the band painted with the keyboard
+  elsewhere. Because the TextEdit covers the row's fill `MouseArea`, the row hover
+  reads a `HoverHandler` and the click comes from a `TapHandler` on the text (a drag
+  produces no tap, so selecting never moves the cursor). Selection is per message and
+  cannot span rows; `Timeline.selectionOwner` holds the single owner and is cleared on
+  a new selection, a plain click (Qt's own behaviour), delegate destruction, channel
+  change and leaving the zone. `Ctrl+C` copies it — normalising Qt's U+2028 / U+2029
+  separators to `\n`, since `selectedText` never returns a newline — and `Esc` peels
+  it before leaving the zone (after an armed delete, before `escapeRequested`). `Y`
+  still copies the whole cursor message. Hovering a link offers a "Copy link" chip
+  (top-right of the row, behind a `Loader` so an unhovered row pays nothing); the
+  offer is sticky behind a 600 ms timer because the chip covers the text it is
+  offered for, and a direct binding to `hoveredLink` would oscillate. `L` is the
+  keyboard equivalent on the cursor row.
+- **Long tokens**: `Text.Wrap` is Qt's `WrapAtWordBoundaryOrAnywhere` and already
+  breaks a 200-character URL mid-token — do not "fix" it to `WrapAnywhere`, which
+  breaks ordinary prose mid-word. The one surface that overflowed was the fenced code
+  block: Qt gives `<pre>` `white-space:pre`, which refuses to wrap at all, so
+  `Markdown.blockCodeStyle` adds `white-space:pre-wrap` (block fences only — inline
+  `<code>` is a span under the same wrapMode and already wraps).
 - **Threads** (`t`): the flat channel list never shows thread rows —
   `list_channels` carries every active thread the cache knows (hundreds on a busy
   guild), so `Api.visibleChannels` hides `type: "thread"` and `Panel.threadCounts`

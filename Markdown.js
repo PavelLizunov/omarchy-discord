@@ -142,6 +142,15 @@ function codeStyle(ctx) {
   return style
 }
 
+// Fenced code keeps its newlines and indentation, but Qt's rich text gives
+// <pre> white-space:pre, which also refuses to break an overlong token, so a
+// pasted URL runs straight off the row. pre-wrap keeps the whitespace and
+// lets the Text's wrapMode break the line. Inline <code> is a span under that
+// same wrapMode and already wraps, so codeStyle itself must not change.
+function blockCodeStyle(ctx) {
+  return codeStyle(ctx) + "white-space:pre-wrap;"
+}
+
 // `|` is excluded so a spoilered link (||https://…||) keeps its cover.
 var URL_RE = /https?:\/\/[^\s<>"'()\[\]|]+[^\s<>"'()\[\]|.,;:!?]/g
 // Same pattern against escaped text (quotes already turned into &quot;).
@@ -257,7 +266,7 @@ function blocks(text, ctx, stash, plain) {
   text = text.replace(/```(?:([A-Za-z0-9_+#.-]{0,20})\n)?([\s\S]*?)```/g, function(_, lang, code) {
     code = code.replace(/\n$/, "")
     if (plain) return stash.put(code)
-    return stash.put("<pre style=\"" + codeStyle(ctx) + "\">" + code + "</pre>")
+    return stash.put("<pre style=\"" + blockCodeStyle(ctx) + "\">" + code + "</pre>")
   })
 
   var muted = ctx.mutedColor ? "color:" + ctx.mutedColor : ""
