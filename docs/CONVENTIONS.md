@@ -43,7 +43,7 @@ Validation is `PluginRegistry.qml validateManifest` plus `omarchy plugin validat
 | `entryPoints` | object; kind→key mapping is fixed: `service`→`service`, `bar-widget`→`barWidget`, `panel`→`panel`. Relative paths only, no leading `/`, no `..`. A declared kind without its entry point fails validation |
 | `barWidget.defaultSection` | one of `left`/`center`/`right` |
 | `barWidget.{displayName, description, category, allowMultiple, defaults, schema}` | copied into BarWidgetRegistry metadata |
-| `keepLoaded` (top-level, optional) | keeps the panel mounted between summons. Spotify omits it; we omit it too — authoritative state lives in Service.qml, the panel is cheap to recreate |
+| `keepLoaded` (top-level, optional) | keeps the panel item mounted: the host Loader is active from shell start instead of only while the panel is open. Spotify omits it; we set it, because the Persistent window mode needs an item that outlives a hide. Authoritative state still lives in Service.qml |
 | `author`, `license` | informational |
 
 **Schema entries are objects**, not strings. Booleans are modeled as `enum`
@@ -264,7 +264,8 @@ revealed (`Timeline.revealed`, per message id, reset on channel change).
   `Qt.callLater(() => bar.shell.summon(pluginId, JSON.stringify(payload)))` — the
   hide/summon split across event-loop turns is required on Wayland.
 - IpcHandler for Hyprland binds goes in **BarWidget.qml or Service.qml** (always
-  loaded), never in Panel.qml (doesn't exist until first summon):
+  loaded), never in Panel.qml (host-owned lifetime; without `keepLoaded` it doesn't
+  exist until first summon):
   `IpcHandler { target: root.moduleName + ".panel"; function toggle(): void {...} }`
   → `omarchy-shell quickshell.discord.panel toggle`. The zero-code fallback bind is
   `omarchy-shell shell toggle quickshell.discord`.
@@ -277,16 +278,27 @@ revealed (`Timeline.revealed`, per message id, reset on channel change).
   - `function close()` — called by the host on hide.
   Without all three, `isPluginOpen`/toggle break.
 - The surface is a Quickshell `FloatingWindow` (normal Hyprland-managed window with
-  `title`, `minimumSize`, `visible: root.opened`); a `closingFromHost` flag
-  distinguishes host-driven close from the user closing the window, which must route
-  back through `shell.hide(pluginId)`.
+  `title`, `minimumSize`). Two modes, chosen by the `window` setting:
+  - **On demand** — `visible` follows the host-driven open/close, and a `closingFromHost`
+    flag distinguishes host-driven close from the user closing the window, which must
+    route back through `shell.hide(pluginId)`.
+  - **Persistent** — the window is mapped from shell start (Hyprland rules place it,
+    e.g. on a special workspace) and `opened` tracks *window focus* instead:
+    `open()` dispatches `focuswindow` (deferred until the toplevel model shows Hyprland
+    has mapped the surface), `close()` toggles the special workspace it sits on — or
+    unmaps the window when it is not on one — and a compositor close (SUPER+W) just
+    leaves it unmapped until the next `open()`.
+  Either way `opened` means "someone is looking", which is all the rest of the panel
+  and `setUiVisible` care about.
 - `open()` ends with `Qt.callLater(() => focusScope.forceActiveFocus())` — keyboard
   focus after map. Bar popups / the quick switcher instead use `qs.Ui KeyboardPanel`
   (layer-shell `WlrLayer.Overlay`, primes `WlrKeyboardFocus.Exclusive` ~75 ms then
   OnDemand — the only way a keyboard-summoned surface gets keys without a click), with
   `focusTarget` set to an inner key-handling Item (`qs.Ui PanelKeyCatcher` fits).
-- Without `keepLoaded` the panel item is **destroyed on hide** — all authoritative
-  state (open channel, timeline cache mirror, composer drafts) lives in Service.qml.
+- The panel item is not authoritative: all state (open channel, timeline cache mirror,
+  composer drafts) lives in Service.qml. Without `keepLoaded` the item is destroyed on
+  hide; we set `keepLoaded`, so it survives — but nothing may depend on that, and
+  nothing in the item's construction may assume the window is mapped.
 - Every UI surface calls `service.setUiVisible(key, bool)` on open/close/destruction
   with a unique key; `uiVisible` (refcount over surfaces) gates polling/refresh work.
 
@@ -894,7 +906,8 @@ Each of these was assumed by PLAN.md and disproved by recon. The reality below w
    by nothing.
 3. **`omarchy shell -q quickshell.discord.panel toggle` only works if we register that
    IpcHandler ourselves in an always-loaded file** (Service.qml or BarWidget.qml — an
-   IpcHandler in on-demand Panel.qml doesn't exist until first summon). Zero-code
+   IpcHandler in a Panel.qml without `keepLoaded` doesn't exist until first summon,
+   and Panel.qml's lifetime is the host's to decide either way). Zero-code
    alternative: `omarchy shell -q shell toggle quickshell.discord`.
 4. **`ningen.Connect` / `ningen.FromToken` do not exist.** Constructors are
    `ningen.New(token)`, `NewWithIdentifier(id)`, `FromState(s)`; connect via

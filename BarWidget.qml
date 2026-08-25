@@ -52,6 +52,12 @@ BarWidget {
       return
     }
     if (typeof host.hide === "function" && typeof host.summon === "function") {
+      // A persistent window is never remapped: the panel's open() focuses it
+      // where Hyprland put it, so hiding first would only fight that.
+      if (discord && discord.persistentWindow) {
+        host.summon(moduleName, encoded)
+        return
+      }
       // Remap an existing panel onto the workspace containing this bar.
       // Splitting hide and summon across event-loop turns lets Wayland finish
       // unmapping the old surface before the shell opens it here.

@@ -69,6 +69,20 @@ ShellRoot {
 
   // --- Panel.qml + MockService ---
   function runPanelChecks() {
+    // open() / close() route through enter() / leave() via onOpenedChanged;
+    // with no `persistentWindow` on the mock the panel is in On demand mode,
+    // so `opened` is still the host-driven flag.
+    console.log("Panel.qml — window lifecycle")
+    mock.reset()
+    panel.close()
+    check("close() reports the panel shut", panel.opened, false)
+    check("close() told the service nobody is looking",
+      mock.lastCall("setUiVisible"), "full-panel=false")
+    panel.open("{}")
+    check("open() reports the panel open", panel.opened, true)
+    check("open() told the service someone is looking",
+      mock.lastCall("setUiVisible"), "full-panel=true")
+
     console.log("Panel.qml — Esc ladder (CHANGE C)")
     panel.zone = "sidebar"
     panel.column = "channels"

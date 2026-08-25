@@ -107,6 +107,27 @@ switcher is a small themed overlay (the "mini player"): unread channels and DMs
 first, then recents, each with the last message; type to search, `Enter` opens the
 panel on that channel.
 
+### Persistent window
+
+With the `window` setting on `Persistent` the client window is mapped from shell
+start instead of being created on each open, so Hyprland rules can place it. One rule
+puts it on the scratchpad:
+
+```lua
+o.window({ title = "^(Omarchy Discord)$" }, { workspace = "special:scratchpad silent" })
+```
+
+```sh
+omarchy bar set quickshell.discord window Persistent
+```
+
+The bind focuses the window when it is unfocused and hides the special workspace it
+sits on when it is focused, so `SUPER SHIFT, D` and `togglespecialworkspace scratchpad`
+are interchangeable. Without the rule (on a normal workspace) closing just unmaps the
+window instead. `SUPER+W` closes the window too; the next press of the bind maps and
+focuses it again. Read acks, refresh and the member subscription follow window focus,
+not map/unmap, so a visible but unfocused window does not mark channels read.
+
 ## First login
 
 Click the bar mark (or use the bind). The login screen offers two ways in; `Tab` cycles
@@ -363,6 +384,7 @@ change, values are normalized (unknown enum values fall back to the default,
 | `notifications` | `All` / `Mentions and DMs` / `Off` | `Mentions and DMs` | Desktop notification filter (see above) |
 | `showMentionCount` | `On` / `Off` | `On` | Show the mention count next to the bar mark (`Off` keeps the dimmed-mark / unread-dot states) |
 | `middleClick` | `Last unread DM` / `Raise panel` | `Last unread DM` | Middle-click action on the bar mark: open the panel on the most recent unread DM (the panel itself when there is none) / open or remap the panel |
+| `window` | `On demand` / `Persistent` | `On demand` | `On demand` maps the client window when you open it and unmaps it on close. `Persistent` keeps it mapped from shell start so Hyprland rules can place it, and the bind focuses / hides it instead (see "Persistent window") |
 | `imagePreviews` | `On` / `Off` | `On` | Inline image attachments and embed images in the timeline; `Off` shows filename chips instead (avatars and emoji stay) |
 | `mediaCacheMB` | 64–4096 | 512 | Media cache size cap in MiB, pushed to the backend with `set_config` on connect and on change |
 

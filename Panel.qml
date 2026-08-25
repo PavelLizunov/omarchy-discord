@@ -3,6 +3,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Effects
 import Quickshell
+import Quickshell.Hyprland
 import qs.Commons
 import qs.Ui
 
@@ -12,17 +13,42 @@ import "components" as Components
 
 // Panel: login/status screens, then guild rail + channel list + timeline +
 // composer. Host contract: root Item with shell/manifest/service injected,
-// `opened`, open(payloadJson) (JSON string), close(). Destroyed on hide
-// unless the manifest sets keepLoaded, so authoritative state (selected
-// guild, open channel, messages, drafts, staged files) lives in Service.qml;
-// this file only keeps cursors.
+// `opened`, open(payloadJson) (JSON string), close(). The manifest sets
+// keepLoaded, so this item outlives a hide, but authoritative state (selected
+// guild, open channel, messages, drafts, staged files) still lives in
+// Service.qml; this file only keeps cursors.
+//
+// Two window modes (the `window` setting). On demand: the window maps on
+// open() and unmaps on close(), and `opened` is that host-driven flag.
+// Persistent: the window is mapped from shell start for Hyprland to place,
+// and `opened` — "someone is looking", which gates read-acks, refreshes and
+// notification suppression — is keyboard focus instead.
 Item {
   id: root
 
   property var shell: null
   property var manifest: null
   property var service: null
-  property bool opened: false
+  readonly property bool persistent: !!(service && service.persistentWindow)
+  // Host-driven open state; `opened` is this only in On demand mode.
+  property bool hostOpened: false
+  readonly property bool opened: persistent ? focusScope.Window.active : hostOpened
+  // Persistent mode: the window's own mapped state. A compositor close
+  // (SUPER+W) unmaps it and the next open() maps it again.
+  property bool persistentVisible: true
+  // open() asked for focus before the compositor had mapped the window.
+  property bool pendingFocus: false
+  // The panel's own Hyprland window. Live only after refreshToplevels() —
+  // Quickshell never populates the toplevel model on its own — and its
+  // `workspace` fills in when Hyprland maps the surface, a frame or more
+  // after `visible` goes true.
+  readonly property var toplevel: {
+    var list = Hyprland.toplevels.values
+    for (var i = 0; i < list.length; i++)
+      if (String(list[i].title || "") === window.title) return list[i]
+    return null
+  }
+  readonly property bool toplevelMapped: !!(toplevel && toplevel.workspace)
   property bool closingFromHost: false
   // Exposed for offscreen harnesses (dispatchKey + state inspection).
   readonly property alias timeline: timelineView
@@ -282,6 +308,12 @@ Item {
     if (service) service.panelActive = windowActive
   }
 
+  // Tell the service whether the window is on screen at all: with keepLoaded
+  // the delegates keep resolving avatars and attachments while it is unmapped.
+  function publishMapped() {
+    if (service) service.panelMapped = window.visible
+  }
+
   // Login screen Tab order: Scan QR -> token field -> Log in -> Close; in
   // the QR view: Cancel / Try again -> Close.
   function loginStops() {
@@ -348,40 +380,82 @@ Item {
   }
 
   // --- host contract ---
+  // Someone started / stopped looking: a host summon in On demand mode, the
+  // window gaining / losing keyboard focus in Persistent mode. That fires on
+  // every focus change, so these hold only the cheap half; refreshing and
+  // restoring the cursors belong to an actual open() (alt-tabbing back must
+  // not move the cursor or re-fetch the structure).
+  function enter() {
+    if (service) service.setUiVisible("full-panel", true)
+    publishScreen()
+    publishPinned()
+    Qt.callLater(function() {
+      root.focusZone()
+      if (root.showLogin) root.focusLogin()
+    })
+  }
+
+  function leave() {
+    if (service) service.setUiVisible("full-panel", false)
+    publishScreen()
+    publishPinned()
+    publishActive()
+  }
+
   function open(payloadJson) {
     var payload = ({})
     try { payload = JSON.parse(String(payloadJson || "{}")) || ({}) } catch (e) {}
     var requested = String(payload.channel_id || payload.channel || "")
-    closingFromHost = false
-    opened = true
-    if (service) {
-      service.setUiVisible("full-panel", true)
-      service.refresh()
+    if (persistent) {
+      // Map it again if SUPER+W closed it, then let Hyprland focus it —
+      // which also raises the special workspace it may be parked on. Focus
+      // arriving is what runs enter(). A window mapped in this turn is not
+      // known to Hyprland yet, so that focus waits for the toplevel.
+      persistentVisible = true
+      if (toplevelMapped) focusWindow()
+      else pendingFocus = true
+    } else {
+      closingFromHost = false
+      hostOpened = true
     }
-    publishScreen()
-    publishPinned()
+    if (service) service.refresh()
     restoreView()
     if (requested && service) {
       service.showChannel(requested, guildIdForChannel(requested))
       enterComposer()
     }
-    Qt.callLater(function() {
-      focusZone()
-      if (root.showLogin) focusLogin()
-    })
   }
 
   function close() {
-    closingFromHost = true
-    opened = false
     tokenField.clear()
     cheatsheetView.shown = false
     pickerView.shown = false
-    if (service) service.setUiVisible("full-panel", false)
-    publishScreen()
-    publishPinned()
-    publishActive()
+    if (persistent) {
+      // Close what someone is looking at, nothing else: the host hides every
+      // panel on a plugin reload, which must not toggle the user's scratchpad
+      // away under them.
+      if (opened) hidePersistent()
+      return
+    }
+    closingFromHost = true
+    hostOpened = false
     closingFromHost = false
+  }
+
+  function focusWindow() {
+    Hyprland.dispatch("focuswindow title:^(" + window.title + ")$")
+  }
+
+  // Persistent mode's close: hide the special workspace Hyprland parked the
+  // window on, or, on a normal workspace, unmap it — the same state SUPER+W
+  // leaves behind, which open() maps back.
+  function hidePersistent() {
+    var workspace = toplevel ? toplevel.workspace : null
+    var name = workspace ? String(workspace.name || "") : ""
+    if (name.indexOf("special:") === 0)
+      Hyprland.dispatch("togglespecialworkspace " + name.slice("special:".length))
+    else
+      persistentVisible = false
   }
 
   // Tell the service whether the timeline is scrolled up, so it never trims
@@ -892,6 +966,20 @@ Item {
   // Switching between the choices and the QR view moves the focus stop.
   onQrViewChanged: if (showLogin && opened) Qt.callLater(focusLogin)
   onWindowActiveChanged: publishActive()
+  // Host-driven and focus-driven transitions share the same two functions.
+  onOpenedChanged: opened ? enter() : leave()
+  // The compositor has the window now: the focus open() wanted can go out.
+  onToplevelMappedChanged: if (toplevelMapped && pendingFocus) {
+    pendingFocus = false
+    focusWindow()
+  }
+  // Quickshell leaves the toplevel model empty until something asks for it,
+  // and only tracks it live from that point on.
+  onPersistentChanged: if (persistent) Hyprland.refreshToplevels()
+  Component.onCompleted: {
+    publishMapped()
+    if (persistent) Hyprland.refreshToplevels()
+  }
   onQrChanged: updateQrCountdown()
   // Losing the session hides the panes; put the zone and the keyboard focus
   // back on the rail together (the timeline would otherwise keep focus while
@@ -910,6 +998,7 @@ Item {
       service.setUiVisible("full-panel", false)
       service.panelScreenName = ""
       service.panelActive = false
+      service.panelMapped = false
       service.timelinePinned = true
     }
   }
@@ -938,7 +1027,7 @@ Item {
 
   FloatingWindow {
     id: window
-    visible: root.opened
+    visible: root.persistent ? root.persistentVisible : root.hostOpened
     title: "Omarchy Discord"
     color: root.background
     implicitWidth: Style.space(1040)
@@ -946,6 +1035,13 @@ Item {
     minimumSize: Qt.size(Style.space(640), Style.space(420))
 
     onVisibleChanged: {
+      root.publishMapped()
+      // Persistent mode: a compositor close (SUPER+W) just unmaps the window;
+      // mirror it so the binding agrees and the next open() maps it again.
+      if (root.persistent) {
+        if (!visible) root.persistentVisible = false
+        return
+      }
       if (!visible && root.opened && !root.closingFromHost) root.requestClose()
     }
     onScreenChanged: root.publishScreen()

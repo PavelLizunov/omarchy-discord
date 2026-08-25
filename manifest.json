@@ -7,6 +7,7 @@
   "license": "MIT",
   "description": "Text-only Discord client as an Omarchy shell plugin: themed panel and bar widget in front of a small native backend.",
   "kinds": ["service", "bar-widget", "panel"],
+  "keepLoaded": true,
   "entryPoints": {
     "service": "Service.qml",
     "barWidget": "BarWidget.qml",
@@ -23,6 +24,7 @@
       "notifications": "Mentions and DMs",
       "showMentionCount": "On",
       "middleClick": "Last unread DM",
+      "window": "On demand",
       "imagePreviews": "On",
       "mediaCacheMB": 512
     },
@@ -58,6 +60,14 @@
         "options": ["Last unread DM", "Raise panel"],
         "defaultValue": "Last unread DM",
         "description": "Quick action for a middle click on the bar widget."
+      },
+      {
+        "key": "window",
+        "type": "enum",
+        "label": "Window",
+        "options": ["On demand", "Persistent"],
+        "defaultValue": "On demand",
+        "description": "Persistent keeps the client window mapped from shell start so Hyprland rules can place it (e.g. the scratchpad); SUPER+D then focuses or hides it."
       },
       {
         "key": "imagePreviews",

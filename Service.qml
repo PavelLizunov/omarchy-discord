@@ -37,6 +37,7 @@ Item {
     notifications: "Mentions and DMs",
     showMentionCount: "On",
     middleClick: "Last unread DM",
+    window: "On demand",
     imagePreviews: "On",
     mediaCacheMB: 512
   })
@@ -45,6 +46,9 @@ Item {
   readonly property string notificationMode: settings.notifications
   readonly property bool showMentionCount: settings.showMentionCount !== "Off"
   readonly property string middleClickAction: settings.middleClick
+  // The panel window is always mapped and Hyprland places it; the host's
+  // open/close then focus and hide it instead of mapping and unmapping.
+  readonly property bool persistentWindow: settings.window === "Persistent"
   readonly property bool imagePreviews: settings.imagePreviews !== "Off"
   readonly property int mediaCacheMB: settings.mediaCacheMB
   readonly property int idleDisconnectMinutes: 15
@@ -309,6 +313,13 @@ Item {
   // --- UI visibility refcount ---
   property var visibleSurfaces: ({})
   readonly property bool uiVisible: Object.keys(visibleSurfaces).length > 0
+  // The panel window is mapped (Panel.qml publishes it). The panel item is
+  // kept loaded, so its delegates keep resolving avatars and attachments long
+  // after the window is gone; media only goes over the wire while something
+  // can show it.
+  property bool panelMapped: false
+  readonly property bool mediaAllowed: uiVisible || panelMapped
+  onMediaAllowedChanged: if (mediaAllowed) flushMediaRequests()
   property double lastActivityAt: Date.now()
 
   function noteActivity() { lastActivityAt = Date.now() }
@@ -358,6 +369,7 @@ Item {
     next.showMentionCount = Api.onOff(next.showMentionCount, "On")
     next.middleClick = Api.oneOf(next.middleClick,
       ["Last unread DM", "Raise panel"], "Last unread DM")
+    next.window = Api.oneOf(next.window, ["On demand", "Persistent"], "On demand")
     next.imagePreviews = Api.onOff(next.imagePreviews, "On")
     next.mediaCacheMB = Api.clampInt(next.mediaCacheMB, 64, 4096, 512)
     return next
@@ -1538,10 +1550,11 @@ Item {
   }
 
   // Issue fetch_media for every wanted key that is neither in flight nor
-  // known to fail. Runs deferred after requestMedia() and on every connect
-  // (in-flight fetches die with the socket).
+  // known to fail. Runs deferred after requestMedia(), on every connect
+  // (in-flight fetches die with the socket) and when a surface comes back
+  // (the wants queued while none was up).
   function flushMediaRequests() {
-    if (!connected) return
+    if (!connected || !mediaAllowed) return
     for (var key in mediaWanted) {
       if (mediaPaths[key]) { delete mediaWanted[key]; continue }
       if (mediaPending[key] || mediaFailed[key]) continue
@@ -1939,7 +1952,9 @@ Item {
   function openPanel(payload) {
     if (!shell || typeof shell.summon !== "function") return "unavailable"
     var encoded = JSON.stringify(payload || ({}))
-    if (typeof shell.isPluginOpen === "function" && shell.isPluginOpen(pluginId)
+    // A persistent window is never remapped: the panel's open() focuses it
+    // where Hyprland put it, so the hide/summon dance would only hide it.
+    if (!persistentWindow && typeof shell.isPluginOpen === "function" && shell.isPluginOpen(pluginId)
         && typeof shell.hide === "function") {
       // Remap onto the current workspace: split hide and summon across
       // event-loop turns so Wayland finishes unmapping first.

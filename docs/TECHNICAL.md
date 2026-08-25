@@ -67,7 +67,7 @@ strings on the wire: a 64-bit id does not survive a JavaScript double.
 
 Everything the user sees is a binding on `Service.qml` properties, replaced
 wholesale (copy → assign) so QML reactivity fires; nothing authoritative lives in
-the panel, which is destroyed on hide.
+the panel, whose lifetime is the shell's to decide.
 
 - **Session**: `state_changed` → `backendState`; `lifecycle` derives `ready`,
   `loggedOut`, `showStructure` (a gateway reconnect is hidden behind a 3 s grace).
@@ -120,10 +120,14 @@ the panel, which is destroyed on hide.
    service refreshes the structure, loads server emoji, re-opens the channels it
    had open (open sets and member subscriptions are per socket connection) and
    re-issues in-flight media requests.
-5. The panel is summoned by the shell (`shell.summon(id, payloadJson)` → `open()`),
-   registers `setUiVisible("full-panel", true)`, restores the cursors from the
-   service and takes keyboard focus after map. `close()` / destruction unregisters,
-   which also drops the member subscription.
+5. The panel item is mounted from shell start (`keepLoaded`) and the shell summons it
+   (`shell.summon(id, payloadJson)` → `open()`). On demand that maps the window;
+   with `window: Persistent` the window is already mapped, `open()` dispatches
+   Hyprland `focuswindow`, and `opened` follows window focus rather than the host.
+   Either transition registers `setUiVisible("full-panel", true)`, restores the cursors
+   from the service and takes keyboard focus. `close()` (unmap, or toggling the special
+   workspace the window sits on) and destruction unregister, which also drops the
+   member subscription.
 6. Any write inside the plugin directory (or disabling it) destroys and recreates
    the service; the backend unit and its session survive, and the reconnecting
    client picks the snapshot back up.

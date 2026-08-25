@@ -102,6 +102,7 @@ QtObject {
 
   // --- panel plumbing ---
   property bool panelActive: false
+  property bool panelMapped: false
   property string panelScreenName: ""
   property bool timelinePinned: true
   function setUiVisible(key, value) { note("setUiVisible", key + "=" + value) }
