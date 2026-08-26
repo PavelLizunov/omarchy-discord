@@ -2,6 +2,8 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import Quickshell
 
+import "Keymap.js" as Keymap
+
 // Offscreen contract harness for the panel's keyboard and guild-entry
 // behaviour. `components/harness/run-panel.sh` builds a scratch config root of
 // symlinks next to the shell's Commons/Ui, points XDG_RUNTIME_DIR at a scratch
@@ -46,6 +48,13 @@ ShellRoot {
     return event.accepted
   }
 
+  // A modifier chord addressed by key code (the voice chords carry no text).
+  function chord(key, modifiers) {
+    var event = { key: key, text: "", modifiers: modifiers, accepted: false }
+    panel.dispatchKey(event)
+    return event.accepted
+  }
+
   // A guild with a "general", one without, and a DM list.
   function fixtures() {
     mock.guilds = [
@@ -53,6 +62,14 @@ ShellRoot {
       { id: "g2", name: "Second", kind: "guild" }
     ]
     mock.dms = [{ id: "d1", name: "ada", type: "dm" }]
+    // Two people in the lounge, one of them talking.
+    mock.voiceMembers = {
+      g1: [{ channel_id: "c-voice", users: [
+        { id: "u1", username: "ada", display_name: "Ada Lovelace", avatar_url: "" },
+        { id: "u2", username: "lin", display_name: "Lin", avatar_url: "" }
+      ] }]
+    }
+    mock.speaking = { u1: true }
     mock.channelsByGuild = {
       g1: [
         { id: "c-cat", name: "Text", type: "category" },
@@ -121,6 +138,47 @@ ShellRoot {
     press("Return")
     check("re-entering the open channel's guild opens nothing", mock.callCount("enterGuild"), 0)
     mock.currentChannelId = ""
+
+    console.log("Panel.qml — voice channels")
+    mock.reset()
+    mock.voice = { status: "idle", guildId: "", channelId: "", muted: false, deafened: false, error: "" }
+    mock.selectedGuildId = "g1"
+    panel.zone = "sidebar"
+    panel.column = "channels"
+    check("a voice channel is in the channel list",
+      panel.indexOfId(panel.channelRows, "c-voice") >= 0, true)
+    panel.channelCursorId = "c-voice"
+    check("the sidebar cursor lands on a voice row", panel.channelCursor >= 0, true)
+    check("Enter on a voice row is consumed", press("Return"), true)
+    check("Enter on a voice row joins it", mock.lastCall("voiceJoin"), "c-voice")
+    check("and never opens it as a channel", mock.callCount("showChannel"), 0)
+
+    // Already in that call: Enter is the way to the call bar, not a re-join.
+    mock.reset()
+    mock.voice = { status: "connected", guildId: "g1", channelId: "c-voice",
+      muted: false, deafened: false, error: "" }
+    panel.zone = "sidebar"
+    panel.column = "channels"
+    panel.channelCursorId = "c-voice"
+    press("Return")
+    check("Enter on the joined channel does not re-join", mock.callCount("voiceJoin"), 0)
+    check("Enter on the joined channel focuses the call bar", panel.callBarFocused, true)
+    check("the call bar is a button-style stop, not a zone", panel.focusedZone, "")
+    check("Esc leaves the call bar", press("Escape"), true)
+    check("and the call bar no longer has focus", panel.callBarFocused, false)
+
+    mock.reset()
+    check("Ctrl+Shift+M is consumed", chord(Qt.Key_M, Qt.ControlModifier | Qt.ShiftModifier), true)
+    check("Ctrl+Shift+M toggles the mic", mock.callCount("toggleMute"), 1)
+    chord(Qt.Key_D, Qt.ControlModifier | Qt.ShiftModifier)
+    check("Ctrl+Shift+D toggles deafen", mock.callCount("toggleDeafen"), 1)
+    chord(Qt.Key_H, Qt.ControlModifier | Qt.ShiftModifier)
+    check("Ctrl+Shift+H hangs up", mock.callCount("voiceLeave"), 1)
+    mock.voice = { status: "idle", guildId: "", channelId: "", muted: false, deafened: false, error: "" }
+    check("the call bar is gone with the call", panel.callBarFocused, false)
+
+    console.log("Keymap.js — one key table")
+    check("every footer hint resolves to an entry", Keymap.missingFooterIds(), [])
 
     console.log("Panel.qml — one controls row, two hosts (CHANGE A)")
     mock.reset()
@@ -253,6 +311,39 @@ ShellRoot {
     service.noteChannelVisit("g1", "c-general")
     check("the newest guild is first, one entry per guild", service.lastChannels,
       [{ g: "g1", c: "c-general" }, { g: "g2", c: "c-chat" }])
+
+    console.log("Service.qml — voice state and events")
+    // state_changed carries protocol.State.voice on every change.
+    service.applyState({ lifecycle: "connecting", generation: 500,
+      voice: { status: "connected", guild_id: "g1", channel_id: "c-voice",
+        muted: true, deafened: false, error: "" } })
+    check("the call rides state_changed", service.voice.status, "connected")
+    check("the joined channel is mirrored", service.voice.channelId, "c-voice")
+    check("self-mute is mirrored", service.voice.muted, true)
+    check("the call is not idle", service.inCall, true)
+
+    service.handleEvent("voice_members", { guild_id: "g1", channels: [
+      { channel_id: "c-voice", users: [{ id: "u1", username: "ada", display_name: "Ada", avatar_url: "" }] }
+    ] })
+    check("voice_members fills the occupants", service.voiceUsers("g1", "c-voice").length, 1)
+    check("the occupant carries its own name",
+      service.voiceUsers("g1", "c-voice")[0].display_name, "Ada")
+    check("an empty channel has none", service.voiceUsers("g1", "c-general").length, 0)
+    check("an unknown guild has none", service.voiceUsers("g9", "c-voice").length, 0)
+
+    service.handleEvent("voice_speaking", { user_id: "u1", speaking: true })
+    check("voice_speaking marks the speaker", service.speaking["u1"] === true, true)
+    service.handleEvent("voice_speaking", { user_id: "u1", speaking: false })
+    check("and unmarks it", service.speaking["u1"] === undefined, true)
+
+    // Leaving the call clears every speaker, whatever the backend sent.
+    service.handleEvent("voice_speaking", { user_id: "u1", speaking: true })
+    service.applyState({ lifecycle: "connecting", generation: 501,
+      voice: { status: "idle", guild_id: null, channel_id: null,
+        muted: false, deafened: false, error: "" } })
+    check("leaving the call clears speaking", Object.keys(service.speaking).length, 0)
+    check("and the call is idle again", service.voice.status, "idle")
+    check("a state without a voice object reads as idle", service.inCall, false)
   }
 
   function run() {

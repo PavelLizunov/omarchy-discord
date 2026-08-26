@@ -15,6 +15,7 @@ var ZONES = [
   { id: "timeline", title: "Timeline — cursor on a message" },
   { id: "composer", title: "Composer" },
   { id: "members", title: "Member list" },
+  { id: "voice", title: "Voice call" },
   { id: "switcher", title: "Quick switcher" },
   { id: "picker", title: "Emoji picker" },
   { id: "login", title: "Login screen" }
@@ -72,6 +73,8 @@ var ENTRIES = [
     action: "Rail: open the server's channel list and the channel it was last left on (a server also falls back to #general, then its first channel; Direct messages restore only what you left open)" },
   { id: "channels.open", zone: "sidebar", keys: "Enter", hint: "opens channel",
     action: "Channel list: open the channel or thread (the composer takes focus); on a forum: show its threads" },
+  { id: "sidebar.joinVoice", zone: "sidebar", keys: "Enter", hint: "joins voice",
+    action: "Channel list: on a voice channel, join it — on the one you are already in, focus the call bar" },
   { id: "channels.threads", zone: "sidebar", keys: "t", hint: "threads",
     action: "Channel list: show / hide the channel's active threads beneath it (from the timeline: the open channel's)" },
   { id: "timeline.threads", zone: "timeline", cheatsheet: false, keys: "t", hint: "threads",
@@ -145,6 +148,16 @@ var ENTRIES = [
   { id: "members.esc", zone: "members", keys: "Esc", hint: "back to the composer",
     action: "Back to the composer (Alt+h too)" },
 
+  // --- voice call ---
+  // The three chords work from every zone, the composer included, and the
+  // same three actions are on quickshell.discord.voice for Hyprland binds.
+  { id: "voice.mute", zone: "voice", keys: "Ctrl+Shift+M", hint: "mute",
+    action: "Mute / unmute your microphone (from any app via the Hyprland bind)" },
+  { id: "voice.deafen", zone: "voice", keys: "Ctrl+Shift+D", hint: "deafen",
+    action: "Deafen / undeafen: stop playing what the others say" },
+  { id: "voice.leave", zone: "voice", keys: "Ctrl+Shift+H", hint: "hangs up",
+    action: "Leave the voice channel" },
+
   // --- quick switcher ---
   { id: "switcher.type", zone: "switcher", keys: "type", hint: "to search",
     action: "Type to search channels and DMs (empty: unread first, then recent)" },
@@ -195,6 +208,9 @@ var FOOTER = {
   composerTail: ["global.zoneLeft", "composer.esc"],
   composerMembers: ["global.zoneMembers", "global.membersAlt"],
   members: ["members.move", "members.copy", "global.zoneLeftComposer", "global.members", "members.esc"],
+  // The call bar is a focus stop, not a zone: its keys are the three chords
+  // (which work from every zone anyway) plus the way back out.
+  voice: ["voice.mute", "voice.deafen", "voice.leave", "global.tabCycle", "global.escBack"],
   composerChips: ["composer.chips"],
   composerEdit: ["composer.save", "composer.newline", "composer.cancel"],
   chips: ["chips.move", "chips.remove", "composer.send", "chips.esc"],

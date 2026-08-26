@@ -100,6 +100,24 @@ QtObject {
   property var memberList: null
   function setMembersWanted(value) { membersWanted = !!value; note("setMembersWanted", value) }
 
+  // --- voice ---
+  property var voice: ({ status: "idle", guildId: "", channelId: "", muted: false, deafened: false, error: "" })
+  property var voiceMembers: ({})
+  property var speaking: ({})
+  function voiceUsers(guildId, channelId) {
+    var list = voiceMembers[String(guildId || "")]
+    if (!Array.isArray(list)) return []
+    for (var i = 0; i < list.length; i++)
+      if (list[i] && String(list[i].channel_id || "") === String(channelId || ""))
+        return Array.isArray(list[i].users) ? list[i].users : []
+    return []
+  }
+  function voiceJoin(guildId, channelId) { note("voiceJoin", channelId); return true }
+  function voiceLeave() { note("voiceLeave"); return true }
+  function voiceSet(options) { note("voiceSet", JSON.stringify(options || ({}))); return true }
+  function toggleMute() { note("toggleMute"); return true }
+  function toggleDeafen() { note("toggleDeafen"); return true }
+
   // --- panel plumbing ---
   property bool panelActive: false
   property bool panelMapped: false
