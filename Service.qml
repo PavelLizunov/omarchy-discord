@@ -310,6 +310,20 @@ Item {
   readonly property int membersTimeoutMs: 15000
   property int quickSwitchSeq: 0
 
+  // --- voice ---
+  // The call, mirrored from protocol.State.voice (always present): it rides
+  // state_changed and Snapshot(), so a reloaded Service re-learns a live
+  // call and its hang-up control.
+  property var voice: emptyVoice()
+  readonly property bool inCall: String(voice.status || "idle") !== "idle"
+  // guildId -> [{ channel_id, users: [user] }] from voice_members; replaced
+  // wholesale for reactivity. The users carry id/username/display_name/
+  // avatar_url, so an occupant row needs no lookup.
+  property var voiceMembers: ({})
+  // userId -> true while that user is speaking (voice_speaking); replaced
+  // wholesale, cleared whenever the call leaves `connected`.
+  property var speaking: ({})
+
   // --- UI visibility refcount ---
   property var visibleSurfaces: ({})
   readonly property bool uiVisible: Object.keys(visibleSurfaces).length > 0
@@ -721,6 +735,83 @@ Item {
     }
     if (next) memberList = Api.assign(Api.shallowCopy(memberList), { members: next })
   }
+
+  // --- voice ---
+  function emptyVoice() {
+    return { status: "idle", guildId: "", channelId: "", muted: false, deafened: false, error: "" }
+  }
+
+  // protocol.State.voice -> the shape the UI binds to. Always present on the
+  // wire; a missing object is read as idle rather than left stale.
+  function readVoice(raw) {
+    var v = raw && typeof raw === "object" ? raw : ({})
+    return { status: String(v.status || "idle"),
+      guildId: v.guild_id ? String(v.guild_id) : "",
+      channelId: v.channel_id ? String(v.channel_id) : "",
+      muted: !!v.muted, deafened: !!v.deafened,
+      error: Api.redact(String(v.error || "")) }
+  }
+
+  function applyVoiceState(raw) {
+    var next = readVoice(raw)
+    // Speaking is only meaningful inside a connected call; the backend
+    // clears every tracked user on leave, but a status change is the
+    // authority the UI can always trust.
+    if (next.status !== "connected") speaking = ({})
+    voice = next
+  }
+
+  function applyVoiceMembers(message) {
+    var guildId = String(message.guild_id || "")
+    if (!guildId) return
+    var next = Api.shallowCopy(voiceMembers)
+    next[guildId] = Array.isArray(message.channels) ? message.channels : []
+    voiceMembers = next
+  }
+
+  function applyVoiceSpeaking(message) {
+    var userId = String(message.user_id || "")
+    if (!userId) return
+    var next = Api.shallowCopy(speaking)
+    if (message.speaking) next[userId] = true
+    else delete next[userId]
+    speaking = next
+  }
+
+  // Occupants of one voice channel (avatar + name per user, no lookup).
+  function voiceUsers(guildId, channelId) {
+    return Api.voiceOccupants(voiceMembers[String(guildId || "")], channelId)
+  }
+
+  function voiceJoin(guildId, channelId) {
+    if (!ready) return false
+    var channel = String(channelId || "")
+    if (!channel) return false
+    send("voice_join", { guild_id: String(guildId || ""), channel_id: channel }, null)
+    return true
+  }
+
+  function voiceLeave() {
+    if (!ready || !inCall) return false
+    send("voice_leave", null, null)
+    return true
+  }
+
+  // muted / deafened are optional: only the keys present are sent.
+  function voiceSet(options) {
+    if (!ready || !inCall) return false
+    var opts = options || ({})
+    var fields = ({})
+    if (opts.muted !== undefined) fields.muted = !!opts.muted
+    if (opts.deafened !== undefined) fields.deafened = !!opts.deafened
+    if (!Object.keys(fields).length) return false
+    send("voice_set", fields, null)
+    return true
+  }
+
+  function toggleMute() { return voiceSet({ muted: !voice.muted }) }
+
+  function toggleDeafen() { return voiceSet({ deafened: !voice.deafened }) }
 
   // --- server emoji (list_emoji) ---
   function loadServerEmoji() {
@@ -1832,6 +1923,7 @@ Item {
       reconnectGraceActive = false
     }
     backendState = next
+    applyVoiceState(next.voice)
     if (next.error) lastError = Api.redact(String(next.error))
     // A session coming up (QR approved, token login) ends the QR view.
     if (qr && (now === "connecting" || now === "ready")) qr = null
@@ -1856,6 +1948,7 @@ Item {
       channelsByGuild = ({})
       threadsByParent = ({})
       serverEmoji = []
+      voiceMembers = ({})
       clearMessages()
     }
   }
@@ -1887,6 +1980,12 @@ Item {
         break
       case "member_list_update":
         applyMemberListUpdate(message)
+        break
+      case "voice_members":
+        applyVoiceMembers(message)
+        break
+      case "voice_speaking":
+        applyVoiceSpeaking(message)
         break
       case "presence_update":
         applyPresenceUpdate(message)
@@ -2132,6 +2231,11 @@ Item {
         root.dirtyThreadParents = ({})
         root.threadsLoading = ({})
         root.backendState = null
+        // The call lives in the daemon, but with no socket we cannot know
+        // anything about it; the next state_changed / Snapshot re-learns it.
+        root.voice = root.emptyVoice()
+        root.voiceMembers = ({})
+        root.speaking = ({})
         root.lastGeneration = -1
         reconnectGraceTimer.stop()
         root.reconnectGraceActive = false
@@ -2146,6 +2250,16 @@ Item {
     function toggle(): string { return root.togglePanel() }
     function open(): string { return root.openPanel(null) }
     function close(): string { return root.closePanel() }
+  }
+
+  // omarchy-shell quickshell.discord.voice mute — call controls from any
+  // app (Hyprland binds), so hanging up never needs the panel.
+  IpcHandler {
+    target: root.pluginId + ".voice"
+
+    function mute(): string { return root.toggleMute() ? "ok" : "no call" }
+    function deafen(): string { return root.toggleDeafen() ? "ok" : "no call" }
+    function leave(): string { return root.voiceLeave() ? "ok" : "no call" }
   }
 
   // omarchy-shell quickshell.discord.switcher toggle — works from any app;

@@ -110,3 +110,32 @@ test("guildEntryChannel survives an empty or missing list", () => {
   assert.equal(Api.guildEntryChannel([], "1", true), "")
   assert.equal(Api.guildEntryChannel(null, "", true), "")
 })
+
+test("voice channels are visible and selectable, stages are neither", () => {
+  const rows = Api.visibleChannels(guild).map(r => r.id)
+  assert.ok(rows.includes("2"), "a voice channel shows in the sidebar")
+  assert.ok(!rows.includes("6"), "a stage channel stays hidden")
+  assert.equal(Api.isSelectableChannel(ch("2", "voice-lounge", "voice")), true)
+  assert.equal(Api.isSelectableChannel(ch("6", "stage", "stage")), false)
+  // Enter joins a voice channel; it is still not a channel to open.
+  assert.equal(Api.isOpenableChannel(ch("2", "voice-lounge", "voice")), false)
+})
+
+test("a category of nothing but voice channels now stays", () => {
+  const rows = Api.visibleChannels([ch("cat", "Voice", "category"), ch("2", "lounge", "voice")])
+  assert.deepEqual(rows.map(r => r.id), ["cat", "2"])
+  // One of stages only still goes.
+  assert.deepEqual(Api.visibleChannels([ch("cat", "Stages", "category"), ch("6", "s", "stage")]), [])
+})
+
+test("voiceOccupants picks one channel's users", () => {
+  const channels = [
+    { channel_id: "2", users: [{ id: "u1", display_name: "Ada" }] },
+    { channel_id: "3", users: [] }
+  ]
+  assert.deepEqual(Api.voiceOccupants(channels, "2").map(u => u.id), ["u1"])
+  assert.deepEqual(Api.voiceOccupants(channels, "3"), [])
+  assert.deepEqual(Api.voiceOccupants(channels, "nope"), [])
+  assert.deepEqual(Api.voiceOccupants(undefined, "2"), [])
+  assert.deepEqual(Api.voiceOccupants([{ channel_id: "2" }], "2"), [])
+})

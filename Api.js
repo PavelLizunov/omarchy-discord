@@ -140,14 +140,15 @@ function initials(name) {
   return out || "?"
 }
 
-// Sidebar filter: voice/stage channels are a non-goal and hidden entirely;
-// a category whose visible children are all hidden goes with them. Thread
-// rows (list_channels carries every active thread the cache knows — hundreds
-// on a busy guild) never sit in the flat list: they are shown under their
-// parent on demand (Panel.channelRows / Service.threadsFor).
+// Sidebar filter: stage channels are a non-goal and hidden entirely (voice
+// channels are joinable, so they show); a category whose visible children
+// are all hidden goes with them. Thread rows (list_channels carries every
+// active thread the cache knows — hundreds on a busy guild) never sit in the
+// flat list: they are shown under their parent on demand
+// (Panel.channelRows / Service.threadsFor).
 function isHiddenChannelType(type) {
   var t = String(type || "")
-  return t === "voice" || t === "stage" || t === "thread"
+  return t === "stage" || t === "thread"
 }
 
 // Channel types that can carry threads (the `t` affordance).
@@ -217,11 +218,25 @@ function isOpenableChannel(row) {
   return t !== "category" && t !== "forum" && t !== "voice" && t !== "stage"
 }
 
-// The sidebar cursor lands on these (thread rows under an expanded parent too).
+// The sidebar cursor lands on these (thread rows under an expanded parent
+// too, and voice channels: Enter joins them instead of opening them).
 function isSelectableChannel(row) {
   if (!row) return false
   var t = String(row.type || "")
-  return t !== "category" && t !== "voice" && t !== "stage"
+  return t !== "category" && t !== "stage"
+}
+
+// The occupants of one voice channel out of a voice_members payload
+// (guildId -> [{ channel_id, users: [user] }]). The users carry everything a
+// row needs, so nothing is looked up.
+function voiceOccupants(channels, channelId) {
+  var list = Array.isArray(channels) ? channels : []
+  var id = String(channelId || "")
+  for (var i = 0; i < list.length; i++) {
+    if (!list[i] || String(list[i].channel_id || "") !== id) continue
+    return Array.isArray(list[i].users) ? list[i].users : []
+  }
+  return []
 }
 
 // --- last-visited channel per guild ---
@@ -385,7 +400,8 @@ function imageExtension(mime) {
 // Node test hook; harmless under QML (no `module` there).
 if (typeof module !== "undefined" && module.exports) {
   module.exports = { visibleChannels: visibleChannels, isOpenableChannel: isOpenableChannel,
-    isSelectableChannel: isSelectableChannel, LAST_CHANNEL_CAP: LAST_CHANNEL_CAP,
+    isSelectableChannel: isSelectableChannel, voiceOccupants: voiceOccupants,
+    isHiddenChannelType: isHiddenChannelType, LAST_CHANNEL_CAP: LAST_CHANNEL_CAP,
     parseLastChannels: parseLastChannels, lastChannelFor: lastChannelFor,
     bumpLastChannel: bumpLastChannel, guildEntryChannel: guildEntryChannel }
 }
