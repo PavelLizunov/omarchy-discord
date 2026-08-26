@@ -2045,7 +2045,13 @@ Item {
 
   function togglePanel() {
     if (!shell || typeof shell.toggle !== "function") return "unavailable"
-    if (typeof shell.isPluginOpen === "function" && shell.isPluginOpen(pluginId)) {
+    // Persistent mode: the host counts the window as open from shell start
+    // (it never hides it), so a SUPER+W-closed window would toggle to "hide"
+    // forever. Decide by the window itself: mapped and focused → hide it,
+    // anything else → map/focus it.
+    var open = persistentWindow ? (panelMapped && panelActive)
+      : (typeof shell.isPluginOpen === "function" && shell.isPluginOpen(pluginId))
+    if (open) {
       shell.hide(pluginId)
       return "closed"
     }

@@ -54,8 +54,12 @@ BarWidget {
     var host = bar.shell
     // A plain click toggles the panel when it is on this monitor; from
     // another monitor it falls through and remaps the panel here instead.
-    if (typeof host.isPluginOpen === "function" && host.isPluginOpen(moduleName)
-        && !payload && panelOnThisScreen && typeof host.hide === "function") {
+    // In persistent mode the host counts the window as open from shell start,
+    // so judge by the window itself (mapped and focused), as Service.togglePanel does.
+    var isOpen = (discord && discord.persistentWindow)
+      ? (discord.panelMapped && discord.panelActive)
+      : (typeof host.isPluginOpen === "function" && host.isPluginOpen(moduleName))
+    if (isOpen && !payload && panelOnThisScreen && typeof host.hide === "function") {
       host.hide(moduleName)
       return
     }
