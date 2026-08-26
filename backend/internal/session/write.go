@@ -179,11 +179,15 @@ func (m *Manager) reauthFromREST(n *ningen.State, cause error) {
 		m.cancel = nil
 	}
 	m.token = ""
+	// The session is done: the call goes with it, even though the cache
+	// stays readable.
+	v := m.voice
+	m.voice, m.voiceState = nil, idleVoice
 	m.setLifecycleLocked(protocol.LifecycleReauthNeeded, "session invalidated: "+cause.Error())
 	m.mu.Unlock()
 	// Close the gateway off the command path; a later login's teardown
 	// tolerates an already-closed session.
-	go closeAndWait(n, nil)
+	go closeAndWait(n, nil, v)
 	if err := m.kr.Clear(context.Background()); err != nil {
 		redact.Logf("session: keyring clear after 401: %v", err)
 	}

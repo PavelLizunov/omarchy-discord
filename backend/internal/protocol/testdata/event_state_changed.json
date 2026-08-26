@@ -1,1 +1,1 @@
-{"type":"event","v":1,"event":"state_changed","state":{"protocol_version":1,"backend_version":"0.1.0","lifecycle":"connecting","user":null,"presence":"","total_mention_count":0,"unread_dm_channel_id":null,"generation":2,"error":""}}
+{"type":"event","v":1,"event":"state_changed","state":{"protocol_version":1,"backend_version":"0.1.0","lifecycle":"connecting","user":null,"presence":"","total_mention_count":0,"unread_dm_channel_id":null,"generation":2,"error":"","voice":{"status":"idle","guild_id":null,"channel_id":null,"muted":false,"deafened":false,"error":""}}}

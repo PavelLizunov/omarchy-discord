@@ -39,7 +39,32 @@ type State struct {
 	UnreadDMChannelID *string `json:"unread_dm_channel_id"`
 	Generation        int64   `json:"generation"`
 	Error             string  `json:"error"`
+	// Voice is always present; an idle session carries IdleVoice().
+	Voice VoiceState `json:"voice"`
 }
+
+// Voice call status values carried in VoiceState.Status.
+const (
+	VoiceIdle       = "idle"
+	VoiceConnecting = "connecting"
+	VoiceConnected  = "connected"
+	VoiceError      = "error"
+)
+
+// VoiceState is the voice-call status carried in State. guild_id/channel_id
+// are null unless a call is being joined or is up.
+type VoiceState struct {
+	Status    string  `json:"status"`
+	GuildID   *string `json:"guild_id"`
+	ChannelID *string `json:"channel_id"`
+	Muted     bool    `json:"muted"`
+	Deafened  bool    `json:"deafened"`
+	// Error is redacted human-readable detail, "" unless Status is VoiceError.
+	Error string `json:"error"`
+}
+
+// IdleVoice is the voice state of a session that is not in a call.
+func IdleVoice() VoiceState { return VoiceState{Status: VoiceIdle} }
 
 // Guild is the wire shape of a guild.
 type Guild struct {
@@ -583,4 +608,58 @@ func NewMemberListUpdate(channelID string, guildID *string, groups []MemberGroup
 // NewPresenceUpdate builds a presence_update event.
 func NewPresenceUpdate(userID, status, activity string) PresenceUpdateEvent {
 	return PresenceUpdateEvent{EventHeader: header("presence_update"), UserID: userID, Status: status, Activity: activity}
+}
+
+// Voice parameter shapes.
+type (
+	VoiceJoinParams struct {
+		GuildID   string `json:"guild_id"`
+		ChannelID string `json:"channel_id"`
+	}
+	VoiceSetParams struct {
+		// Muted and Deafened are left unchanged when absent.
+		Muted    *bool `json:"muted"`
+		Deafened *bool `json:"deafened"`
+	}
+)
+
+// VoiceChannelMembers is one voice channel's occupants.
+type VoiceChannelMembers struct {
+	ChannelID string `json:"channel_id"`
+	Users     []User `json:"users"`
+}
+
+// Voice event shapes.
+type (
+	VoiceMembersEvent struct {
+		EventHeader
+		GuildID string `json:"guild_id"`
+		// Channels holds only the guild's occupied voice channels; it is
+		// empty when nobody in the guild is in voice.
+		Channels []VoiceChannelMembers `json:"channels"`
+	}
+	VoiceSpeakingEvent struct {
+		EventHeader
+		UserID   string `json:"user_id"`
+		Speaking bool   `json:"speaking"`
+	}
+)
+
+// NewVoiceMembers builds a voice_members event; nil slices become empty
+// arrays.
+func NewVoiceMembers(guildID string, channels []VoiceChannelMembers) VoiceMembersEvent {
+	if channels == nil {
+		channels = []VoiceChannelMembers{}
+	}
+	for i := range channels {
+		if channels[i].Users == nil {
+			channels[i].Users = []User{}
+		}
+	}
+	return VoiceMembersEvent{EventHeader: header("voice_members"), GuildID: guildID, Channels: channels}
+}
+
+// NewVoiceSpeaking builds a voice_speaking event.
+func NewVoiceSpeaking(userID string, speaking bool) VoiceSpeakingEvent {
+	return VoiceSpeakingEvent{EventHeader: header("voice_speaking"), UserID: userID, Speaking: speaking}
 }

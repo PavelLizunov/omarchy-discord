@@ -17,11 +17,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/diamondburned/ningen/v3"
 
@@ -126,7 +128,33 @@ type checkReport struct {
 	StagedDirWritable  bool   `json:"staged_dir_writable"`
 	SecretTool         bool   `json:"secret_tool"`
 	TokenPresent       bool   `json:"token_present"`
-	Error              string `json:"error,omitempty"`
+	// AudioServer reports whether the PulseAudio socket voice needs is
+	// reachable. It is informational: no exit code depends on it.
+	AudioServer bool   `json:"audio_server"`
+	Error       string `json:"error,omitempty"`
+}
+
+// audioServer dials the Pulse/pipewire-pulse socket: $PULSE_SERVER when set,
+// else $XDG_RUNTIME_DIR/pulse/native. Only unix sockets are probed — a remote
+// `tcp:` server reports false rather than opening a network connection here.
+func audioServer() bool {
+	addr := strings.TrimPrefix(os.Getenv("PULSE_SERVER"), "unix:")
+	if addr == "" {
+		dir := os.Getenv("XDG_RUNTIME_DIR")
+		if dir == "" {
+			return false
+		}
+		addr = filepath.Join(dir, "pulse", "native")
+	}
+	if !filepath.IsAbs(addr) {
+		return false
+	}
+	c, err := net.DialTimeout("unix", addr, time.Second)
+	if err != nil {
+		return false
+	}
+	c.Close()
+	return true
 }
 
 // mediaDir is $XDG_CACHE_HOME/omarchy-discord/media (fallback ~/.cache).
@@ -148,6 +176,7 @@ func check(socketPath string) int {
 	r.StagedDir = filepath.Join(r.RuntimeDir, "staged")
 	r.StagedDirWritable = dirWritable(r.StagedDir)
 	r.SecretTool = keyring.Available()
+	r.AudioServer = audioServer()
 	code := exitOK
 	if r.SecretTool {
 		_, err := keyring.Keyring{}.Lookup(context.Background())
