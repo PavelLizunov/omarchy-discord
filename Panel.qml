@@ -466,33 +466,39 @@ Item {
     closingFromHost = false
   }
 
+  // Omarchy Quattro's Hyprland evaluates every dispatch as Lua — it wraps the
+  // string as `return hl.dispatch(<string>)` — so plain "movetoworkspace ..."
+  // is rejected (this is why focus/reveal never worked). We send the Lua
+  // dispatcher form, addressing the window explicitly so only this window
+  // moves — the scratchpad it parks on is shared with other windows.
+  function moveWindow(workspace, follow) {
+    var addr = toplevel ? String(toplevel.address || "") : ""
+    if (!addr) return false
+    var f = follow ? "" : ", follow = false"
+    Hyprland.dispatch("hl.dsp.window.move({ window = \"address:" + addr
+      + "\", workspace = \"" + workspace + "\"" + f + " })")
+    return true
+  }
+
   function focusWindow() {
-    Hyprland.dispatch("focuswindow title:^(" + window.title + ")$")
+    moveWindow(Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : "", true)
   }
 
   // Persistent mode's open: bring the window to the workspace the user is on
-  // and focus it, pulling it off its park (scratchpad or elsewhere) rather
-  // than revealing that workspace in place. movetoworkspace follows the
-  // window, so it also lands keyboard focus; focusWindow is the fallback when
-  // the toplevel or focused workspace is not known yet.
+  // and focus it (move follows the window), pulling it off its park rather
+  // than revealing that shared workspace in place.
   function summonHere() {
-    var addr = toplevel ? String(toplevel.address || "") : ""
     var ws = Hyprland.focusedWorkspace
-    if (addr && ws && ws.id !== undefined)
-      Hyprland.dispatch("movetoworkspace " + ws.id + ",address:" + addr)
-    else
-      focusWindow()
+    if (!(ws && ws.id !== undefined && moveWindow(ws.id, true)))
+      persistentVisible = true
   }
 
   // Persistent mode's close: send the window back to its park workspace
-  // silently (so it does not switch the user away), leaving it mapped and
-  // ready for the next summon. With no park rule, unmap it — the same state
-  // SUPER+W leaves behind, which open() maps back.
+  // silently (follow = false, so the user is not switched away), leaving it
+  // mapped and ready for the next summon. With no park rule, unmap it — the
+  // same state SUPER+W leaves behind, which open() maps back.
   function hidePersistent() {
-    var addr = toplevel ? String(toplevel.address || "") : ""
-    if (parkWorkspace && addr)
-      Hyprland.dispatch("movetoworkspacesilent " + parkWorkspace + ",address:" + addr)
-    else
+    if (!(parkWorkspace && moveWindow(parkWorkspace, false)))
       persistentVisible = false
   }
 
