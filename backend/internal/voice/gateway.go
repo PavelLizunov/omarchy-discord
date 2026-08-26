@@ -26,7 +26,7 @@ func (e *Engine) installHandlers() {
 		}
 		if self.IsValid() && ev.UserID == self {
 			// Off the dispatch goroutine: Join blocks on this very event.
-			panics.Go("voice: self state", func() { e.onSelfState(gen, ev.ChannelID) })
+			panics.Go("voice: self state", func() { e.onSelfState(gen, ev.GuildID, ev.ChannelID) })
 		}
 	})
 	e.n.AddSyncHandler(func(ev *gateway.VoiceServerUpdateEvent) {
@@ -40,14 +40,20 @@ func (e *Engine) installHandlers() {
 	})
 }
 
-// onSelfState tracks our own voice state: the server moved us or dropped us
-// (channel 0 while we did not leave).
-func (e *Engine) onSelfState(gen uint64, channelID discord.ChannelID) {
+// onSelfState tracks our own voice state in the call's guild: the server
+// moved us, or dropped us (channel 0 once connected). While connecting a
+// channel-0 echo is the previous call's leave (Join sends op 4 leave and op 4
+// join back to back, and the echoes land after gen was bumped); a refused
+// join surfaces as Join's timeout instead.
+func (e *Engine) onSelfState(gen uint64, guildID discord.GuildID, channelID discord.ChannelID) {
 	e.update(func() func() {
-		if gen != e.gen || e.st.Status == StatusIdle || e.st.Status == StatusError {
+		if gen != e.gen || guildID != e.st.GuildID || (e.st.Status != StatusConnecting && e.st.Status != StatusConnected) {
 			return nil
 		}
 		if !channelID.IsValid() {
+			if e.st.Status == StatusConnecting {
+				return nil
+			}
 			e.log.Warn("voice: disconnected by server")
 			after := e.detachLocked()
 			e.st.Status, e.st.Error = StatusError, "disconnected from the voice channel"
