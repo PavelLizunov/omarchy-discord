@@ -106,6 +106,7 @@ func readyManager(t *testing.T) (*Manager, *ningen.State) {
 	dispatch(n, ready)
 	nextEvent(t, m) // ready
 	nextEvent(t, m) // guilds_synced
+	drainVoiceSeed(t, m)
 	return m, n
 }
 

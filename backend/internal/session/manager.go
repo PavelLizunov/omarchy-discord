@@ -557,10 +557,13 @@ func (m *Manager) Snapshot() []any {
 		guilds, _ := Guilds(off)
 		dms, _ := DMs(off)
 		evs = append(evs, protocol.NewGuildsSynced(m.generation, guilds, dms))
-		// A client reconnecting mid-call needs the occupancy of the guild it
-		// is in a call with; the rest arrives as changes happen.
-		if m.voiceState.GuildID.IsValid() {
-			evs = append(evs, VoiceMembers(off, m.voiceState.GuildID))
+		// A connecting client has no occupancy at all, so every guild that
+		// has somebody in voice ships with the structure; empty guilds are
+		// what the client starts from and arrive as changes happen.
+		for _, ev := range allVoiceMembers(off) {
+			if len(ev.Channels) > 0 {
+				evs = append(evs, ev)
+			}
 		}
 	}
 	return evs

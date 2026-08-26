@@ -14,6 +14,9 @@ import (
 	"github.com/mattcalayo/omarchy-discord/backend/internal/voice"
 )
 
+// chLocked is a voice channel the fixture account can see but not connect to.
+const chLocked = discord.ChannelID(300000000000000009)
+
 // fakeVoice stands in for the real engine: it records the calls the manager
 // makes and lets a test drive the engine's callbacks.
 type fakeVoice struct {
@@ -85,8 +88,15 @@ func voiceManager(t *testing.T) (*Manager, *ningen.State, *fakeVoice) {
 	dispatch(n, ready)
 	nextEvent(t, m) // ready
 	nextEvent(t, m) // guilds_synced
+	drainVoiceSeed(t, m)
 	t.Cleanup(m.Stop)
 	return m, n, fv
+}
+
+// drainVoiceSeed consumes the per-guild voice_members seed every ready emits.
+func drainVoiceSeed(t *testing.T, m *Manager) {
+	t.Helper()
+	voiceSeed(t, m)
 }
 
 func voiceReq(t *testing.T, m *Manager, line string) (any, *protocol.Error) {
@@ -97,7 +107,7 @@ func voiceReq(t *testing.T, m *Manager, line string) (any, *protocol.Error) {
 // The three voice commands reach the engine, and their arguments are
 // validated against the cache before they do.
 func TestVoiceCommandsDispatchToEngine(t *testing.T) {
-	m, _, fv := voiceManager(t)
+	m, n, fv := voiceManager(t)
 	join := `{"v":1,"id":70,"command":"voice_join","guild_id":"200000000000000001","channel_id":"300000000000000004"}`
 	if res, e := voiceReq(t, m, join); e != nil || res != (protocol.EmptyResult{}) {
 		t.Fatalf("voice_join: %v %+v", e, res)
@@ -119,7 +129,15 @@ func TestVoiceCommandsDispatchToEngine(t *testing.T) {
 		t.Fatalf("engine calls:\n got %q\nwant %q", got, want)
 	}
 
-	// Argument validation: bad snowflake, text channel, wrong guild.
+	// A voice channel the account may see but not connect to: refused from
+	// the cache instead of hanging on an op 4 Discord ignores.
+	dispatch(n, &gateway.ChannelCreateEvent{Channel: discord.Channel{
+		ID: chLocked, GuildID: guildOmar, Type: discord.GuildVoice, Name: "locked", ParentID: catGeneral,
+		Overwrites: []discord.Overwrite{{ID: discord.Snowflake(guildOmar), Type: discord.OverwriteRole, Deny: discord.PermissionConnect}},
+	}})
+	channelUpdate(t, m)
+
+	// Argument validation: bad snowflake, text channel, wrong guild, locked.
 	for _, c := range []struct {
 		line string
 		code string
@@ -127,6 +145,7 @@ func TestVoiceCommandsDispatchToEngine(t *testing.T) {
 		{`{"v":1,"id":75,"command":"voice_join","guild_id":"nope","channel_id":"300000000000000004"}`, protocol.CodeInvalidArgument},
 		{`{"v":1,"id":76,"command":"voice_join","guild_id":"200000000000000001","channel_id":"300000000000000002"}`, protocol.CodeInvalidArgument},
 		{`{"v":1,"id":77,"command":"voice_join","guild_id":"200000000000000002","channel_id":"300000000000000004"}`, protocol.CodeUnknownChannel},
+		{`{"v":1,"id":78,"command":"voice_join","guild_id":"200000000000000001","channel_id":"300000000000000009"}`, protocol.CodeForbidden},
 	} {
 		if _, e := voiceReq(t, m, c.line); e == nil || e.Code != c.code {
 			t.Errorf("want %s, got %v", c.code, e)
@@ -141,7 +160,7 @@ func TestVoiceCommandsDispatchToEngine(t *testing.T) {
 // bumps the generation, an unchanged state is silent, and speaking is an
 // event of its own.
 func TestVoiceCallbacksPushEvents(t *testing.T) {
-	m, _, fv := voiceManager(t)
+	m, n, fv := voiceManager(t)
 	connected := voice.State{Status: voice.StatusConnected, GuildID: guildOmar, ChannelID: chVoice}
 
 	m.mu.Lock()
@@ -167,13 +186,16 @@ func TestVoiceCallbacksPushEvents(t *testing.T) {
 		t.Fatalf("speaking: %+v", sp)
 	}
 
-	// The snapshot of a session in a call carries the joined guild's
-	// occupancy after the structure.
+	// The snapshot carries every occupied guild after the structure — a
+	// connecting client has no occupancy at all, in a call or not. Guilds
+	// with nobody in voice are what it starts from and stay out.
+	dispatch(n, voiceStateEvent(chVoice, ada))
+	nextVoiceMembers(t, m)
 	snap := m.Snapshot()
 	if len(snap) != 3 {
 		t.Fatalf("snapshot %+v", snap)
 	}
-	if ev, ok := snap[2].(protocol.VoiceMembersEvent); !ok || ev.GuildID != discord.GuildID(guildOmar).String() {
+	if ev, ok := snap[2].(protocol.VoiceMembersEvent); !ok || ev.GuildID != discord.GuildID(guildOmar).String() || len(ev.Channels) != 1 {
 		t.Fatalf("snapshot voice members: %+v", snap[2])
 	}
 
@@ -302,10 +324,35 @@ func TestVoiceMembersSeededAfterGuildsSynced(t *testing.T) {
 	dispatch(n, ready)
 	nextEvent(t, m) // ready
 	nextEvent(t, m) // guilds_synced
-	ev := nextVoiceMembers(t, m)
-	if ev.GuildID != discord.GuildID(guildOmar).String() || len(ev.Channels) != 1 || len(ev.Channels[0].Users) != 1 {
-		t.Fatalf("seeded voice members: %+v", ev)
+	seed := voiceSeed(t, m)
+	if omar := seed[discord.GuildID(guildOmar).String()]; len(omar.Channels) != 1 || len(omar.Channels[0].Users) != 1 {
+		t.Fatalf("seeded voice members: %+v", omar)
 	}
-	// The quiet guild has nobody in voice and is not announced.
+	// The quiet guild has nobody in voice and is announced anyway: a ready
+	// is a full re-seed, so an empty list is how a client's stale occupancy
+	// gets cleared.
+	if quiet, ok := seed[discord.GuildID(guildQuiet).String()]; !ok || quiet.Channels == nil || len(quiet.Channels) != 0 {
+		t.Fatalf("quiet guild: %+v (%v)", quiet, ok)
+	}
 	noEvent(t, m)
+
+	// A second ready is the gateway reconnect: the occupant left while the
+	// VOICE_STATE_UPDATEs were being dropped (lifecycle != ready), so only
+	// the re-seed can clear them.
+	ready.Guilds[0].VoiceStates = nil
+	dispatch(n, ready)
+	if omar := voiceSeed(t, m)[discord.GuildID(guildOmar).String()]; len(omar.Channels) != 0 {
+		t.Fatalf("re-ready must clear the guild: %+v", omar)
+	}
+}
+
+// voiceSeed collects the one-per-guild voice_members seed, keyed by guild.
+func voiceSeed(t *testing.T, m *Manager) map[string]protocol.VoiceMembersEvent {
+	t.Helper()
+	seed := map[string]protocol.VoiceMembersEvent{}
+	for range 2 { // the fixture's two guilds
+		ev := nextVoiceMembers(t, m)
+		seed[ev.GuildID] = ev
+	}
+	return seed
 }

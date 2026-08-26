@@ -84,9 +84,9 @@ On every client connect, before reading any request, the backend pushes:
    login events) so a client that connects mid-flow can show it;
 3. if `lifecycle` is `ready`: one `guilds_synced` event (full guild + DM structure,
    including per-channel unread/mention counts);
-4. if a voice call is up (`state.voice.status != "idle"`): one `voice_members` event
-   for the guild of that call, so a client that reconnects mid-call can draw the
-   occupants immediately.
+4. if `lifecycle` is `ready`: one `voice_members` event per guild that currently has
+   somebody in voice, so a connecting client can draw occupancy immediately (guilds
+   with nobody in voice are what a client starts from and are left out here).
 
 Thereafter events are pushed as things change. A client can force a refresh at any
 time with `get_state` / `list_guilds`.
@@ -692,8 +692,9 @@ Join a guild voice channel; joining while already in a call leaves the old one f
   `connecting` → `connected`, or `error` (with a message) on failure.
 - Errors: `invalid_argument` (bad snowflake, not a voice channel, stage channel —
   stage is not supported), `unknown_channel` (not cached, or not in that guild),
-  `not_logged_in`, `gateway_unavailable` (session not ready, or this build has no
-  voice engine), `discord_error`.
+  `forbidden` (the account lacks VIEW_CHANNEL / CONNECT — Discord ignores such a join
+  silently, so it is refused from the cache), `not_logged_in`, `gateway_unavailable`
+  (session not ready, or this build has no voice engine), `discord_error`.
 
 #### `voice_leave`
 Leave the current call. Idempotent: leaving when idle succeeds and changes nothing.
@@ -851,9 +852,11 @@ never null. Channels are ordered by id and occupants by display name (nick > glo
 display name > username); `avatar_url` is the plain CDN URL (no `?size=`).
 Occupancy of channels this account cannot see is never reported. Fires on every
 VOICE_STATE_UPDATE for the guild (join, leave, move, server mute), plus once per
-guild that already has somebody in voice right after `guilds_synced`, plus the
-joined guild on connect while a call is up (§ Snapshot on connect). DM and group-DM
-calls are not reported.
+guild — **every** guild, empty ones included — right after `guilds_synced`, plus the
+occupied guilds on connect (§ Snapshot on connect). The post-`guilds_synced` seed is a
+full re-seed: updates that arrive while the gateway is reconnecting are not pushed, so
+a guild that emptied out during the drop is corrected by its empty list. DM and
+group-DM calls are not reported.
 
 ### `voice_speaking`
 `{user_id, speaking: bool}` — another participant in the current call started or
