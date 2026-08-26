@@ -65,7 +65,7 @@
         {
           "id": "200000000000000001",
           "name": "@everyone",
-          "permissions": "3072",
+          "permissions": "1051648",
           "position": 0,
           "color": 0,
           "hoist": false,

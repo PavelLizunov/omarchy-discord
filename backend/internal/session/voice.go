@@ -97,7 +97,8 @@ func (m *Manager) voiceJoin(ctx context.Context, req *protocol.Request) (any, *p
 		return nil, e
 	}
 	guildID, chID := discord.GuildID(gsf), discord.ChannelID(csf)
-	ch, err := n.Offline().Cabinet.Channel(chID)
+	off := n.Offline()
+	ch, err := off.Cabinet.Channel(chID)
 	if err != nil || ch.GuildID != guildID {
 		return nil, protocol.Errorf(protocol.CodeUnknownChannel, "channel %s is not a channel of guild %s", p.ChannelID, p.GuildID)
 	}
@@ -106,6 +107,11 @@ func (m *Manager) voiceJoin(ctx context.Context, req *protocol.Request) (any, *p
 	}
 	if ch.Type != discord.GuildVoice {
 		return nil, protocol.Errorf(protocol.CodeInvalidArgument, "channel %s is not a voice channel", p.ChannelID)
+	}
+	// Discord answers an op 4 for a channel the account cannot connect to
+	// with silence, so without this the join would sit until it times out.
+	if !off.HasPermissions(chID, discord.PermissionViewChannel|discord.PermissionConnect) {
+		return nil, protocol.Errorf(protocol.CodeForbidden, "no permission to join channel %s", p.ChannelID)
 	}
 	if err := v.Join(ctx, guildID, chID); err != nil {
 		return nil, protocol.Errorf(protocol.CodeDiscordError, "voice join failed: %v", err)
@@ -203,20 +209,28 @@ func VoiceMembers(n *ningen.State, guildID discord.GuildID) protocol.VoiceMember
 	return protocol.NewVoiceMembers(guildID.String(), channels)
 }
 
-// pushVoiceMembersLocked emits one voice_members per guild that currently has
-// somebody in voice — the post-guilds_synced seed. Guilds with nobody in voice
-// are skipped: their empty list is what a client starts from anyway, and the
-// per-guild event is sent as soon as that changes. Caller holds mu.
-func (m *Manager) pushVoiceMembersLocked(n *ningen.State) {
+// allVoiceMembers renders one voice_members per guild in the cabinet, empty
+// guilds included.
+func allVoiceMembers(n *ningen.State) []protocol.VoiceMembersEvent {
 	guilds, err := n.Cabinet.Guilds()
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		redact.Logf("session: guilds for voice members: %v", err)
-		return
+		return nil
 	}
+	evs := make([]protocol.VoiceMembersEvent, 0, len(guilds))
 	for _, g := range guilds {
-		if ev := VoiceMembers(n, g.ID); len(ev.Channels) > 0 {
-			m.push(ev)
-		}
+		evs = append(evs, VoiceMembers(n, g.ID))
+	}
+	return evs
+}
+
+// pushVoiceMembersLocked emits one voice_members per guild — the seed that
+// follows every ready. Guilds with nobody in voice are announced too: a ready
+// after a gateway drop is a full re-seed, and their empty list is what clears
+// occupancy that changed while the updates were being dropped. Caller holds mu.
+func (m *Manager) pushVoiceMembersLocked(n *ningen.State) {
+	for _, ev := range allVoiceMembers(n) {
+		m.push(ev)
 	}
 }
 
