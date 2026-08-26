@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"sync"
 	"time"
 
@@ -67,6 +68,11 @@ type Engine struct {
 	gen    uint64 // bumps on every Join/teardown; async callbacks compare
 	drops  int    // established voice sessions lost during this call
 
+	// op4 sends the voice state command; newAudio opens the Pulse streams.
+	// Both default to the real thing and are swapped by the offline tests.
+	op4      dvoice.StateUpdateFunc
+	newAudio func() (*audio, error)
+
 	// Per-call handles, detached under mu and closed outside it.
 	conn       dvoice.Conn
 	audio      *audio
@@ -82,6 +88,8 @@ func New(n *ningen.State, ev Events, log *slog.Logger) *Engine {
 		log = slog.Default()
 	}
 	e := &Engine{n: n, ev: ev, log: log, st: State{Status: StatusIdle}}
+	e.op4 = e.stateUpdate
+	e.newAudio = func() (*audio, error) { return openAudio(e.log, e.speaking) }
 	e.installHandlers()
 	return e
 }
@@ -119,7 +127,7 @@ func (e *Engine) Join(ctx context.Context, guildID discord.GuildID, channelID di
 	}
 	// Pulse I/O happens outside the locks; a failure still leaves the
 	// previous call (Join always leaves first).
-	a, audioErr := openAudio(e.log, e.speaking)
+	a, audioErr := e.newAudio()
 	var (
 		conn    dvoice.Conn
 		openCtx context.Context
@@ -146,17 +154,27 @@ func (e *Engine) Join(ctx context.Context, guildID discord.GuildID, channelID di
 			e.mgr = e.newManager(snowflake.ID(me.ID))
 		}
 		e.audio = a
-		a.tx.muted.Store(e.st.Muted)
+		a.tx.setMuted(e.st.Muted)
 		a.rx.deafened.Store(e.st.Deafened)
 		e.gen++
 		e.drops = 0
 		gen = e.gen
-		conn = e.mgr.CreateConn(snowflake.ID(guildID))
-		e.conn = conn
 		openCtx, e.openCancel = context.WithTimeout(ctx, joinTimeout)
 		e.st = State{Status: StatusConnecting, GuildID: guildID, ChannelID: channelID, Muted: e.st.Muted, Deafened: e.st.Deafened}
 		muted, deaf = e.st.Muted, e.st.Deafened
-		return after
+		return func() {
+			// Still under opMu. The old conn must be closed (and removed from
+			// the manager) before CreateConn: disgo hands back the guild's
+			// existing conn otherwise, which is then the one we just closed.
+			if after != nil {
+				after()
+			}
+			go a.watch(audioWatchInterval, func() { e.fail(gen, "audio server lost") })
+			conn = e.mgr.CreateConn(snowflake.ID(guildID))
+			e.mu.Lock()
+			e.conn = conn
+			e.mu.Unlock()
+		}
 	})
 	if joinErr != nil {
 		if a != nil {
@@ -222,11 +240,7 @@ func (e *Engine) SetDeaf(ctx context.Context, deafened bool) error {
 	return e.setFlags(ctx, nil, &deafened)
 }
 
-func (e *Engine) setFlags(ctx context.Context, muted, deafened *bool) error {
-	var (
-		send bool
-		st   State
-	)
+func (e *Engine) setFlags(ctx context.Context, muted, deafened *bool) (err error) {
 	e.update(func() func() {
 		if muted != nil {
 			e.st.Muted = *muted
@@ -235,18 +249,21 @@ func (e *Engine) setFlags(ctx context.Context, muted, deafened *bool) error {
 			e.st.Deafened = *deafened
 		}
 		if e.audio != nil {
-			e.audio.tx.muted.Store(e.st.Muted)
+			e.audio.tx.setMuted(e.st.Muted)
 			e.audio.rx.deafened.Store(e.st.Deafened)
 		}
-		send = e.conn != nil && (e.st.Status == StatusConnected || e.st.Status == StatusConnecting)
-		st = e.st
-		return nil
+		if e.conn == nil || (e.st.Status != StatusConnected && e.st.Status != StatusConnecting) {
+			return nil
+		}
+		st := e.st
+		return func() {
+			// Still under opMu: a Leave cannot slip in between the snapshot
+			// and the send, which would make this op 4 re-join the channel.
+			cid := snowflake.ID(st.ChannelID)
+			err = e.op4(ctx, snowflake.ID(st.GuildID), &cid, st.Muted, st.Deafened)
+		}
 	})
-	if !send {
-		return nil
-	}
-	cid := snowflake.ID(st.ChannelID)
-	return e.stateUpdate(ctx, snowflake.ID(st.GuildID), &cid, st.Muted, st.Deafened)
+	return err
 }
 
 // Close leaves if needed and releases the audio streams.
@@ -274,7 +291,7 @@ func (e *Engine) detachLocked() func() {
 		// self voice-state echo, which the manager no longer routes once
 		// the conn is removed.
 		if sender != nil {
-			closeQuietly(sender)
+			sender.Close()
 		}
 		if rx != nil {
 			rx.Close()
@@ -290,11 +307,37 @@ func (e *Engine) detachLocked() func() {
 	}
 }
 
-// closeQuietly closes disgo's audio sender, whose Close nil-derefs when it
-// runs before the sender goroutine has stored its cancel func.
-func closeQuietly(c interface{ Close() }) {
-	defer func() { _ = recover() }()
-	c.Close()
+// sender wraps disgo's audio sender, whose Close nil-derefs (and orphans the
+// goroutine) until that goroutine has stored its cancel func. Its first tick
+// calls conn.DAVE(), which senderConn turns into the started signal.
+type sender struct {
+	dvoice.AudioSender
+	started <-chan struct{}
+	once    sync.Once
+}
+
+type senderConn struct {
+	dvoice.Conn
+	started chan struct{}
+	once    sync.Once
+}
+
+func (c *senderConn) DAVE() godave.Session {
+	c.once.Do(func() { close(c.started) })
+	return c.Conn.DAVE()
+}
+
+func newSender(l *slog.Logger, p dvoice.OpusFrameProvider, c dvoice.Conn) *sender {
+	sc := &senderConn{Conn: c, started: make(chan struct{})}
+	return &sender{AudioSender: dvoice.NewAudioSender(l, p, sc), started: sc.started}
+}
+
+// Close waits for the sender goroutine to have started, then cancels it.
+// Idempotent. Open always follows newSender under opMu, so this cannot wait
+// for a goroutine that was never launched.
+func (s *sender) Close() {
+	<-s.started
+	s.once.Do(s.AudioSender.Close)
 }
 
 // fail ends call gen with an error. No-op when gen is stale.
@@ -321,15 +364,14 @@ func (e *Engine) speaking(id snowflake.ID, on bool) {
 // and a tracked sender.
 func (e *Engine) newManager(self snowflake.ID) dvoice.Manager {
 	log := slog.New(infoHandler{e.log.Handler()}) // disgo's debug lines carry the token/secret key
-	return dvoice.NewManager(e.stateUpdate, self,
+	return dvoice.NewManager(e.op4, self,
 		dvoice.WithLogger(log),
 		dvoice.WithDaveSessionLogger(log),
 		dvoice.WithDaveSessionCreateFunc(davesession.CreateFunc(davesession.WithLogger(log))),
 		dvoice.WithConnConfigOpts(
 			dvoice.WithConnGatewayCreateFunc(e.gatewayCreate),
-			dvoice.WithConnEventHandlerFunc(e.onEvent),
 			dvoice.WithConnAudioSenderCreateFunc(func(l *slog.Logger, p dvoice.OpusFrameProvider, c dvoice.Conn) dvoice.AudioSender {
-				s := dvoice.NewAudioSender(l, p, c)
+				s := newSender(l, p, c)
 				e.mu.Lock()
 				e.sender = s
 				e.mu.Unlock()
@@ -346,13 +388,42 @@ func (e *Engine) newManager(self snowflake.ID) dvoice.Manager {
 	)
 }
 
-// gatewayCreate is called synchronously from CreateConn (inside Join, mu
-// held), so e.gen is the new call's generation. Our close handler never calls
-// disgo's: that one re-joins with a fresh op 4, which is our user's decision.
+// gatewayCreate is called synchronously from CreateConn (inside Join, under
+// opMu), so e.gen is the new call's generation; every callback is bound to
+// it. Our close handler never calls disgo's: that one re-joins with a fresh
+// op 4, which is our user's decision.
+//
+// disgo's resume loop (doReconnect: 5 attempts, 1/2/4/8/10 s backoff, on a
+// Background context) cannot be cancelled or capped from outside, and
+// gateway.Close does not stop it. The only thing it stops on is a
+// non-resumable close code, so the dialer returns one once the call is gone:
+// no post-Leave dial, no identify with the stale token. ponytail: a reconnect
+// already past the dial when the call ends still completes its resume and is
+// closed by Discord (4014) once the op 4 leave lands — every callback of it
+// is a stale-gen no-op; cutting that last window needs a disgo fork. The
+// heartbeat-zombie path also resumes without telling the observer (not
+// counted against the one-resume budget; still a resume, never an identify).
 func (e *Engine) gatewayCreate(ds godave.Session, evh dvoice.EventHandlerFunc, _ dvoice.CloseHandlerFunc, opts ...dvoice.GatewayConfigOpt) dvoice.Gateway {
+	e.mu.Lock()
 	gen := e.gen
-	opts = append(opts, dvoice.WithGatewayCloseObserver(func(err error) { e.observeClose(gen, err) }))
-	return dvoice.NewGateway(ds, evh, func(_ dvoice.Gateway, err error) {
+	e.mu.Unlock()
+	dialer := *websocket.DefaultDialer
+	dialer.NetDialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		e.mu.Lock()
+		live := gen == e.gen
+		e.mu.Unlock()
+		if !live {
+			return nil, &websocket.CloseError{Code: dvoice.GatewayCloseEventCodeDisconnected.Code, Text: "call ended"}
+		}
+		return (&net.Dialer{}).DialContext(ctx, network, addr)
+	}
+	opts = append(opts,
+		dvoice.WithGatewayDialer(&dialer),
+		dvoice.WithGatewayCloseObserver(func(err error) { e.observeClose(gen, err) }))
+	return dvoice.NewGateway(ds, func(g dvoice.Gateway, op dvoice.Opcode, seq int, data dvoice.GatewayMessageData) {
+		evh(g, op, seq, data) // disgo's conn first (SSRC map, UDP handshake)
+		e.onEvent(gen, op, data)
+	}, func(_ dvoice.Gateway, err error) {
 		// disgo gave up: a non-resumable close code or five failed resumes.
 		e.fail(gen, closeMessage(err))
 	}, opts...)
@@ -382,7 +453,7 @@ func (e *Engine) observeClose(gen uint64, err error) {
 	})
 }
 
-func (e *Engine) onEvent(_ dvoice.Gateway, op dvoice.Opcode, _ int, data dvoice.GatewayMessageData) {
+func (e *Engine) onEvent(gen uint64, op dvoice.Opcode, data dvoice.GatewayMessageData) {
 	switch d := data.(type) {
 	case dvoice.GatewayMessageDataReady:
 		e.log.Info("voice: ready", "ssrc", d.SSRC, "modes", d.Modes)
@@ -395,7 +466,8 @@ func (e *Engine) onEvent(_ dvoice.Gateway, op dvoice.Opcode, _ int, data dvoice.
 	case dvoice.GatewayMessageDataResumed:
 		e.log.Info("voice: resumed")
 		e.update(func() func() {
-			if e.conn != nil && e.st.Status == StatusConnecting {
+			// gen: a resume of the previous call must not mark this one up.
+			if gen == e.gen && e.st.Status == StatusConnecting {
 				e.st.Status = StatusConnected
 			}
 			return nil

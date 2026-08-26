@@ -2,17 +2,25 @@ package voice
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"os"
+	"slices"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/diamondburned/arikawa/v3/discord"
 	"github.com/diamondburned/arikawa/v3/gateway"
 	"github.com/diamondburned/ningen/v3"
+	dgateway "github.com/disgoorg/disgo/gateway"
 	dvoice "github.com/disgoorg/disgo/voice"
+	"github.com/disgoorg/godave"
 	"github.com/disgoorg/snowflake/v2"
+	"github.com/gorilla/websocket"
 	"github.com/hraban/opus"
 )
 
@@ -79,13 +87,41 @@ func TestGateHold(t *testing.T) {
 	if f := next(); f != nil {
 		t.Fatal("gate must close after the hold")
 	}
-	c.muted.Store(true)
-	c.frame(tone(8000))
-	if len(c.frames) != 0 {
+	c.setMuted(true)
+	if _, err := c.write(tone(8000)); err != nil || len(c.frames) != 0 {
 		t.Fatal("muted capture must queue nothing")
 	}
 	if f, err := c.ProvideOpusFrame(); f != nil || err != nil {
 		t.Fatal("muted provider must return nil, nil")
+	}
+}
+
+func TestMuteDropsCapturedAudio(t *testing.T) {
+	c, err := newCapture(slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	loud := tone(8000)
+	c.frame(loud) // encoded and queued before the mute
+	if _, err := c.write(loud[:frameLen/2]); err != nil {
+		t.Fatal(err)
+	}
+	c.setMuted(true)
+	if _, err := c.write(loud[frameLen/2:]); err != nil { // must not complete the pending half
+		t.Fatal(err)
+	}
+	if len(c.frames) != 0 || c.n != 0 {
+		t.Fatalf("mute must drop queued and pending audio: frames=%d pending=%d", len(c.frames), c.n)
+	}
+	c.setMuted(false)
+	if f, _ := c.ProvideOpusFrame(); f != nil {
+		t.Fatal("pre-mute frame sent after unmute")
+	}
+	if _, err := c.write(loud); err != nil {
+		t.Fatal(err)
+	}
+	if f, _ := c.ProvideOpusFrame(); len(f) == 0 {
+		t.Fatal("capture must resume after unmute")
 	}
 }
 
@@ -252,6 +288,351 @@ func TestEngineOffline(t *testing.T) {
 	e.Close()
 	if len(states) != n || n != 1 {
 		t.Fatalf("Leave/Close while idle must not emit: %d events", len(states))
+	}
+}
+
+// harness drives the engine offline: the real disgo manager with stubConn
+// behind it, op 4 and audio replaced by recorders, self voice-state echoes
+// injected through arikawa's handler like the gateway would.
+type harness struct {
+	t      *testing.T
+	e      *Engine
+	mu     sync.Mutex
+	log    []string
+	states []State
+	lost   atomic.Bool
+	block  chan struct{} // op 4 with a channel blocks on it when set
+}
+
+// stubConn: Open sends op 4 join and blocks until the join echo (as disgo's
+// does until the session description); Close sends op 4 leave and removes
+// itself from the manager.
+type stubConn struct {
+	dvoice.Conn
+	h      *harness
+	guild  snowflake.ID
+	op4    dvoice.StateUpdateFunc
+	remove func()
+	opened chan struct{}
+	once   sync.Once
+}
+
+func (c *stubConn) GuildID() snowflake.ID { return c.guild }
+func (c *stubConn) Open(ctx context.Context, ch snowflake.ID, mute, deaf bool) error {
+	c.h.record(fmt.Sprintf("open %d/%d", c.guild, ch))
+	if err := c.op4(ctx, c.guild, &ch, mute, deaf); err != nil {
+		return err
+	}
+	select {
+	case <-c.opened:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+func (c *stubConn) Close(ctx context.Context) {
+	c.h.record(fmt.Sprintf("close %d", c.guild))
+	_ = c.op4(ctx, c.guild, nil, false, false)
+	c.remove()
+}
+func (c *stubConn) HandleVoiceStateUpdate(u dgateway.EventVoiceStateUpdate) {
+	if u.ChannelID != nil {
+		c.once.Do(func() { close(c.opened) })
+	}
+}
+func (c *stubConn) HandleVoiceServerUpdate(dgateway.EventVoiceServerUpdate) {}
+func (c *stubConn) SetOpusFrameProvider(dvoice.OpusFrameProvider)           {}
+func (c *stubConn) SetOpusFrameReceiver(dvoice.OpusFrameReceiver)           {}
+
+func newHarness(t *testing.T) *harness {
+	h := &harness{t: t}
+	n := ningen.New("not-a-token")
+	if err := n.Cabinet.MyselfSet(discord.User{ID: 7}, false); err != nil {
+		t.Fatal(err)
+	}
+	h.e = New(n, Events{State: func(s State) {
+		h.mu.Lock()
+		h.states = append(h.states, s)
+		h.mu.Unlock()
+	}}, nil)
+	h.e.op4 = func(ctx context.Context, g snowflake.ID, c *snowflake.ID, mute, deaf bool) error {
+		if c == nil {
+			h.record(fmt.Sprintf("op4 %d leave", g))
+			return nil
+		}
+		h.record(fmt.Sprintf("op4 %d/%d mute=%v deaf=%v", g, *c, mute, deaf))
+		h.mu.Lock()
+		b := h.block
+		h.mu.Unlock()
+		if b != nil {
+			<-b
+		}
+		return nil
+	}
+	h.e.newAudio = func() (*audio, error) {
+		tx, err := newCapture(slog.Default())
+		if err != nil {
+			return nil, err
+		}
+		return &audio{tx: tx, rx: newReceiver(slog.Default(), h.e.speaking), done: make(chan struct{}), serverLost: h.lost.Load}, nil
+	}
+	h.e.mgr = dvoice.NewManager(h.e.op4, 7, dvoice.WithConnCreateFunc(
+		func(guildID, _ snowflake.ID, op4 dvoice.StateUpdateFunc, remove func(), _ ...dvoice.ConnConfigOpt) dvoice.Conn {
+			return &stubConn{h: h, guild: guildID, op4: op4, remove: remove, opened: make(chan struct{})}
+		}))
+	t.Cleanup(h.e.Close)
+	return h
+}
+
+func (h *harness) record(s string) {
+	h.mu.Lock()
+	h.log = append(h.log, s)
+	h.mu.Unlock()
+}
+
+func (h *harness) logged() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.log)
+}
+
+func (h *harness) has(entry string) bool { return slices.Contains(h.logged(), entry) }
+
+func (h *harness) noError() {
+	h.t.Helper()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, s := range h.states {
+		if s.Status == StatusError {
+			h.t.Fatalf("unexpected error state %+v (log %v)", s, h.log)
+		}
+	}
+}
+
+// wait polls cond for up to two seconds.
+func (h *harness) wait(what string, cond func() bool) {
+	h.t.Helper()
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		if cond() {
+			return
+		}
+	}
+	h.t.Fatalf("timed out waiting for %s; log=%v state=%+v", what, h.logged(), h.e.State())
+}
+
+// echo delivers our own voice-state echo the way arikawa's gateway would.
+func (h *harness) echo(guild discord.GuildID, ch discord.ChannelID) {
+	h.e.n.Call(&gateway.VoiceStateUpdateEvent{VoiceState: discord.VoiceState{GuildID: guild, UserID: 7, ChannelID: ch, SessionID: "s"}})
+}
+
+// join runs Join and answers it like Discord: the leave echo of the previous
+// call (if any), then the join echo. The leave echo is handled off the
+// dispatch goroutine; in production the session description that ends
+// Join's wait is a network round trip behind it, here a short sleep.
+func (h *harness) join(guild discord.GuildID, ch discord.ChannelID, prev discord.GuildID) error {
+	h.t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- h.e.Join(context.Background(), guild, ch) }()
+	h.wait("op 4 join", func() bool { return h.has(fmt.Sprintf("open %d/%d", guild, ch)) })
+	if prev != 0 {
+		h.echo(prev, 0)
+		time.Sleep(20 * time.Millisecond)
+	}
+	h.echo(guild, ch)
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(2 * time.Second):
+		h.t.Fatalf("Join did not return; log=%v", h.logged())
+		return nil
+	}
+}
+
+func (h *harness) conn() dvoice.Conn {
+	h.e.mu.Lock()
+	defer h.e.mu.Unlock()
+	return h.e.conn
+}
+
+func TestJoinSwitchSameGuild(t *testing.T) {
+	h := newHarness(t)
+	if err := h.join(10, 11, 0); err != nil {
+		t.Fatal(err)
+	}
+	old := h.conn()
+	if err := h.join(10, 12, 10); err != nil {
+		t.Fatal(err)
+	}
+	if st := h.e.State(); st.Status != StatusConnected || st.ChannelID != 12 {
+		t.Fatalf("state after switch %+v", st)
+	}
+	if c := h.conn(); c == nil || c == old || h.e.mgr.GetConn(10) != c {
+		t.Fatalf("switch must close the old conn before creating a fresh one: conn=%v old=%v mgr=%v", c, old, h.e.mgr.GetConn(10))
+	}
+	want := []string{
+		"open 10/11", "op4 10/11 mute=false deaf=false",
+		"close 10", "op4 10 leave",
+		"open 10/12", "op4 10/12 mute=false deaf=false",
+	}
+	if got := h.logged(); !slices.Equal(got, want) {
+		t.Fatalf("wire order\n got %v\nwant %v", got, want)
+	}
+	h.noError() // the leave echo of the first call is not a disconnect
+}
+
+func TestJoinSwitchCrossGuild(t *testing.T) {
+	h := newHarness(t)
+	if err := h.join(10, 11, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.join(20, 21, 10); err != nil {
+		t.Fatal(err)
+	}
+	if st := h.e.State(); st.Status != StatusConnected || st.GuildID != 20 || st.ChannelID != 21 {
+		t.Fatalf("state after switch %+v", st)
+	}
+	if h.e.mgr.GetConn(10) != nil || h.e.mgr.GetConn(20) != h.conn() {
+		t.Fatal("old guild's conn must be gone, new guild's installed")
+	}
+	got := h.logged()
+	if slices.Index(got, "op4 10 leave") > slices.Index(got, "open 20/21") {
+		t.Fatalf("must leave the old guild before joining the new: %v", got)
+	}
+	h.noError()
+	// A foreign guild's channel-0 echo is not ours; our guild's is a kick.
+	h.echo(10, 0)
+	time.Sleep(20 * time.Millisecond)
+	if st := h.e.State(); st.Status != StatusConnected {
+		t.Fatalf("foreign guild echo must be ignored: %+v", st)
+	}
+	h.echo(20, 0)
+	h.wait("kick", func() bool { return h.e.State().Status == StatusError })
+	if st := h.e.State(); st.Error != "disconnected from the voice channel" {
+		t.Fatalf("kick %+v", st)
+	}
+}
+
+func TestSetMuteDoesNotOutliveLeave(t *testing.T) {
+	h := newHarness(t)
+	if err := h.join(10, 11, 0); err != nil {
+		t.Fatal(err)
+	}
+	gate := make(chan struct{})
+	release := sync.OnceFunc(func() { close(gate) })
+	defer release()
+	h.mu.Lock()
+	h.block = gate
+	h.mu.Unlock()
+	muteDone := make(chan error, 1)
+	go func() { muteDone <- h.e.SetMute(context.Background(), true) }()
+	h.wait("mute op 4", func() bool { return h.has("op4 10/11 mute=true deaf=false") })
+	leaveDone := make(chan struct{})
+	go func() {
+		_ = h.e.Leave(context.Background())
+		close(leaveDone)
+	}()
+	time.Sleep(20 * time.Millisecond) // Leave must be parked behind the in-flight send
+	if h.has("close 10") {
+		t.Fatalf("Leave ran while the mute op 4 was in flight; it would have re-joined: %v", h.logged())
+	}
+	release()
+	if err := <-muteDone; err != nil {
+		t.Fatal(err)
+	}
+	<-leaveDone
+	got := h.logged()
+	if tail := got[len(got)-3:]; !slices.Equal(tail, []string{"op4 10/11 mute=true deaf=false", "close 10", "op4 10 leave"}) {
+		t.Fatalf("mute must be sent before the leave: %v", got)
+	}
+	if st := h.e.State(); st.Status != StatusIdle || !st.Muted {
+		t.Fatalf("after leave %+v", st)
+	}
+}
+
+func TestLostAudioServerFailsCall(t *testing.T) {
+	prev := audioWatchInterval
+	audioWatchInterval = 5 * time.Millisecond
+	defer func() { audioWatchInterval = prev }()
+	h := newHarness(t)
+	if err := h.join(10, 11, 0); err != nil {
+		t.Fatal(err)
+	}
+	h.lost.Store(true)
+	h.wait("failure leaves the channel", func() bool { return h.has("op4 10 leave") })
+	if st := h.e.State(); st.Status != StatusError || st.Error != "audio server lost" {
+		t.Fatalf("%+v", st)
+	}
+	if got := h.logged(); !slices.Equal(got[len(got)-2:], []string{"close 10", "op4 10 leave"}) {
+		t.Fatalf("wire order: %v", got)
+	}
+}
+
+func TestResumedBoundToGeneration(t *testing.T) {
+	e := New(ningen.New("not-a-token"), Events{}, nil)
+	e.mu.Lock()
+	e.gen = 5
+	e.st = State{Status: StatusConnecting, GuildID: 1, ChannelID: 2}
+	e.mu.Unlock()
+	e.onEvent(4, dvoice.OpcodeResumed, dvoice.GatewayMessageDataResumed{})
+	if st := e.State(); st.Status != StatusConnecting {
+		t.Fatalf("a stale call's resume must not connect this one: %+v", st)
+	}
+	e.onEvent(5, dvoice.OpcodeResumed, dvoice.GatewayMessageDataResumed{})
+	if st := e.State(); st.Status != StatusConnected {
+		t.Fatalf("own resume must connect: %+v", st)
+	}
+}
+
+func TestStaleGatewayNeverDials(t *testing.T) {
+	e := New(ningen.New("not-a-token"), Events{}, nil)
+	evh := func(dvoice.Gateway, dvoice.Opcode, int, dvoice.GatewayMessageData) {}
+	g := e.gatewayCreate(nil, evh, nil)
+	e.mu.Lock()
+	e.gen++ // the call this gateway belonged to is over
+	e.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err := g.Open(ctx, dvoice.State{Endpoint: "127.0.0.1:1"})
+	var ce *websocket.CloseError
+	if !errors.As(err, &ce) || ce.Code != dvoice.GatewayCloseEventCodeDisconnected.Code {
+		t.Fatalf("stale gateway must be refused with a non-resumable close (ends disgo's retry loop), got %v", err)
+	}
+	g = e.gatewayCreate(nil, evh, nil)
+	ctx, cancel = context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if err := g.Open(ctx, dvoice.State{Endpoint: "127.0.0.1:1"}); errors.As(err, &ce) {
+		t.Fatalf("live gateway must dial, got %v", err)
+	}
+}
+
+type notReady struct{ godave.Session }
+
+func (notReady) Ready() bool { return false }
+
+type daveConn struct {
+	dvoice.Conn
+	calls atomic.Int32
+}
+
+func (c *daveConn) DAVE() godave.Session {
+	c.calls.Add(1)
+	return notReady{}
+}
+
+func TestSenderCloseWaitsForStart(t *testing.T) {
+	c := &daveConn{}
+	s := newSender(slog.Default(), &capture{frames: make(chan []byte)}, c)
+	s.Open()
+	s.Close() // before the goroutine ran: disgo's own Close nil-derefs here
+	s.Close() // idempotent
+	if c.calls.Load() == 0 {
+		t.Fatal("Close must wait for the sender goroutine to start")
+	}
+	time.Sleep(50 * time.Millisecond)
+	n := c.calls.Load()
+	time.Sleep(50 * time.Millisecond)
+	if c.calls.Load() != n {
+		t.Fatal("sender goroutine survived Close")
 	}
 }
 
