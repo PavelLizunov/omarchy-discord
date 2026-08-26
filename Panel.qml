@@ -431,13 +431,18 @@ Item {
     var requested = String(payload.channel_id || payload.channel || "")
     if (persistent) {
       // Summon the window to the workspace the user is on now — not by
-      // revealing the scratchpad it is parked on. Map it again first if
-      // SUPER+W closed it. Focus arriving is what runs enter(); a window
-      // mapped in this turn is not known to Hyprland yet, so the move waits
-      // for the toplevel.
-      persistentVisible = true
-      if (toplevelMapped) summonHere()
-      else pendingFocus = true
+      // revealing the scratchpad it is parked on. If it is already mapped,
+      // pull it this turn. If SUPER+W closed it, remap it and defer the
+      // summon: the recreated surface does not exist yet, and the window rule
+      // re-parks it on the scratchpad, so a same-turn move would miss it.
+      if (persistentVisible) {
+        summonHere()
+      } else {
+        persistentVisible = true
+        pendingFocus = true
+        Hyprland.refreshToplevels()
+        summonRetry.restart()
+      }
     } else {
       closingFromHost = false
       hostOpened = true
@@ -469,37 +474,38 @@ Item {
   // Omarchy Quattro's Hyprland evaluates every dispatch as Lua — it wraps the
   // string as `return hl.dispatch(<string>)` — so plain "movetoworkspace ..."
   // is rejected (this is why focus/reveal never worked). We send the Lua
-  // dispatcher form, addressing the window explicitly so only this window
-  // moves — the scratchpad it parks on is shared with other windows.
+  // dispatcher form, selecting the window by title so only this window moves —
+  // the scratchpad it parks on is shared with other windows — and without
+  // relying on Quickshell's toplevel model (which can be empty here).
+  readonly property string windowSelector: "title:^(" + window.title + ")$"
+
   function moveWindow(workspace, follow) {
-    var addr = toplevel ? String(toplevel.address || "") : ""
-    if (!addr) return false
     var f = follow ? "" : ", follow = false"
-    Hyprland.dispatch("hl.dsp.window.move({ window = \"address:" + addr
+    Hyprland.dispatch("hl.dsp.window.move({ window = \"" + windowSelector
       + "\", workspace = \"" + workspace + "\"" + f + " })")
-    return true
   }
 
   function focusWindow() {
-    moveWindow(Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : "", true)
+    Hyprland.dispatch("hl.dsp.focus({ window = \"" + windowSelector + "\" })")
   }
 
   // Persistent mode's open: bring the window to the workspace the user is on
-  // and focus it (move follows the window), pulling it off its park rather
-  // than revealing that shared workspace in place.
+  // and focus it, pulling it off its park rather than revealing that shared
+  // workspace in place. move alone does not land keyboard focus when the
+  // target is already the active workspace, so focus explicitly.
   function summonHere() {
     var ws = Hyprland.focusedWorkspace
-    if (!(ws && ws.id !== undefined && moveWindow(ws.id, true)))
-      persistentVisible = true
+    if (ws && ws.id !== undefined) moveWindow(ws.id, true)
+    focusWindow()
   }
 
   // Persistent mode's close: send the window back to its park workspace
   // silently (follow = false, so the user is not switched away), leaving it
-  // mapped and ready for the next summon. With no park rule, unmap it — the
+  // mapped and ready for the next summon. With no known park, unmap it — the
   // same state SUPER+W leaves behind, which open() maps back.
   function hidePersistent() {
-    if (!(parkWorkspace && moveWindow(parkWorkspace, false)))
-      persistentVisible = false
+    if (parkWorkspace) moveWindow(parkWorkspace, false)
+    else persistentVisible = false
   }
 
   // Tell the service whether the timeline is scrolled up, so it never trims
@@ -1045,7 +1051,7 @@ Item {
   onOpenedChanged: opened ? enter() : leave()
   // The compositor has the window now. Capture its park workspace the first
   // time it maps there (the window rule's special workspace), then run any
-  // summon that open() deferred until the toplevel existed.
+  // summon that open() deferred until the recreated surface existed.
   onToplevelMappedChanged: if (toplevelMapped) {
     if (!parkWorkspace && toplevel && toplevel.workspace) {
       var name = String(toplevel.workspace.name || "")
@@ -1054,6 +1060,23 @@ Item {
     if (pendingFocus) {
       pendingFocus = false
       summonHere()
+    }
+  }
+
+  // Fallback for the deferred summon: Quickshell does not always refresh its
+  // toplevel model for a window it just remapped, so onToplevelMappedChanged
+  // may not fire. Retry a few times until the surface has mapped; summonHere
+  // is idempotent, so a late toplevel signal doing it too is harmless.
+  Timer {
+    id: summonRetry
+    interval: 120
+    repeat: true
+    property int tries: 0
+    onTriggered: {
+      if (!root.pendingFocus) { stop(); tries = 0; return }
+      root.summonHere()
+      tries += 1
+      if (tries >= 5) { root.pendingFocus = false; stop(); tries = 0 }
     }
   }
   // Quickshell leaves the toplevel model empty until something asks for it,
