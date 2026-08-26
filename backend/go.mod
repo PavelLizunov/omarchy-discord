@@ -10,6 +10,7 @@ require (
 	github.com/disgoorg/snowflake/v2 v2.0.3
 	github.com/gorilla/websocket v1.5.3
 	github.com/hraban/opus v0.0.0-20260708213942-bde8e4304501
+	github.com/jfreymuth/pulse v0.1.3
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/thomas-vilte/dave-go v0.5.1
 )
