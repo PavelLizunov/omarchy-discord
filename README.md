@@ -122,12 +122,14 @@ o.window({ title = "^(Omarchy Discord)$" }, { workspace = "special:scratchpad si
 omarchy bar set quickshell.discord window Persistent
 ```
 
-The bind focuses the window when it is unfocused and hides the special workspace it
-sits on when it is focused, so `SUPER SHIFT, D` and `togglespecialworkspace scratchpad`
-are interchangeable. Without the rule (on a normal workspace) closing just unmaps the
-window instead. `SUPER+W` closes the window too; the next press of the bind maps and
-focuses it again. Read acks, refresh and the member subscription follow window focus,
-not map/unmap, so a visible but unfocused window does not mark channels read.
+The bind summons the window to the workspace you are on and focuses it — it does not
+reveal the scratchpad in place — and pressing it again sends the window back to its park
+(the special workspace the rule first mapped it on) without switching you away. So the
+window boots parked on the scratchpad but opens wherever you are. Without the rule (on a
+normal workspace) dismissing just unmaps the window instead. `SUPER+W` closes the window
+too; the next press of the bind maps and summons it again. Read acks, refresh and the
+member subscription follow window focus, not map/unmap, so a visible but unfocused window
+does not mark channels read.
 
 ## First login
 

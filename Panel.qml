@@ -36,8 +36,12 @@ Item {
   // Persistent mode: the window's own mapped state. A compositor close
   // (SUPER+W) unmaps it and the next open() maps it again.
   property bool persistentVisible: true
-  // open() asked for focus before the compositor had mapped the window.
+  // open() asked to summon the window before the compositor had mapped it.
   property bool pendingFocus: false
+  // Where the window is parked when dismissed: the special workspace the
+  // window-rule first mapped it on (e.g. "special:scratchpad"), captured once.
+  // Empty when no rule parks it on a special workspace — then dismiss unmaps.
+  property string parkWorkspace: ""
   // The panel's own Hyprland window. Live only after refreshToplevels() —
   // Quickshell never populates the toplevel model on its own — and its
   // `workspace` fills in when Hyprland maps the surface, a frame or more
@@ -426,12 +430,13 @@ Item {
     try { payload = JSON.parse(String(payloadJson || "{}")) || ({}) } catch (e) {}
     var requested = String(payload.channel_id || payload.channel || "")
     if (persistent) {
-      // Map it again if SUPER+W closed it, then let Hyprland focus it —
-      // which also raises the special workspace it may be parked on. Focus
-      // arriving is what runs enter(). A window mapped in this turn is not
-      // known to Hyprland yet, so that focus waits for the toplevel.
+      // Summon the window to the workspace the user is on now — not by
+      // revealing the scratchpad it is parked on. Map it again first if
+      // SUPER+W closed it. Focus arriving is what runs enter(); a window
+      // mapped in this turn is not known to Hyprland yet, so the move waits
+      // for the toplevel.
       persistentVisible = true
-      if (toplevelMapped) focusWindow()
+      if (toplevelMapped) summonHere()
       else pendingFocus = true
     } else {
       closingFromHost = false
@@ -465,14 +470,28 @@ Item {
     Hyprland.dispatch("focuswindow title:^(" + window.title + ")$")
   }
 
-  // Persistent mode's close: hide the special workspace Hyprland parked the
-  // window on, or, on a normal workspace, unmap it — the same state SUPER+W
-  // leaves behind, which open() maps back.
+  // Persistent mode's open: bring the window to the workspace the user is on
+  // and focus it, pulling it off its park (scratchpad or elsewhere) rather
+  // than revealing that workspace in place. movetoworkspace follows the
+  // window, so it also lands keyboard focus; focusWindow is the fallback when
+  // the toplevel or focused workspace is not known yet.
+  function summonHere() {
+    var addr = toplevel ? String(toplevel.address || "") : ""
+    var ws = Hyprland.focusedWorkspace
+    if (addr && ws && ws.id !== undefined)
+      Hyprland.dispatch("movetoworkspace " + ws.id + ",address:" + addr)
+    else
+      focusWindow()
+  }
+
+  // Persistent mode's close: send the window back to its park workspace
+  // silently (so it does not switch the user away), leaving it mapped and
+  // ready for the next summon. With no park rule, unmap it — the same state
+  // SUPER+W leaves behind, which open() maps back.
   function hidePersistent() {
-    var workspace = toplevel ? toplevel.workspace : null
-    var name = workspace ? String(workspace.name || "") : ""
-    if (name.indexOf("special:") === 0)
-      Hyprland.dispatch("togglespecialworkspace " + name.slice("special:".length))
+    var addr = toplevel ? String(toplevel.address || "") : ""
+    if (parkWorkspace && addr)
+      Hyprland.dispatch("movetoworkspacesilent " + parkWorkspace + ",address:" + addr)
     else
       persistentVisible = false
   }
@@ -1018,10 +1037,18 @@ Item {
   onWindowActiveChanged: publishActive()
   // Host-driven and focus-driven transitions share the same two functions.
   onOpenedChanged: opened ? enter() : leave()
-  // The compositor has the window now: the focus open() wanted can go out.
-  onToplevelMappedChanged: if (toplevelMapped && pendingFocus) {
-    pendingFocus = false
-    focusWindow()
+  // The compositor has the window now. Capture its park workspace the first
+  // time it maps there (the window rule's special workspace), then run any
+  // summon that open() deferred until the toplevel existed.
+  onToplevelMappedChanged: if (toplevelMapped) {
+    if (!parkWorkspace && toplevel && toplevel.workspace) {
+      var name = String(toplevel.workspace.name || "")
+      if (name.indexOf("special:") === 0) parkWorkspace = name
+    }
+    if (pendingFocus) {
+      pendingFocus = false
+      summonHere()
+    }
   }
   // Quickshell leaves the toplevel model empty until something asks for it,
   // and only tracks it live from that point on.
