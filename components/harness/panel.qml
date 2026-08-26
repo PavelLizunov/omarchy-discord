@@ -167,6 +167,36 @@ ShellRoot {
     check("Esc leaves the call bar", press("Escape"), true)
     check("and the call bar no longer has focus", panel.callBarFocused, false)
 
+    // A failed call keeps its guild and channel ids: the row is not joined
+    // and Enter on it retries the join instead of parking on the error.
+    mock.reset()
+    mock.voice = { status: "error", guildId: "g1", channelId: "c-voice",
+      muted: false, deafened: false, error: "no audio device" }
+    panel.zone = "sidebar"
+    panel.column = "channels"
+    panel.channelCursorId = "c-voice"
+    press("Return")
+    check("Enter on a failed call retries the join", mock.lastCall("voiceJoin"), "c-voice")
+    check("and does not park on the call bar", panel.callBarFocused, false)
+
+    // The bar can vanish under the keyboard: hanging up while it holds focus
+    // from a zone that is not the sidebar must hand the focus back, or every
+    // zone key is dead until the next Tab.
+    mock.reset()
+    mock.currentChannelId = "c-general"
+    mock.voice = { status: "connected", guildId: "g1", channelId: "c-voice",
+      muted: false, deafened: false, error: "" }
+    panel.zone = "timeline"
+    panel.focusZone()
+    panel.focusCallBar()
+    check("the call bar takes focus from the timeline", panel.callBarFocused, true)
+    check("Ctrl+Shift+H from the bar hangs up", chord(Qt.Key_H, Qt.ControlModifier | Qt.ShiftModifier), true)
+    mock.voice = { status: "idle", guildId: "", channelId: "", muted: false, deafened: false, error: "" }
+    check("the bar going away hands the keyboard back to a live item",
+      !!panel.controls.Window.activeFocusItem && panel.controls.Window.activeFocusItem.visible, true)
+    check("and the zone is focused again", panel.focusedZone, "timeline")
+    mock.currentChannelId = ""
+
     mock.reset()
     check("Ctrl+Shift+M is consumed", chord(Qt.Key_M, Qt.ControlModifier | Qt.ShiftModifier), true)
     check("Ctrl+Shift+M toggles the mic", mock.callCount("toggleMute"), 1)
@@ -330,6 +360,14 @@ ShellRoot {
       service.voiceUsers("g1", "c-voice")[0].display_name, "Ada")
     check("an empty channel has none", service.voiceUsers("g1", "c-general").length, 0)
     check("an unknown guild has none", service.voiceUsers("g9", "c-voice").length, 0)
+
+    // A reconnect Snapshot pushes one voice_members per occupied guild: each
+    // merges into the map, so the last one does not wipe the others.
+    service.handleEvent("voice_members", { guild_id: "g2", channels: [
+      { channel_id: "c-chat", users: [{ id: "u2", username: "lin", display_name: "Lin", avatar_url: "" }] }
+    ] })
+    check("a second guild's occupants join the first's",
+      [service.voiceUsers("g1", "c-voice").length, service.voiceUsers("g2", "c-chat").length], [1, 1])
 
     service.handleEvent("voice_speaking", { user_id: "u1", speaking: true })
     check("voice_speaking marks the speaker", service.speaking["u1"] === true, true)

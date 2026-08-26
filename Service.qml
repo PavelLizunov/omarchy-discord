@@ -759,6 +759,11 @@ Item {
     // authority the UI can always trust.
     if (next.status !== "connected") speaking = ({})
     voice = next
+    // The call bar names the channel through `channelNames`, which only
+    // knows guilds whose channel list is loaded. A reload mid-call with
+    // another guild selected loads nothing for the call's guild, so the bar
+    // would read "Voice" until the user visited it; ask for the list here.
+    if (next.guildId && channelsByGuild[next.guildId] === undefined) loadChannels(next.guildId)
   }
 
   function applyVoiceMembers(message) {

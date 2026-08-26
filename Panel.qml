@@ -148,6 +148,15 @@ Item {
   // The call bar is one of those out-of-zone stops: Enter on the voice
   // channel you are already in lands here, and Esc / Tab leave it again.
   readonly property bool callBarFocused: callBar.visible && callBar.activeFocus
+  // The channel of a call that is up or coming up. A failed call keeps its
+  // ids on the wire, so gating on the id alone would leave the row reading
+  // as joined and Enter parked on the error instead of retrying the join.
+  readonly property string activeVoiceChannelId: {
+    if (!service || !service.voice) return ""
+    var status = String(service.voice.status || "")
+    if (status !== "connected" && status !== "connecting") return ""
+    return String(service.voice.channelId || "")
+  }
   // The member pane: toggle state lives in the service (survives a
   // re-summon); it is a zone only while visible and a channel is open.
   readonly property bool membersVisible: !!(service && service.membersWanted) && currentChannelId !== "" && ready
@@ -647,7 +656,7 @@ Item {
     hint = ""
     setChannelCursor(index)
     var id = String(row.id || "")
-    if (service.voice && String(service.voice.channelId || "") === id) { focusCallBar(); return }
+    if (activeVoiceChannelId && activeVoiceChannelId === id) { focusCallBar(); return }
     service.voiceJoin(String(row.guild_id || selectedGuildId), id)
   }
 
@@ -1720,8 +1729,8 @@ Item {
                     readonly property bool voice: type === "voice"
                     // The call is on this row (Enter focuses the call bar
                     // instead of joining again).
-                    readonly property bool joined: voice && !!root.service && !!root.service.voice
-                      && String(root.service.voice.channelId || "") === String(row.id || "")
+                    readonly property bool joined: voice && root.activeVoiceChannelId !== ""
+                      && root.activeVoiceChannelId === String(row.id || "")
                     // Occupants come straight off voice_members: each user
                     // carries its own name and avatar, so nothing is resolved.
                     readonly property var occupants: voice && root.service
@@ -2047,6 +2056,11 @@ Item {
                 secondary: root.muted
                 accent: root.accent
                 fontFamily: root.fontFamily
+                // Hanging up while the bar holds the keyboard (Tab'd here
+                // from the timeline, or Ctrl+Shift+H) takes the focused item
+                // out from under the focus: hand it back to the zone, the
+                // same place Esc would have put it.
+                onVisibleChanged: if (!visible && activeFocus) root.focusZone()
               }
 
               Components.Composer {
