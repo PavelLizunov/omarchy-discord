@@ -24,7 +24,7 @@ Quality gate (all must pass): `gofmt -l .` (empty), `go vet ./...`,
 | command | what it does |
 |---|---|
 | `serve` (default) | run the socket server and the Discord session; logs to stderr only |
-| `check` | print a JSON environment summary to stdout and exit (`secret_tool`, `runtime_dir_writable`, `media_cache_writable`, `staged_dir_writable`, `token_present`; never the token) |
+| `check` | print a JSON environment summary to stdout and exit (`secret_tool`, `runtime_dir_writable`, `media_cache_writable`, `staged_dir_writable`, `token_present`, `audio_server` (the Pulse socket voice needs); never the token) |
 | `login` | read a token from the first line of stdin, validate it with `GET /users/@me`, store it in the keyring, exit |
 | `logout` | clear the keyring entry (looped, max 20) |
 
