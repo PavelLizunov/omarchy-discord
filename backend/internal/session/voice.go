@@ -13,28 +13,8 @@ import (
 
 	"github.com/mattcalayo/omarchy-discord/backend/internal/protocol"
 	"github.com/mattcalayo/omarchy-discord/backend/internal/redact"
+	"github.com/mattcalayo/omarchy-discord/backend/internal/voice"
 )
-
-// voiceStatus and voiceState mirror voice.Status / voice.State. They are
-// duplicated here so this package does not depend on internal/voice; the
-// integration that wires the real engine in swaps these for the real types.
-type voiceStatus string
-
-const (
-	voiceStatusIdle       voiceStatus = "idle"
-	voiceStatusConnecting voiceStatus = "connecting"
-	voiceStatusConnected  voiceStatus = "connected"
-	voiceStatusError      voiceStatus = "error"
-)
-
-type voiceState struct {
-	Status    voiceStatus
-	GuildID   discord.GuildID   // 0 when idle
-	ChannelID discord.ChannelID // 0 when idle
-	Muted     bool
-	Deafened  bool
-	Error     string // human-readable, "" unless Status is voiceStatusError
-}
 
 // voiceEngine is the one call the manager drives. Nil means voice is not
 // available in this build/session and every voice command is refused.
@@ -43,22 +23,15 @@ type voiceEngine interface {
 	Leave(ctx context.Context) error
 	SetMute(ctx context.Context, muted bool) error
 	SetDeaf(ctx context.Context, deafened bool) error
-	State() voiceState
+	State() voice.State
 	Close()
 }
 
-// voiceEvents are the engine's callbacks (voice.Events). They may run on any
-// goroutine; both funnel into the manager's single writer.
-type voiceEvents struct {
-	State    func(voiceState)
-	Speaking func(userID discord.UserID, speaking bool)
-}
-
 // idleVoice is the state of a session that is not in a call.
-var idleVoice = voiceState{Status: voiceStatusIdle}
+var idleVoice = voice.State{Status: voice.StatusIdle}
 
 // wireVoice renders the engine state for protocol.State.
-func wireVoice(v voiceState) protocol.VoiceState {
+func wireVoice(v voice.State) protocol.VoiceState {
 	status := string(v.Status)
 	if status == "" {
 		status = protocol.VoiceIdle
@@ -75,7 +48,7 @@ func wireVoice(v voiceState) protocol.VoiceState {
 
 // onVoiceState is the engine's State callback: it records the new state and
 // emits a state_changed with a fresh generation when anything changed.
-func (m *Manager) onVoiceState(v voiceState) {
+func (m *Manager) onVoiceState(v voice.State) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.voiceState == v {

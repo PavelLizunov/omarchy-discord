@@ -17,6 +17,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"os/signal"
@@ -93,6 +94,8 @@ func serve(socketPath string) int {
 		redact.Logf("secret-tool not found; login will not persist")
 	}
 	mgr := session.New(keyring.Keyring{})
+	// Same stderr as redact.Logf (the journal); the engine logs at Info.
+	mgr.EnableVoice(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	srv := socket.New(socketPath, mgr)
 	if err := srv.Listen(); err != nil {
 		redact.Logf("%v", err)

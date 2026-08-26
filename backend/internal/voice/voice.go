@@ -1,5 +1,3 @@
-//go:build cgo
-
 // Package voice joins guild voice channels on the user session: disgo/voice
 // for the voice gateway + UDP, dave-go for DAVE E2EE, hraban/opus (cgo) for
 // the codec and jfreymuth/pulse for the microphone and speaker. One call at a

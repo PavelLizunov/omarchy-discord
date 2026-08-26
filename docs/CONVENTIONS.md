@@ -720,8 +720,10 @@ the cache dir.
   forks — everything we need was verified upstream except QR (which we port as our own
   code, §6).
 - Quality gate, run before every commit touching `backend/`:
-  `gofmt -l` (empty output) · `go vet ./...` · `go test ./...` · `go build ./...`
-  — all with the build/test cache outside the plugin tree when the checkout is the
+  `gofmt -l` (empty output) · `CGO_ENABLED=1 go vet -tags nolibopusfile ./...` ·
+  `CGO_ENABLED=1 go test -tags nolibopusfile ./...` ·
+  `CGO_ENABLED=1 go build -tags nolibopusfile ./...` — the daemon links the system
+  `libopus` for voice, so the module is cgo-only; all with the build/test cache outside the plugin tree when the checkout is the
   live plugin dir (`GOCACHE=$XDG_CACHE_HOME/omarchy-discord/gocache`, `-o` into
   `$XDG_CACHE_HOME/omarchy-discord/target`).
 - **Golden tests for the protocol**: every request/response/event shape in

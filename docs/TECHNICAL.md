@@ -324,8 +324,10 @@ Before a commit touching the frontend:
    (exit 0).
 5. The offscreen harnesses above, with screenshots inspected.
 
-Before a commit touching `backend/`: `gofmt -l`, `go vet ./...`, `go test ./...`,
-`go build ./...` with `GOCACHE` and `-o` outside the tree (golden fixtures for every
+Before a commit touching `backend/`: `gofmt -l`, then `CGO_ENABLED=1 go vet -tags
+nolibopusfile ./...`, `CGO_ENABLED=1 go test -tags nolibopusfile ./...`,
+`CGO_ENABLED=1 go build -tags nolibopusfile ./...` (the daemon links `libopus`, so
+the whole module is cgo) with `GOCACHE` and `-o` outside the tree (golden fixtures for every
 wire shape; recorded gateway payloads for handlers).
 
 ### Install, rebuild, remove

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -25,6 +26,7 @@ import (
 	"github.com/mattcalayo/omarchy-discord/backend/internal/panics"
 	"github.com/mattcalayo/omarchy-discord/backend/internal/protocol"
 	"github.com/mattcalayo/omarchy-discord/backend/internal/redact"
+	"github.com/mattcalayo/omarchy-discord/backend/internal/voice"
 )
 
 // ConfigureIdentity sets the dissent-parity identify fingerprint. It must run
@@ -95,7 +97,7 @@ type Manager struct {
 	// newVoice builds the voice engine for a freshly installed session; nil
 	// (tests, a build without audio support) leaves voice unavailable. It
 	// runs under mu, so it must not call back before it returns.
-	newVoice func(n *ningen.State, ev voiceEvents) voiceEngine
+	newVoice func(n *ningen.State, ev voice.Events) voiceEngine
 
 	mu         sync.Mutex
 	lifecycle  string
@@ -108,7 +110,7 @@ type Manager struct {
 	// voice is the engine of the live session (nil when unavailable) and
 	// voiceState its last reported state.
 	voice      voiceEngine
-	voiceState voiceState
+	voiceState voice.State
 
 	token     string
 	n         *ningen.State
@@ -136,6 +138,13 @@ func (m *Manager) Configure(runtimeDir string, cache *media.Cache) {
 	m.stagedDir = filepath.Join(runtimeDir, "staged")
 	m.qrPath = qrImagePath(runtimeDir)
 	m.media = cache
+}
+
+// EnableVoice installs the real voice engine constructor; log receives the
+// engine's own diagnostics. Call before Start (tests leave it unset, which
+// keeps voice unavailable).
+func (m *Manager) EnableVoice(log *slog.Logger) {
+	m.newVoice = func(n *ningen.State, ev voice.Events) voiceEngine { return voice.New(n, ev, log) }
 }
 
 // Events yields state_changed / guilds_synced events in the order they were
@@ -294,7 +303,7 @@ func (m *Manager) connectLocked(n *ningen.State, token string) {
 	m.user, m.presence, m.mentions, m.unreadDM = nil, "", 0, nil
 	m.voiceState = idleVoice
 	if m.newVoice != nil {
-		m.voice = m.newVoice(n, voiceEvents{State: m.onVoiceState, Speaking: m.onVoiceSpeaking})
+		m.voice = m.newVoice(n, voice.Events{State: m.onVoiceState, Speaking: m.onVoiceSpeaking})
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel

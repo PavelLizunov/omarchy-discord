@@ -11,15 +11,16 @@ import (
 	"github.com/diamondburned/ningen/v3"
 
 	"github.com/mattcalayo/omarchy-discord/backend/internal/protocol"
+	"github.com/mattcalayo/omarchy-discord/backend/internal/voice"
 )
 
 // fakeVoice stands in for the real engine: it records the calls the manager
 // makes and lets a test drive the engine's callbacks.
 type fakeVoice struct {
 	mu     sync.Mutex
-	ev     voiceEvents
+	ev     voice.Events
 	calls  []string
-	state  voiceState
+	state  voice.State
 	closed int
 	err    error
 }
@@ -41,7 +42,7 @@ func (f *fakeVoice) SetMute(_ context.Context, muted bool) error {
 func (f *fakeVoice) SetDeaf(_ context.Context, deaf bool) error {
 	return f.record("deaf " + boolStr(deaf))
 }
-func (f *fakeVoice) State() voiceState {
+func (f *fakeVoice) State() voice.State {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.state
@@ -72,7 +73,7 @@ func voiceManager(t *testing.T) (*Manager, *ningen.State, *fakeVoice) {
 	m := New(&fakeKeyring{})
 	m.runLoop = (&stubLoops{cancelled: map[*ningen.State]bool{}}).run
 	fv := &fakeVoice{}
-	m.newVoice = func(_ *ningen.State, ev voiceEvents) voiceEngine {
+	m.newVoice = func(_ *ningen.State, ev voice.Events) voiceEngine {
 		fv.ev = ev
 		return fv
 	}
@@ -141,7 +142,7 @@ func TestVoiceCommandsDispatchToEngine(t *testing.T) {
 // event of its own.
 func TestVoiceCallbacksPushEvents(t *testing.T) {
 	m, _, fv := voiceManager(t)
-	connected := voiceState{Status: voiceStatusConnected, GuildID: guildOmar, ChannelID: chVoice}
+	connected := voice.State{Status: voice.StatusConnected, GuildID: guildOmar, ChannelID: chVoice}
 
 	m.mu.Lock()
 	gen := m.generation
@@ -177,7 +178,7 @@ func TestVoiceCallbacksPushEvents(t *testing.T) {
 	}
 
 	// An error state carries its message; idle clears the ids.
-	fv.ev.State(voiceState{Status: voiceStatusError, Error: "voice gateway closed (4006)"})
+	fv.ev.State(voice.State{Status: voice.StatusError, Error: "voice gateway closed (4006)"})
 	if st := nextEvent(t, m).(protocol.StateChangedEvent).State; st.Voice.Status != protocol.VoiceError || st.Voice.Error == "" || st.Voice.GuildID != nil {
 		t.Fatalf("error state: %+v", st.Voice)
 	}

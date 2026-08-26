@@ -5,3 +5,4 @@
 .DS_Store
 .claude/prompts/
 .claude/docs/
+.claude/worktrees/
