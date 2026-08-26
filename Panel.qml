@@ -489,13 +489,27 @@ Item {
     Hyprland.dispatch("hl.dsp.focus({ window = \"" + windowSelector + "\" })")
   }
 
+  // The workspace a summon should land on: whatever the user is looking at.
+  // When a special workspace (scratchpad) is revealed on the focused monitor,
+  // Hyprland keeps activeworkspace pointing at the normal workspace behind it,
+  // but new windows belong in the special one — so target it by name. Its name
+  // is only in the monitor's raw ipc object, not on the workspace wrapper.
+  function summonTarget() {
+    var mon = Hyprland.focusedMonitor
+    var ipc = mon ? mon.lastIpcObject : null
+    var special = ipc && ipc.specialWorkspace ? String(ipc.specialWorkspace.name || "") : ""
+    if (special) return special
+    var ws = Hyprland.focusedWorkspace
+    return ws && ws.id !== undefined ? String(ws.id) : ""
+  }
+
   // Persistent mode's open: bring the window to the workspace the user is on
   // and focus it, pulling it off its park rather than revealing that shared
   // workspace in place. move alone does not land keyboard focus when the
   // target is already the active workspace, so focus explicitly.
   function summonHere() {
-    var ws = Hyprland.focusedWorkspace
-    if (ws && ws.id !== undefined) moveWindow(ws.id, true)
+    var target = summonTarget()
+    if (target) moveWindow(target, true)
     focusWindow()
   }
 
