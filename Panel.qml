@@ -1681,6 +1681,10 @@ Item {
               Column {
                 anchors.fill: parent
                 anchors.margins: Style.spacing.sm
+                // The call bar is pinned to the bottom of this pane, so the
+                // list is short by exactly its height while a call is up.
+                anchors.bottomMargin: Style.spacing.sm
+                  + (callBar.visible ? callBar.height + Style.spacing.sm : 0)
                 spacing: Style.spacing.xs
 
                 PanelSectionHeader {
@@ -1926,6 +1930,34 @@ Item {
                   }
                 }
               }
+
+              // The call, while there is one: pinned to the bottom of the
+              // channel column (the list above shrinks by exactly its
+              // height), so the channel you are reading and the channel you
+              // are talking in can differ without either one hiding, and the
+              // composer is never crowded.
+              Components.CallBar {
+                id: callBar
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.leftMargin: Style.spacing.sm
+                anchors.rightMargin: Style.spacing.sm
+                anchors.bottomMargin: Style.spacing.sm
+                service: root.service
+                channelName: root.service && root.service.voice
+                  ? String(root.service.channelNames[String(root.service.voice.channelId || "")] || "")
+                  : ""
+                foreground: root.foreground
+                secondary: root.muted
+                accent: root.accent
+                fontFamily: root.fontFamily
+                // Hanging up while the bar holds the keyboard (Tab'd here
+                // from the timeline, or Ctrl+Shift+H) takes the focused item
+                // out from under the focus: hand it back to the zone, the
+                // same place Esc would have put it.
+                onVisibleChanged: if (!visible && activeFocus) root.focusZone()
+              }
             }
 
             // Timeline column
@@ -2040,27 +2072,6 @@ Item {
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
                 font.italic: true
-              }
-
-              // The call, while there is one: above the composer, so the
-              // channel you are reading and the channel you are talking in
-              // can differ without either one hiding.
-              Components.CallBar {
-                id: callBar
-                width: parent.width
-                service: root.service
-                channelName: root.service && root.service.voice
-                  ? String(root.service.channelNames[String(root.service.voice.channelId || "")] || "")
-                  : ""
-                foreground: root.foreground
-                secondary: root.muted
-                accent: root.accent
-                fontFamily: root.fontFamily
-                // Hanging up while the bar holds the keyboard (Tab'd here
-                // from the timeline, or Ctrl+Shift+H) takes the focused item
-                // out from under the focus: hand it back to the zone, the
-                // same place Esc would have put it.
-                onVisibleChanged: if (!visible && activeFocus) root.focusZone()
               }
 
               Components.Composer {

@@ -5,12 +5,14 @@ import qs.Ui
 
 import "../Api.js" as Api
 
-// The call bar: one strip above the composer while a voice call is anything
-// but idle (Service.voice, mirrored from protocol.State.voice, so it is back
-// the moment the panel is re-summoned mid-call). Channel name, what the call
-// is doing, and the three controls. It is a panel focus stop rather than a
-// zone: everything it does has a chord (Ctrl+Shift+M / D / H) that works from
-// anywhere, so there is no cursor to rove.
+// The call bar: the bottom strip of the channel column while a voice call is
+// anything but idle (Service.voice, mirrored from protocol.State.voice, so it
+// is back the moment the panel is re-summoned mid-call). Channel name, what
+// the call is doing, and the three controls — stacked, because the column is
+// ~230 px wide and "Undeafen" next to two more labels does not fit; the
+// controls are icon-only with the chord in their tooltip. It is a panel focus
+// stop rather than a zone: everything it does has a chord (Ctrl+Shift+M / D /
+// H) that works from anywhere, so there is no cursor to rove.
 Item {
   id: root
 
@@ -39,7 +41,7 @@ Item {
   }
 
   visible: inCall
-  implicitHeight: Style.spacing.controlHeight + Style.spacing.sm * 2
+  implicitHeight: content.implicitHeight + Style.spacing.sm * 2
   height: implicitHeight
 
   BorderSurface {
@@ -51,78 +53,89 @@ Item {
       ? Border.controlSpec("focus", root.foreground, root.accent)
       : Border.none()
 
-    Text {
-      id: glyph
+    Column {
+      id: content
       anchors.left: parent.left
-      anchors.leftMargin: Style.spacing.rowPaddingX
-      anchors.verticalCenter: parent.verticalCenter
-      text: Api.channelGlyph("voice")
-      color: root.failed ? Color.urgent : (root.connected ? root.accent : root.secondary)
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.body
-    }
-
-    Text {
-      id: name
-      anchors.left: glyph.right
-      anchors.leftMargin: Style.spacing.sm
-      anchors.verticalCenter: parent.verticalCenter
-      width: Math.min(implicitWidth, Math.max(0, controls.x - x - Style.spacing.sm))
-      elide: Text.ElideRight
-      text: root.channelName || "Voice"
-      color: root.foreground
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.body
-      font.bold: true
-    }
-
-    Text {
-      anchors.left: name.right
-      anchors.leftMargin: Style.spacing.sm
-      anchors.right: controls.left
-      anchors.rightMargin: Style.spacing.sm
-      anchors.verticalCenter: parent.verticalCenter
-      elide: Text.ElideRight
-      text: root.statusText
-      color: root.failed ? Color.urgent : root.secondary
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.bodySmall
-    }
-
-    // Mouse-only: the keyboard route is the three chords, which reach these
-    // actions from every zone (and from any app over the voice IpcHandler),
-    // so a fourth roving cursor would buy nothing.
-    Row {
-      id: controls
       anchors.right: parent.right
-      anchors.rightMargin: Style.spacing.sm
       anchors.verticalCenter: parent.verticalCenter
-      spacing: Style.spacing.controlGap
+      anchors.leftMargin: Style.spacing.sm
+      anchors.rightMargin: Style.spacing.sm
+      spacing: Style.spacing.xxs
 
-      Button {
-        text: root.isMuted ? "Unmute" : "Mute"
-        active: root.isMuted
-        enabled: root.connected
-        foreground: root.foreground
-        fontFamily: root.fontFamily
-        tooltipText: "Mute / unmute the microphone (Ctrl+Shift+M)"
-        onClicked: if (root.service) root.service.toggleMute()
+      Row {
+        width: parent.width
+        spacing: Style.spacing.sm
+
+        Text {
+          id: glyph
+          anchors.verticalCenter: parent.verticalCenter
+          text: Api.channelGlyph("voice")
+          color: root.failed ? Color.urgent : (root.connected ? root.accent : root.secondary)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
+        }
+
+        Text {
+          anchors.verticalCenter: parent.verticalCenter
+          width: Math.max(0, parent.width - glyph.width - parent.spacing)
+          elide: Text.ElideRight
+          text: root.channelName || "Voice"
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
+          font.bold: true
+        }
       }
-      Button {
-        text: root.isDeafened ? "Undeafen" : "Deafen"
-        active: root.isDeafened
-        enabled: root.connected
-        foreground: root.foreground
-        fontFamily: root.fontFamily
-        tooltipText: "Stop / resume hearing the others (Ctrl+Shift+D)"
-        onClicked: if (root.service) root.service.toggleDeafen()
+
+      Text {
+        width: parent.width
+        elide: Text.ElideRight
+        text: root.statusText
+        color: root.failed ? Color.urgent : root.secondary
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
       }
-      Button {
-        text: "Leave"
-        foreground: root.foreground
-        fontFamily: root.fontFamily
-        tooltipText: "Leave the voice channel (Ctrl+Shift+H)"
-        onClicked: if (root.service) root.service.voiceLeave()
+
+      // Mouse-only: the keyboard route is the three chords, which reach these
+      // actions from every zone (and from any app over the voice IpcHandler),
+      // so a fourth roving cursor would buy nothing. Icon-only at this width;
+      // the tooltip carries the name and the chord.
+      Row {
+        id: controls
+        width: parent.width
+        topPadding: Style.spacing.xxs
+        spacing: Style.spacing.controlGap
+        readonly property real cell: Math.max(0, (width - spacing * 2) / 3)
+
+        Button {
+          width: controls.cell
+          iconText: root.isMuted ? "\uf131" : "\uf130"  // mic-slash / mic
+          active: root.isMuted
+          enabled: root.connected
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+          tooltipText: (root.isMuted ? "Unmute" : "Mute") + " the microphone (Ctrl+Shift+M)"
+          onClicked: if (root.service) root.service.toggleMute()
+        }
+        Button {
+          width: controls.cell
+          iconText: root.isDeafened ? "\udb80\udecc" : "\uf025"  // headphones-off / headphones
+          active: root.isDeafened
+          enabled: root.connected
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+          tooltipText: (root.isDeafened ? "Resume" : "Stop") + " hearing the others (Ctrl+Shift+D)"
+          onClicked: if (root.service) root.service.toggleDeafen()
+        }
+        Button {
+          width: controls.cell
+          iconText: "\uf08b"  // sign-out
+          // The one destructive control of the three, in the urgent token.
+          foreground: Color.urgent
+          fontFamily: root.fontFamily
+          tooltipText: "Leave the voice channel (Ctrl+Shift+H)"
+          onClicked: if (root.service) root.service.voiceLeave()
+        }
       }
     }
   }
