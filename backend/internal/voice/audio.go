@@ -189,9 +189,19 @@ func (c *capture) frame(pcm []int16) {
 		}
 		out = data[:n]
 	}
-	select {
-	case c.frames <- out:
-	default: // sender is behind; drop rather than build latency
+	// Sender behind (or not pulling at all while alone in the channel):
+	// drop the oldest, so the queue is always the last ≤80 ms and the gate's
+	// nil frames flush it once speech stops. Nothing stale can go out later.
+	for {
+		select {
+		case c.frames <- out:
+			return
+		default:
+			select {
+			case <-c.frames:
+			default:
+			}
+		}
 	}
 }
 

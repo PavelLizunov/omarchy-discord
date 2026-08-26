@@ -96,6 +96,27 @@ func TestGateHold(t *testing.T) {
 	}
 }
 
+// While alone in the channel nobody pulls; speech captured then must not be
+// sent once someone joins.
+func TestIdleQueueDropsOldest(t *testing.T) {
+	c, err := newCapture(slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < cap(c.frames)+2; i++ {
+		c.frame(tone(8000))
+	}
+	c.hold = 0
+	for i := 0; i < cap(c.frames); i++ { // speech over: gated frames flush the queue
+		c.frame(tone(0))
+	}
+	for i := 0; i < cap(c.frames); i++ {
+		if f, _ := c.ProvideOpusFrame(); f != nil {
+			t.Fatalf("frame %d: stale speech left in the queue", i)
+		}
+	}
+}
+
 func TestMuteDropsCapturedAudio(t *testing.T) {
 	c, err := newCapture(slog.Default())
 	if err != nil {
