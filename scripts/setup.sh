@@ -7,6 +7,7 @@
 #   0   the backend and the unit are installed
 #   30  no prebuilt for this architecture and no Go toolchain to build one
 #   31  the backend failed to build or install
+#   32  the installed backend is missing a shared library (libopus)
 set -euo pipefail
 
 source_root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
@@ -79,6 +80,10 @@ else
 fi
 
 if (( ! backend_ready )); then
+  # build-backend.sh already printed which library is missing and how to get it.
+  if (( build_status == 32 )); then
+    exit 32
+  fi
   if (( build_status == 30 || build_status == 0 )); then
     echo "setup.sh: no Discord backend ships for $(uname -m) and Go is not installed" >&2
     echo "Install Go to build it, or use a release that ships backend/dist/$(uname -m)/." >&2
@@ -86,6 +91,15 @@ if (( ! backend_ready )); then
   fi
   echo "setup.sh: the Discord backend could not be built; the output above has the details" >&2
   exit 31
+fi
+
+# An already-installed binary skips build-backend.sh and its probe, so re-check
+# here: a backend that cannot load libopus would otherwise be reported as ready
+# and crash-loop under systemd with no message anywhere.
+if ldd "$backend_binary" 2>/dev/null | grep -q 'not found'; then
+  echo "setup.sh: the Discord backend needs libopus and it is not installed" >&2
+  echo "Install it and re-run: sudo pacman -S opus" >&2
+  exit 32
 fi
 
 install -d -m 700 -- "$unit_dir"

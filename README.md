@@ -46,7 +46,8 @@ binary takes over immediately.
 The unit is never enabled at login: the plugin starts it and keeps it connected while
 the `stayConnected` setting is On (the default). Requirements: Omarchy 4 with the
 Quickshell shell, `secret-tool` (GNOME keyring) for the token, `notify-send`,
-`wl-paste` for image paste, `xdg-open`.
+`wl-paste` for image paste, `xdg-open`, `opus` (ships with Omarchy as a
+pipewire-audio dependency).
 
 ### Development install
 
