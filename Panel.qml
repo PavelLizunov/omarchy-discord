@@ -1667,7 +1667,13 @@ Item {
                       anchors.fill: parent
                       radius: guildTile.radius
                       visible: false
+                      antialiasing: true
                       layer.enabled: true
+                      // Render the mask above tile resolution and smooth it so
+                      // the rounded edge is crisp, not feathered, once the
+                      // effect thresholds it.
+                      layer.smooth: true
+                      layer.textureSize: Qt.size(width * 2, height * 2)
                     }
                     Image {
                       id: guildIcon
@@ -1686,8 +1692,13 @@ Item {
                       id: guildIconEffect
                       anchors.fill: guildIcon
                       source: guildIcon
+                      antialiasing: true
                       maskEnabled: true
                       maskSource: guildIconMask
+                      // Threshold the mask alpha to a sharp, 1px-antialiased
+                      // edge instead of the default soft ramp that feathers.
+                      maskThresholdMin: 0.5
+                      maskSpreadAtMin: 1.0
                       opacity: guildRow.unread || guildRow.selected || guildRow.hasCursor ? 1 : 0.7
                       visible: guildIcon.path !== "" && guildIcon.status === Image.Ready
                     }

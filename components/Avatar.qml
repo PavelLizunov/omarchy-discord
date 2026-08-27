@@ -42,7 +42,12 @@ Item {
     anchors.fill: parent
     radius: width / 2
     visible: false
+    antialiasing: true
     layer.enabled: true
+    // Render the mask above avatar resolution and smooth it so the circle
+    // edge is crisp, not feathered, once the effect thresholds it.
+    layer.smooth: true
+    layer.textureSize: Qt.size(width * 2, height * 2)
   }
   Image {
     id: image
@@ -62,8 +67,13 @@ Item {
     id: effect
     anchors.fill: image
     source: image
+    antialiasing: true
     maskEnabled: true
     maskSource: mask
+    // Threshold the mask alpha to a sharp, 1px-antialiased edge instead of
+    // the default soft ramp that feathers the circle.
+    maskThresholdMin: 0.5
+    maskSpreadAtMin: 1.0
     visible: root.path !== "" && image.status === Image.Ready
   }
 }
