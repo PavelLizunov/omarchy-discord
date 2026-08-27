@@ -56,7 +56,7 @@ func buildReady() readyFixture {
 	text := func(id, parent discord.ChannelID, name string, pos int, last discord.MessageID, ow ...discord.Overwrite) discord.Channel {
 		return discord.Channel{ID: id, GuildID: guildOmar, Type: discord.GuildText, Name: name, Position: pos, ParentID: parent, LastMessageID: last, Overwrites: ow}
 	}
-	everyone := discord.Role{ID: discord.RoleID(guildOmar), Name: "@everyone", Permissions: discord.PermissionViewChannel | discord.PermissionSendMessages}
+	everyone := discord.Role{ID: discord.RoleID(guildOmar), Name: "@everyone", Permissions: discord.PermissionViewChannel | discord.PermissionSendMessages | discord.PermissionConnect}
 	quietEveryone := discord.Role{ID: discord.RoleID(guildQuiet), Name: "@everyone", Permissions: discord.PermissionViewChannel}
 	self := discord.User{ID: selfID, Username: "tester", DisplayName: "Tester"}
 	ada := discord.User{ID: adaID, Username: "ada", DisplayName: "Ada", Avatar: "aaaa"}

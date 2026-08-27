@@ -36,8 +36,12 @@ Item {
   // Persistent mode: the window's own mapped state. A compositor close
   // (SUPER+W) unmaps it and the next open() maps it again.
   property bool persistentVisible: true
-  // open() asked for focus before the compositor had mapped the window.
+  // open() asked to summon the window before the compositor had mapped it.
   property bool pendingFocus: false
+  // Where the window is parked when dismissed: the special workspace the
+  // window-rule first mapped it on (e.g. "special:scratchpad"), captured once.
+  // Empty when no rule parks it on a special workspace — then dismiss unmaps.
+  property string parkWorkspace: ""
   // The panel's own Hyprland window. Live only after refreshToplevels() —
   // Quickshell never populates the toplevel model on its own — and its
   // `workspace` fills in when Hyprland maps the surface, a frame or more
@@ -67,6 +71,9 @@ Item {
   readonly property color background: Color.background
   readonly property color accent: Color.accent
   readonly property string fontFamily: Style.font.family
+  // Voice occupant rows under a voice channel in the sidebar.
+  readonly property int voiceAvatarSize: Style.space(16)
+  readonly property int voiceOccupantHeight: Style.space(22)
   readonly property var panelBorderSpec: Border.flat(Color.popups.border,
     Math.max(1, Style.normalBorderWidth))
   // The controls row is a Button tall, which is more than controlHeight once
@@ -141,7 +148,19 @@ Item {
   property string zone: "sidebar"
   property string column: "rail"
   readonly property bool buttonFocused: logoutButton.activeFocus || closeButton.activeFocus
-    || membersButton.activeFocus || startBackendButton.activeFocus
+    || membersButton.activeFocus || startBackendButton.activeFocus || callBarFocused
+  // The call bar is one of those out-of-zone stops: Enter on the voice
+  // channel you are already in lands here, and Esc / Tab leave it again.
+  readonly property bool callBarFocused: callBar.visible && callBar.activeFocus
+  // The channel of a call that is up or coming up. A failed call keeps its
+  // ids on the wire, so gating on the id alone would leave the row reading
+  // as joined and Enter parked on the error instead of retrying the join.
+  readonly property string activeVoiceChannelId: {
+    if (!service || !service.voice) return ""
+    var status = String(service.voice.status || "")
+    if (status !== "connected" && status !== "connecting") return ""
+    return String(service.voice.channelId || "")
+  }
   // The member pane: toggle state lives in the service (survives a
   // re-summon); it is a zone only while visible and a channel is open.
   readonly property bool membersVisible: !!(service && service.membersWanted) && currentChannelId !== "" && ready
@@ -292,7 +311,11 @@ Item {
     var key = event.key
     var text = event.text
     var ctrl = (event.modifiers & Qt.ControlModifier) !== 0
-    if (ctrl && key === Qt.Key_K) openSwitcher()
+    var shift = (event.modifiers & Qt.ShiftModifier) !== 0
+    if (ctrl && shift && key === Qt.Key_M) voiceAction("mute")
+    else if (ctrl && shift && key === Qt.Key_D) voiceAction("deafen")
+    else if (ctrl && shift && key === Qt.Key_H) voiceAction("leave")
+    else if (ctrl && key === Qt.Key_K) openSwitcher()
     else if (ctrl && key === Qt.Key_Slash) toggleCheatsheet()
     // Gated on the text input itself, not on the composer zone: an
     // attachment chip owns the keyboard without being a text input, so / and
@@ -407,13 +430,19 @@ Item {
     try { payload = JSON.parse(String(payloadJson || "{}")) || ({}) } catch (e) {}
     var requested = String(payload.channel_id || payload.channel || "")
     if (persistent) {
-      // Map it again if SUPER+W closed it, then let Hyprland focus it —
-      // which also raises the special workspace it may be parked on. Focus
-      // arriving is what runs enter(). A window mapped in this turn is not
-      // known to Hyprland yet, so that focus waits for the toplevel.
-      persistentVisible = true
-      if (toplevelMapped) focusWindow()
-      else pendingFocus = true
+      // Summon the window to the workspace the user is on now — not by
+      // revealing the scratchpad it is parked on. If it is already mapped,
+      // pull it this turn. If SUPER+W closed it, remap it and defer the
+      // summon: the recreated surface does not exist yet, and the window rule
+      // re-parks it on the scratchpad, so a same-turn move would miss it.
+      if (persistentVisible) {
+        summonHere()
+      } else {
+        persistentVisible = true
+        pendingFocus = true
+        Hyprland.refreshToplevels()
+        summonRetry.restart()
+      }
     } else {
       closingFromHost = false
       hostOpened = true
@@ -442,20 +471,55 @@ Item {
     closingFromHost = false
   }
 
-  function focusWindow() {
-    Hyprland.dispatch("focuswindow title:^(" + window.title + ")$")
+  // Omarchy Quattro's Hyprland evaluates every dispatch as Lua — it wraps the
+  // string as `return hl.dispatch(<string>)` — so plain "movetoworkspace ..."
+  // is rejected (this is why focus/reveal never worked). We send the Lua
+  // dispatcher form, selecting the window by title so only this window moves —
+  // the scratchpad it parks on is shared with other windows — and without
+  // relying on Quickshell's toplevel model (which can be empty here).
+  readonly property string windowSelector: "title:^(" + window.title + ")$"
+
+  function moveWindow(workspace, follow) {
+    var f = follow ? "" : ", follow = false"
+    Hyprland.dispatch("hl.dsp.window.move({ window = \"" + windowSelector
+      + "\", workspace = \"" + workspace + "\"" + f + " })")
   }
 
-  // Persistent mode's close: hide the special workspace Hyprland parked the
-  // window on, or, on a normal workspace, unmap it — the same state SUPER+W
-  // leaves behind, which open() maps back.
+  function focusWindow() {
+    Hyprland.dispatch("hl.dsp.focus({ window = \"" + windowSelector + "\" })")
+  }
+
+  // The workspace a summon should land on: whatever the user is looking at.
+  // When a special workspace (scratchpad) is revealed on the focused monitor,
+  // Hyprland keeps activeworkspace pointing at the normal workspace behind it,
+  // but new windows belong in the special one — so target it by name. Its name
+  // is only in the monitor's raw ipc object, not on the workspace wrapper.
+  function summonTarget() {
+    var mon = Hyprland.focusedMonitor
+    var ipc = mon ? mon.lastIpcObject : null
+    var special = ipc && ipc.specialWorkspace ? String(ipc.specialWorkspace.name || "") : ""
+    if (special) return special
+    var ws = Hyprland.focusedWorkspace
+    return ws && ws.id !== undefined ? String(ws.id) : ""
+  }
+
+  // Persistent mode's open: bring the window to the workspace the user is on
+  // and focus it, pulling it off its park rather than revealing that shared
+  // workspace in place. move alone does not land keyboard focus when the
+  // target is already the active workspace, so focus explicitly.
+  function summonHere() {
+    var target = summonTarget()
+    if (target) moveWindow(target, true)
+    focusWindow()
+  }
+
+  // Persistent mode's close: send the window back to its park workspace
+  // silently (follow = false, so the user is not switched away), leaving it
+  // mapped and ready for the next summon. With no known park, unmap it — the
+  // same state SUPER+W leaves behind, which open() maps back.
   function hidePersistent() {
-    var workspace = toplevel ? toplevel.workspace : null
-    var name = workspace ? String(workspace.name || "") : ""
-    if (name.indexOf("special:") === 0)
-      Hyprland.dispatch("togglespecialworkspace " + name.slice("special:".length))
-    else
-      persistentVisible = false
+    if (parkWorkspace) moveWindow(parkWorkspace, false)
+    else persistentVisible = false
   }
 
   // Tell the service whether the timeline is scrolled up, so it never trims
@@ -616,6 +680,8 @@ Item {
     if (!row || !service) return
     // A forum is not a channel to read: Enter lists its threads instead.
     if (String(row.type || "") === "forum") { toggleThreads(index); return }
+    // A voice channel is not a channel to read either: Enter joins it.
+    if (String(row.type || "") === "voice") { joinVoice(index); return }
     if (!Api.isOpenableChannel(row)) return
     hint = ""
     setChannelCursor(index)
@@ -624,6 +690,32 @@ Item {
     if (origin === "timeline") enterTimeline()
     else if (origin === "members" && membersVisible) enterMembers()
     else enterComposer()
+  }
+
+  // --- voice ---
+  // Enter on a voice row: join it, or — when it is the call already running —
+  // put the keyboard on the call bar instead of re-joining.
+  function joinVoice(index) {
+    var row = channelRows[index]
+    if (!row || !service) return
+    hint = ""
+    setChannelCursor(index)
+    var id = String(row.id || "")
+    if (activeVoiceChannelId && activeVoiceChannelId === id) { focusCallBar(); return }
+    service.voiceJoin(String(row.guild_id || selectedGuildId), id)
+  }
+
+  function focusCallBar() {
+    if (!callBar.visible) return
+    callBar.forceActiveFocus()
+  }
+
+  // The three call chords, from every zone (Composer forwards its own).
+  function voiceAction(action) {
+    if (!service) return
+    if (action === "mute") service.toggleMute()
+    else if (action === "deafen") service.toggleDeafen()
+    else if (action === "leave") service.voiceLeave()
   }
 
   // t on a channel (or a thread: its parent): list / hide the active
@@ -793,13 +885,14 @@ Item {
   // member list -> Members -> Log out -> Close -> rail. Stops that cannot
   // take focus right now (no open channel, hidden pane or button) are skipped.
   function cycleFocus(delta) {
-    var stops = ["rail", "channels", "timeline", "composer", "members", "startBackend",
+    var stops = ["rail", "channels", "timeline", "composer", "callbar", "members", "startBackend",
       "membersButton", "logout", "close"]
-    var current = buttonFocused
-      ? (closeButton.activeFocus ? "close"
-        : (membersButton.activeFocus ? "membersButton"
-          : (startBackendButton.activeFocus ? "startBackend" : "logout")))
-      : (zone === "sidebar" ? column : zone)
+    var current = callBarFocused ? "callbar"
+      : (buttonFocused
+        ? (closeButton.activeFocus ? "close"
+          : (membersButton.activeFocus ? "membersButton"
+            : (startBackendButton.activeFocus ? "startBackend" : "logout")))
+        : (zone === "sidebar" ? column : zone))
     var index = stops.indexOf(current)
     for (var step = 0; step < stops.length; step++) {
       index = clampCursor(index + delta, stops.length)
@@ -807,6 +900,7 @@ Item {
       // No zones while the login / status screen covers the panel body.
       if ((stop === "rail" || stop === "channels") && !ready) continue
       if ((stop === "timeline" || stop === "composer") && !currentChannelId) continue
+      if (stop === "callbar" && !(ready && callBar.visible)) continue
       if (stop === "members" && !membersVisible) continue
       if (stop === "startBackend" && !startBackendButton.visible) continue
       if (stop === "membersButton" && !membersButton.visible) continue
@@ -822,6 +916,7 @@ Item {
     if (stop === "close") { closeButton.forceActiveFocus(); return }
     if (stop === "membersButton") { membersButton.forceActiveFocus(); return }
     if (stop === "startBackend") { startBackendButton.forceActiveFocus(); return }
+    if (stop === "callbar") { focusCallBar(); return }
     if (stop === "members") { enterMembers(); return }
     if (stop === "channels") { enterChannels(); return }
     if (stop === "composer") {
@@ -968,10 +1063,35 @@ Item {
   onWindowActiveChanged: publishActive()
   // Host-driven and focus-driven transitions share the same two functions.
   onOpenedChanged: opened ? enter() : leave()
-  // The compositor has the window now: the focus open() wanted can go out.
-  onToplevelMappedChanged: if (toplevelMapped && pendingFocus) {
-    pendingFocus = false
-    focusWindow()
+  // The compositor has the window now. Capture its park workspace the first
+  // time it maps there (the window rule's special workspace), then run any
+  // summon that open() deferred until the recreated surface existed.
+  onToplevelMappedChanged: if (toplevelMapped) {
+    if (!parkWorkspace && toplevel && toplevel.workspace) {
+      var name = String(toplevel.workspace.name || "")
+      if (name.indexOf("special:") === 0) parkWorkspace = name
+    }
+    if (pendingFocus) {
+      pendingFocus = false
+      summonHere()
+    }
+  }
+
+  // Fallback for the deferred summon: Quickshell does not always refresh its
+  // toplevel model for a window it just remapped, so onToplevelMappedChanged
+  // may not fire. Retry a few times until the surface has mapped; summonHere
+  // is idempotent, so a late toplevel signal doing it too is harmless.
+  Timer {
+    id: summonRetry
+    interval: 120
+    repeat: true
+    property int tries: 0
+    onTriggered: {
+      if (!root.pendingFocus) { stop(); tries = 0; return }
+      root.summonHere()
+      tries += 1
+      if (tries >= 5) { root.pendingFocus = false; stop(); tries = 0 }
+    }
   }
   // Quickshell leaves the toplevel model empty until something asks for it,
   // and only tracks it live from that point on.
@@ -1547,7 +1667,13 @@ Item {
                       anchors.fill: parent
                       radius: guildTile.radius
                       visible: false
+                      antialiasing: true
                       layer.enabled: true
+                      // Render the mask above tile resolution and smooth it so
+                      // the rounded edge is crisp, not feathered, once the
+                      // effect thresholds it.
+                      layer.smooth: true
+                      layer.textureSize: Qt.size(width * 2, height * 2)
                     }
                     Image {
                       id: guildIcon
@@ -1566,8 +1692,13 @@ Item {
                       id: guildIconEffect
                       anchors.fill: guildIcon
                       source: guildIcon
+                      antialiasing: true
                       maskEnabled: true
                       maskSource: guildIconMask
+                      // Threshold the mask alpha to a sharp, 1px-antialiased
+                      // edge instead of the default soft ramp that feathers.
+                      maskThresholdMin: 0.5
+                      maskSpreadAtMin: 1.0
                       opacity: guildRow.unread || guildRow.selected || guildRow.hasCursor ? 1 : 0.7
                       visible: guildIcon.path !== "" && guildIcon.status === Image.Ready
                     }
@@ -1631,6 +1762,10 @@ Item {
               Column {
                 anchors.fill: parent
                 anchors.margins: Style.spacing.sm
+                // The call bar is pinned to the bottom of this pane, so the
+                // list is short by exactly its height while a call is up.
+                anchors.bottomMargin: Style.spacing.sm
+                  + (callBar.visible ? callBar.height + Style.spacing.sm : 0)
                 spacing: Style.spacing.xs
 
                 PanelSectionHeader {
@@ -1676,12 +1811,22 @@ Item {
                     readonly property bool open: String(row.id || "") === root.currentChannelId
                     readonly property bool unread: Api.isUnread(row)
                     readonly property int mentions: Number(row.mention_count) || 0
-                    readonly property bool dim: !!row.muted || (!unread && !open)
+                    readonly property bool voice: type === "voice"
+                    // The call is on this row (Enter focuses the call bar
+                    // instead of joining again).
+                    readonly property bool joined: voice && root.activeVoiceChannelId !== ""
+                      && root.activeVoiceChannelId === String(row.id || "")
+                    // Occupants come straight off voice_members: each user
+                    // carries its own name and avatar, so nothing is resolved.
+                    readonly property var occupants: voice && root.service
+                      ? root.service.voiceUsers(root.selectedGuildId, String(row.id || "")) : []
+                    readonly property bool dim: !!row.muted || (!unread && !open && !joined)
                     readonly property bool thread: type === "thread"
                     readonly property int threadCount: Api.hasThreads(type) ? (Number(root.threadCounts[String(row.id || "")]) || 0) : 0
                     readonly property bool expanded: threadCount > 0 && !!root.expandedThreads[String(row.id || "")]
                     width: channelList.width
-                    height: category ? Style.spacing.controlHeight : Style.spacing.popupRowHeight
+                    height: (category ? Style.spacing.controlHeight : Style.spacing.popupRowHeight)
+                      + channelRow.occupants.length * root.voiceOccupantHeight
 
                     PanelSectionHeader {
                       visible: channelRow.category
@@ -1693,12 +1838,17 @@ Item {
                     }
 
                     BorderSurface {
+                      id: channelSurface
                       visible: !channelRow.category
-                      anchors.fill: parent
+                      anchors.left: parent.left
+                      anchors.right: parent.right
+                      anchors.top: parent.top
+                      height: Style.spacing.popupRowHeight
                       radius: Style.cornerRadius
                       color: channelRow.hasCursor || channelMouse.containsMouse
                         ? Style.hoverFillFor(root.foreground, root.accent)
-                        : (channelRow.open ? Style.selectedFillFor(root.foreground, root.accent) : "transparent")
+                        : (channelRow.open || channelRow.joined
+                          ? Style.selectedFillFor(root.foreground, root.accent) : "transparent")
                       borderSpec: channelRow.hasCursor
                         ? Border.controlSpec("hover-cursor", root.foreground, root.accent)
                         : Border.none()
@@ -1717,7 +1867,7 @@ Item {
                       }
                       Text {
                         anchors.left: channelGlyph.right
-                        anchors.right: threadHint.visible ? threadHint.left : (channelBadge.visible ? channelBadge.left
+                        anchors.right: rowHint.visible ? rowHint.left : (channelBadge.visible ? channelBadge.left
                           : (channelDot.visible ? channelDot.left : parent.right))
                         anchors.leftMargin: Style.spacing.sm
                         anchors.rightMargin: Style.spacing.sm
@@ -1729,16 +1879,21 @@ Item {
                         font.pixelSize: Style.font.body
                         font.bold: channelRow.unread
                       }
-                      // "⌥ N threads" affordance (t lists them beneath).
+                      // The right-hand count: "⌥ N threads" on a channel
+                      // that has them (t lists them beneath), the occupant
+                      // count on a voice channel. A voice channel never
+                      // carries threads, so the slot is never contested.
                       Text {
-                        id: threadHint
+                        id: rowHint
                         anchors.right: channelBadge.visible ? channelBadge.left
                           : (channelDot.visible ? channelDot.left : parent.right)
                         anchors.rightMargin: Style.spacing.sm
                         anchors.verticalCenter: parent.verticalCenter
-                        visible: channelRow.threadCount > 0
-                        text: (channelRow.expanded ? "▼ " : "⌥ ") + channelRow.threadCount
-                          + (channelRow.threadCount === 1 ? " thread" : " threads")
+                        visible: channelRow.threadCount > 0 || channelRow.occupants.length > 0
+                        text: channelRow.occupants.length > 0
+                          ? String(channelRow.occupants.length)
+                          : (channelRow.expanded ? "▼ " : "⌥ ") + channelRow.threadCount
+                            + (channelRow.threadCount === 1 ? " thread" : " threads")
                         color: root.muted
                         font.family: root.fontFamily
                         font.pixelSize: Style.font.caption
@@ -1789,8 +1944,100 @@ Item {
                         }
                       }
                     }
+
+                    // Who is in the voice channel, indented beneath it. The
+                    // ring is voice_speaking; the rows are not focus stops
+                    // (there is nothing to do to a participant).
+                    Column {
+                      anchors.top: channelSurface.bottom
+                      anchors.left: parent.left
+                      anchors.right: parent.right
+                      visible: channelRow.occupants.length > 0
+
+                      Repeater {
+                        model: channelRow.occupants.length
+
+                        delegate: Item {
+                          id: occupantRow
+                          required property int index
+                          readonly property var user: channelRow.occupants[index] || ({})
+                          readonly property string displayName: String(user.display_name || user.username || "")
+                          readonly property bool talking: !!(root.service
+                            && root.service.speaking[String(user.id || "")])
+                          width: channelList.width
+                          height: root.voiceOccupantHeight
+
+                          Item {
+                            id: occupantAvatar
+                            anchors.left: parent.left
+                            anchors.leftMargin: Style.spacing.rowPaddingX + Style.spacing.lg * 2
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: root.voiceAvatarSize + Style.spacing.xxs * 2
+                            height: width
+
+                            Rectangle {
+                              anchors.fill: parent
+                              radius: width / 2
+                              color: "transparent"
+                              border.width: occupantRow.talking ? Style.spacing.hairline * 2 : 0
+                              border.color: root.accent
+                            }
+                            Components.Avatar {
+                              anchors.centerIn: parent
+                              width: root.voiceAvatarSize
+                              height: root.voiceAvatarSize
+                              service: root.service
+                              url: String(occupantRow.user.avatar_url || "")
+                              name: occupantRow.displayName
+                              foreground: root.foreground
+                              fontFamily: root.fontFamily
+                            }
+                          }
+                          Text {
+                            anchors.left: occupantAvatar.right
+                            anchors.right: parent.right
+                            anchors.leftMargin: Style.spacing.sm
+                            anchors.rightMargin: Style.spacing.rowPaddingX
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: occupantRow.displayName
+                            elide: Text.ElideRight
+                            color: occupantRow.talking ? root.foreground : root.muted
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.caption
+                          }
+                        }
+                      }
+                    }
                   }
                 }
+              }
+
+              // The call, while there is one: pinned to the bottom of the
+              // channel column (the list above shrinks by exactly its
+              // height), so the channel you are reading and the channel you
+              // are talking in can differ without either one hiding, and the
+              // composer is never crowded.
+              Components.CallBar {
+                id: callBar
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.leftMargin: Style.spacing.sm
+                anchors.rightMargin: Style.spacing.sm
+                anchors.bottomMargin: Style.spacing.sm
+                service: root.service
+                channelName: root.service && root.service.voice
+                  ? String(root.service.channelNames[String(root.service.voice.channelId || "")] || "")
+                  : ""
+                foreground: root.foreground
+                secondary: root.muted
+                accent: root.accent
+                fontFamily: root.fontFamily
+                // Hanging up while the bar holds the keyboard (Tab'd here
+                // from the timeline, or Ctrl+Shift+H) takes the focused item
+                // out from under the focus: hand it back to the zone, the
+                // same place Esc would have put it.
+                onVisibleChanged: if (!visible && activeFocus) root.focusZone()
               }
             }
 
@@ -1924,6 +2171,7 @@ Item {
                 onSwitcherRequested: root.openSwitcher()
                 onCheatsheetRequested: root.toggleCheatsheet()
                 onMembersRequested: root.toggleMembers()
+                onVoiceRequested: function(action) { root.voiceAction(action) }
                 onActiveFocusChanged: if (activeFocus && root.zone !== "composer") root.zone = "composer"
               }
             }
@@ -2003,6 +2251,7 @@ Item {
                 }
                 return Keymap.footer(root.showLogin ? "login" : "down")
               }
+              if (root.callBarFocused) return Keymap.footer("voice")
               if (root.buttonFocused) {
                 // Esc goes where focusZone() goes: the last zone, unless it
                 // needs an open channel that is gone.

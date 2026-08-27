@@ -116,7 +116,8 @@ Item {
     id: setupCommand
     stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { waitForEnd: true }
-    // 0: already current, 10: installed or updated. See backend-runtime.sh.
+    // 0: already current, 10: installed or updated, 30/31/32: failures.
+    // See backend-runtime.sh.
     onExited: function(exitCode) {
       root.setupBusy = false
       if (exitCode === 0 || exitCode === 10) {
@@ -131,7 +132,9 @@ Item {
         ? "No Discord backend ships for this machine and Go is not installed"
         : (exitCode === 31
           ? "The Discord backend could not be built; run scripts/setup.sh in the plugin directory for the build output"
-          : "Discord backend setup could not be completed")
+          : (exitCode === 32
+            ? "libopus is missing — install the opus package"
+            : "Discord backend setup could not be completed"))
       root.setupFailed(root.lastError)
     }
   }

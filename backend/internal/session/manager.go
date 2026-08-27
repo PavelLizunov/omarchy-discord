@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -25,6 +26,7 @@ import (
 	"github.com/mattcalayo/omarchy-discord/backend/internal/panics"
 	"github.com/mattcalayo/omarchy-discord/backend/internal/protocol"
 	"github.com/mattcalayo/omarchy-discord/backend/internal/redact"
+	"github.com/mattcalayo/omarchy-discord/backend/internal/voice"
 )
 
 // ConfigureIdentity sets the dissent-parity identify fingerprint. It must run
@@ -92,6 +94,11 @@ type Manager struct {
 	stagedDir string
 	qrPath    string
 
+	// newVoice builds the voice engine for a freshly installed session; nil
+	// (tests, a build without audio support) leaves voice unavailable. It
+	// runs under mu, so it must not call back before it returns.
+	newVoice func(n *ningen.State, ev voice.Events) voiceEngine
+
 	mu         sync.Mutex
 	lifecycle  string
 	user       *protocol.User
@@ -100,6 +107,10 @@ type Manager struct {
 	unreadDM   *string
 	generation int64
 	errText    string
+	// voice is the engine of the live session (nil when unavailable) and
+	// voiceState its last reported state.
+	voice      voiceEngine
+	voiceState voice.State
 
 	token     string
 	n         *ningen.State
@@ -111,7 +122,7 @@ type Manager struct {
 
 // New creates a manager in the `starting` lifecycle.
 func New(kr Keyring) *Manager {
-	m := &Manager{kr: kr, events: make(chan any, 1024), lifecycle: protocol.LifecycleStarting, generation: 1}
+	m := &Manager{kr: kr, events: make(chan any, 1024), lifecycle: protocol.LifecycleStarting, generation: 1, voiceState: idleVoice}
 	m.runLoop = m.loop
 	m.fetchTail, m.fetchBefore, m.fetchChannel = fetchTail, fetchBefore, fetchChannel
 	m.memberDebounce = memberDebounce
@@ -127,6 +138,13 @@ func (m *Manager) Configure(runtimeDir string, cache *media.Cache) {
 	m.stagedDir = filepath.Join(runtimeDir, "staged")
 	m.qrPath = qrImagePath(runtimeDir)
 	m.media = cache
+}
+
+// EnableVoice installs the real voice engine constructor; log receives the
+// engine's own diagnostics. Call before Start (tests leave it unset, which
+// keeps voice unavailable).
+func (m *Manager) EnableVoice(log *slog.Logger) {
+	m.newVoice = func(n *ningen.State, ev voice.Events) voiceEngine { return voice.New(n, ev, log) }
 }
 
 // Events yields state_changed / guilds_synced events in the order they were
@@ -191,6 +209,7 @@ func (m *Manager) stateLocked() protocol.State {
 		UnreadDMChannelID: m.unreadDM,
 		Generation:        m.generation,
 		Error:             redact.Redact(m.errText),
+		Voice:             wireVoice(m.voiceState),
 	}
 }
 
@@ -243,24 +262,28 @@ func (m *Manager) Stop() {
 	m.opMu.Lock()
 	defer m.opMu.Unlock()
 	m.mu.Lock()
-	n, done := m.teardownLocked()
+	n, done, v := m.teardownLocked()
 	m.mu.Unlock()
-	closeAndWait(n, done)
+	closeAndWait(n, done, v)
 }
 
 // teardownLocked cancels the loop and detaches the session. Caller holds mu;
-// the returned session must be closed outside the lock.
-func (m *Manager) teardownLocked() (*ningen.State, chan struct{}) {
+// the returned session and voice engine must be closed outside the lock.
+func (m *Manager) teardownLocked() (*ningen.State, chan struct{}, voiceEngine) {
 	if m.cancel != nil {
 		m.cancel()
 		m.cancel = nil
 	}
-	n, done := m.n, m.loopDone
+	n, done, v := m.n, m.loopDone, m.voice
 	m.n, m.loopDone, m.token, m.everReady = nil, nil, "", false
-	return n, done
+	m.voice, m.voiceState = nil, idleVoice
+	return n, done, v
 }
 
-func closeAndWait(n *ningen.State, done chan struct{}) {
+func closeAndWait(n *ningen.State, done chan struct{}, v voiceEngine) {
+	if v != nil {
+		v.Close()
+	}
 	if n != nil {
 		if err := n.Close(); err != nil && !errors.Is(err, arikawasession.ErrClosed) {
 			redact.Logf("session: close: %v", err)
@@ -278,6 +301,10 @@ func closeAndWait(n *ningen.State, done chan struct{}) {
 func (m *Manager) connectLocked(n *ningen.State, token string) {
 	m.n, m.token, m.everReady = n, token, false
 	m.user, m.presence, m.mentions, m.unreadDM = nil, "", 0, nil
+	m.voiceState = idleVoice
+	if m.newVoice != nil {
+		m.voice = m.newVoice(n, voice.Events{State: m.onVoiceState, Speaking: m.onVoiceSpeaking})
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	m.loopDone = make(chan struct{})
@@ -315,6 +342,7 @@ func (m *Manager) installHandlers(n *ningen.State) {
 		m.lifecycle, m.errText = protocol.LifecycleReady, ""
 		m.bump()
 		m.pushStructureLocked(off)
+		m.pushVoiceMembersLocked(off)
 	})
 	addSyncHandler(n, "disconnected", func(ev *ningen.DisconnectedEvent) {
 		m.mu.Lock()
@@ -352,6 +380,7 @@ func (m *Manager) installHandlers(n *ningen.State) {
 	m.installMessageHandlers(n)
 	m.installChannelHandlers(n)
 	m.installMemberHandlers(n)
+	m.installVoiceHandlers(n)
 	resync := func() {
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -429,8 +458,15 @@ func (m *Manager) reauth(n *ningen.State, cause error) {
 	}
 	m.token = ""
 	m.cancel = nil
+	// The session is done: the call goes with it, even though the cache
+	// stays readable.
+	v := m.voice
+	m.voice, m.voiceState = nil, idleVoice
 	m.setLifecycleLocked(protocol.LifecycleReauthNeeded, fmt.Sprintf("session invalidated: %v", cause))
 	m.mu.Unlock()
+	if v != nil {
+		v.Close()
+	}
 	if err := m.kr.Clear(context.Background()); err != nil {
 		redact.Logf("session: keyring clear after reauth: %v", err)
 	}
@@ -475,9 +511,9 @@ func (m *Manager) finishLogin(ctx context.Context, n *ningen.State, token string
 // would orphan a live gateway connection.
 func (m *Manager) replaceSession(n *ningen.State, token string) {
 	m.mu.Lock()
-	old, done := m.teardownLocked()
+	old, done, v := m.teardownLocked()
 	m.mu.Unlock()
-	closeAndWait(old, done)
+	closeAndWait(old, done, v)
 
 	m.mu.Lock()
 	m.connectLocked(n, token)
@@ -493,11 +529,11 @@ func (m *Manager) Logout(ctx context.Context) *protocol.Error {
 		m.mu.Unlock()
 		return protocol.Errorf(protocol.CodeNotLoggedIn, "not logged in")
 	}
-	n, done := m.teardownLocked()
+	n, done, v := m.teardownLocked()
 	m.user, m.mentions, m.unreadDM = nil, 0, nil
 	m.setLifecycleLocked(protocol.LifecycleLoggedOut, "")
 	m.mu.Unlock()
-	closeAndWait(n, done)
+	closeAndWait(n, done, v)
 	if err := m.kr.Clear(ctx); err != nil {
 		redact.Logf("session: keyring clear: %v", err)
 	}
@@ -521,6 +557,14 @@ func (m *Manager) Snapshot() []any {
 		guilds, _ := Guilds(off)
 		dms, _ := DMs(off)
 		evs = append(evs, protocol.NewGuildsSynced(m.generation, guilds, dms))
+		// A connecting client has no occupancy at all, so every guild that
+		// has somebody in voice ships with the structure; empty guilds are
+		// what the client starts from and arrive as changes happen.
+		for _, ev := range allVoiceMembers(off) {
+			if len(ev.Channels) > 0 {
+				evs = append(evs, ev)
+			}
+		}
 	}
 	return evs
 }
@@ -621,6 +665,12 @@ func (m *Manager) Handle(ctx context.Context, req *protocol.Request) (any, *prot
 		return m.listThreads(req)
 	case "list_emoji":
 		return m.listEmoji()
+	case "voice_join":
+		return m.voiceJoin(ctx, req)
+	case "voice_leave":
+		return m.voiceLeave(ctx)
+	case "voice_set":
+		return m.voiceSet(ctx, req)
 	case "subscribe_members":
 		return m.subscribeMembers(ctx, req)
 	case "unsubscribe_members":

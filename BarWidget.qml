@@ -30,11 +30,19 @@ BarWidget {
     String(root.setting("middleClick", "Last unread DM"))
   readonly property string badgeText: showMentionCount && mentionCount > 0
     ? (mentionCount > 99 ? "99+" : String(mentionCount)) : ""
+  // In a voice call: a mic glyph next to the mark, crossed out while muted
+  // (deafened counts as muted here — one glyph, one question: am I audible).
+  readonly property bool inCall: !!(discord && discord.voice
+    && String(discord.voice.status || "idle") === "connected")
+  readonly property bool callSilent: inCall
+    && !!(discord.voice.muted || discord.voice.deafened)
+  readonly property string callGlyph: inCall ? (callSilent ? "\uf131" : "\uf130") : ""
   readonly property string tooltip: {
     if (!discord) return "Omarchy Discord"
     var text = "Discord: " + discord.statusText
     if (discord.user && discord.user.username)
       text += " as " + String(discord.user.display_name || discord.user.username)
+    if (inCall) text += " · in voice" + (callSilent ? " (muted)" : "")
     if (mentionCount > 0) text += " · " + mentionCount + " mention" + (mentionCount === 1 ? "" : "s")
     else if (unreadDot) text += " · unread"
     return text
@@ -46,8 +54,12 @@ BarWidget {
     var host = bar.shell
     // A plain click toggles the panel when it is on this monitor; from
     // another monitor it falls through and remaps the panel here instead.
-    if (typeof host.isPluginOpen === "function" && host.isPluginOpen(moduleName)
-        && !payload && panelOnThisScreen && typeof host.hide === "function") {
+    // In persistent mode the host counts the window as open from shell start,
+    // so judge by the window itself (mapped and focused), as Service.togglePanel does.
+    var isOpen = (discord && discord.persistentWindow)
+      ? (discord.panelMapped && discord.panelActive)
+      : (typeof host.isPluginOpen === "function" && host.isPluginOpen(moduleName))
+    if (isOpen && !payload && panelOnThisScreen && typeof host.hide === "function") {
       host.hide(moduleName)
       return
     }
@@ -107,6 +119,7 @@ BarWidget {
     fixedWidth: root.vertical ? root.barSize
       : Math.max(Style.bar.statusSlot,
         mark.implicitWidth + (root.badgeText ? badgeMetrics.advanceWidth + Style.space(4) : 0)
+          + (root.inCall ? callMark.implicitWidth + Style.space(4) : 0)
           + Style.space(17))
     fixedHeight: root.vertical ? Style.bar.statusSlot : -1
 
@@ -137,6 +150,17 @@ BarWidget {
           radius: width / 2
           color: Util.alpha(root.foreground, 0.7)
         }
+      }
+
+      Text {
+        id: callMark
+        anchors.verticalCenter: parent.verticalCenter
+        visible: root.inCall
+        text: root.callGlyph
+        color: root.foreground
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.bodySmall
+        renderType: Text.NativeRendering
       }
 
       Text {

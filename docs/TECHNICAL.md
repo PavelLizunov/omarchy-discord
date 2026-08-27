@@ -12,7 +12,7 @@ Quickshell process. It provides a shared service, a bar widget (one per monitor)
 a lazy-loaded panel, plus a service-owned quick-switcher overlay. There is no web
 view, no second shell process and no resident helper beyond the backend.
 
-The Discord session lives in `omarchy-discord-backend`, a static Go binary built on
+The Discord session lives in `omarchy-discord-backend`, a Go binary built on
 arikawa (gateway + REST) and ningen (the client-behaviour layer: read state, mention
 counts, guild subscriptions, member lists). A static systemd user unit supervises
 it; the unit has no `[Install]` section, so it is never enabled at login — the
@@ -52,13 +52,16 @@ strings on the wire: a 64-bit id does not survive a JavaScript double.
 | `components/Composer.qml` | Text input zone: send / reply / edit / paste / chips, key interception on the TextArea |
 | `components/AttachmentChip.qml` | Staged upload chip with progress |
 | `components/MemberList.qml` | Member pane: group headers, member rows, presence dots, its own roving cursor |
+| `components/Avatar.qml` | Circular avatar via the media cache; shared by the member pane and the voice occupant rows |
+| `components/CallBar.qml` | Voice call bar at the bottom of the channel column: status, mute / deafen / leave |
 | `components/EmojiPicker.qml` | Modal picker: reactions → frequent → server emoji per guild → catalogue |
 | `components/Cheatsheet.qml` | Modal `Ctrl+/` overlay rendered from `Keymap.js` |
 | `Api.js` | Pure helpers: redaction, id comparison, channel filters, thread counts, member rows, theme contrast helpers |
 | `Markdown.js` | Discord markdown → Qt rich text (never throws on hostile input) |
 | `Emoji.js` | Picker model, catalogue parsing, frequent-emoji persistence |
 | `Keymap.js` | The one key table: footer states and cheatsheet sections both render from it |
-| `backend/` | Go module: `cmd/omarchy-discord-backend`, `internal/{socket,protocol,session,media,remoteauth,keyring,redact}` |
+| `backend/` | Go module: `cmd/omarchy-discord-backend`, `internal/{socket,protocol,session,voice,media,remoteauth,keyring,redact}` |
+| `backend/internal/voice/` | Voice engine: disgo/voice + dave-go DAVE E2EE + hraban/opus + jfreymuth/pulse, owned by the session |
 | `systemd/omarchy-discord.service` | Static user unit with the hardening block |
 | `scripts/` | `setup.sh`, `build-backend.sh`, `install-local.sh`, `backend-runtime.sh`, `remove-runtime.sh` |
 | `components/harness/` | Offscreen Timeline harness and the Markdown node tests |
@@ -184,9 +187,11 @@ reinstalled), fingerprints again, and runs `systemctl --user try-restart
 omarchy-discord.service` when the bytes changed — `try-restart`, so an idle
 backend stays stopped while a live session is handed the new binary at once.
 Exit codes: `0` already current, `10` installed or updated, `30` no prebuilt for
-this architecture and no Go toolchain, `31` the build or install failed;
-`DaemonManager` turns 30 and 31 into distinct UI messages and only treats 10 as
-"setup succeeded".
+this architecture and no Go toolchain, `31` the build or install failed, `32` the
+installed binary is missing a shared library (libopus; `build-backend.sh` probes
+with `ldd` after every install, because ld.so aborts before `main()` and the
+backend cannot report this itself); `DaemonManager` turns 30, 31 and 32 into
+distinct UI messages and only treats 10 as "setup succeeded".
 
 Why this shape:
 
@@ -322,8 +327,10 @@ Before a commit touching the frontend:
    (exit 0).
 5. The offscreen harnesses above, with screenshots inspected.
 
-Before a commit touching `backend/`: `gofmt -l`, `go vet ./...`, `go test ./...`,
-`go build ./...` with `GOCACHE` and `-o` outside the tree (golden fixtures for every
+Before a commit touching `backend/`: `gofmt -l`, then `CGO_ENABLED=1 go vet -tags
+nolibopusfile ./...`, `CGO_ENABLED=1 go test -tags nolibopusfile ./...`,
+`CGO_ENABLED=1 go build -tags nolibopusfile ./...` (the daemon links `libopus`, so
+the whole module is cgo) with `GOCACHE` and `-o` outside the tree (golden fixtures for every
 wire shape; recorded gateway payloads for handlers).
 
 ### Install, rebuild, remove
@@ -341,8 +348,10 @@ summary; `omarchy-discord-backend login` reads a token from stdin.
 `build-backend.sh` installs `backend/dist/$(uname -m)/omarchy-discord-backend`
 when that file exists, is a real file (never a symlink — `omarchy plugin
 validate` refuses those) and is executable; otherwise it needs the Go toolchain
-and builds outside the tree. Only `x86_64` ships a prebuilt, so any other
-architecture needs Go installed.
+(Go 1.26) and builds outside the tree with `CGO_ENABLED=1 go build -tags
+nolibopusfile`. Only `x86_64` ships a prebuilt, so any other architecture needs
+Go installed. Either way it finishes with `ldd "$destination" | grep -q 'not
+found'` and exits 32 naming `opus` when the audio library is absent.
 
 ### Releasing
 
@@ -354,16 +363,21 @@ stale prebuilt just as happily as a fresh one.
 ```sh
 cd backend
 GOCACHE="${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-discord/gocache" \
-  CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' \
+  CGO_ENABLED=1 go build -tags nolibopusfile -trimpath -ldflags='-s -w' \
   -o "${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-discord/target/omarchy-discord-backend" \
   ./cmd/omarchy-discord-backend
 install -D -m 755 "${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-discord/target/omarchy-discord-backend" \
   dist/x86_64/omarchy-discord-backend
 ```
 
-`CGO_ENABLED=0` keeps the binary static (no libc or libsecret link — the keyring
-is reached by running `secret-tool`), `-trimpath` and `-ldflags='-s -w'` keep it
-reproducible and small. Build to `$XDG_CACHE_HOME`, never inside the tree, then
+The prebuilt is dynamically linked: voice needs the system `libopus`, so
+`CGO_ENABLED=1` and `-tags nolibopusfile` (link `libopus` alone, not
+`libopusfile`). `-trimpath` and `-ldflags='-s -w'` keep it reproducible and small.
+Source builds need Go 1.26 and the `opus` package. Acceptance for the committed
+binary: `ldd dist/x86_64/omarchy-discord-backend` lists **only** libc, libm,
+libresolv and libopus (plus the loader) — anything else, especially libsecret,
+means a dependency crept in; the keyring is still reached by running
+`secret-tool`. Build to `$XDG_CACHE_HOME`, never inside the tree, then
 copy the result in; `backend/.gitignore` ignores `dist/` except that one path, so
 `git add -f` is never needed (`git check-ignore -v
 backend/dist/x86_64/omarchy-discord-backend` should report the negation).

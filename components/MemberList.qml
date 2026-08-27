@@ -1,7 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Effects
 import Quickshell
 import qs.Commons
 import qs.Ui
@@ -182,8 +181,6 @@ FocusScope {
           readonly property bool header: row.kind === "group"
           readonly property var user: row.user || ({})
           readonly property bool hasCursor: root.active && index === root.cursor && !header
-          readonly property string avatarPath: !header && root.service && user.avatar_url
-            ? String(root.service.mediaPath(String(user.avatar_url), 64) || "") : ""
           readonly property string displayName: String(user.display_name || user.username || "")
           readonly property string activity: String(row.activity || "")
           width: listView.width
@@ -209,55 +206,19 @@ FocusScope {
               ? Border.controlSpec("hover-cursor", root.foreground, Color.accent)
               : Border.none()
 
-            Item {
+            Avatar {
               id: avatar
               anchors.left: parent.left
               anchors.leftMargin: Style.spacing.sm
               anchors.verticalCenter: parent.verticalCenter
               width: root.avatarSize
               height: root.avatarSize
+              service: root.service
+              url: memberRow.header ? "" : String(memberRow.user.avatar_url || "")
+              name: memberRow.displayName
+              foreground: root.foreground
+              fontFamily: root.fontFamily
 
-              Rectangle {
-                anchors.fill: parent
-                radius: width / 2
-                color: Util.alpha(root.foreground, 0.12)
-                visible: !avatarEffect.visible
-                Text {
-                  anchors.centerIn: parent
-                  text: Api.initials(memberRow.displayName).charAt(0)
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.bold: true
-                }
-              }
-              Rectangle {
-                id: avatarMask
-                anchors.fill: parent
-                radius: width / 2
-                visible: false
-                layer.enabled: true
-              }
-              Image {
-                id: avatarImage
-                anchors.fill: parent
-                visible: false
-                asynchronous: true
-                cache: true
-                fillMode: Image.PreserveAspectCrop
-                sourceSize.width: root.avatarSize * 2
-                sourceSize.height: root.avatarSize * 2
-                source: memberRow.avatarPath ? "file://" + memberRow.avatarPath : ""
-                onStatusChanged: if (status === Image.Error && root.service) root.service.mediaError(memberRow.avatarPath)
-              }
-              MultiEffect {
-                id: avatarEffect
-                anchors.fill: avatarImage
-                source: avatarImage
-                maskEnabled: true
-                maskSource: avatarMask
-                visible: memberRow.avatarPath !== "" && avatarImage.status === Image.Ready
-              }
               // Status dot over the avatar's corner, ringed in the pane
               // colour so it reads on any avatar.
               Rectangle {

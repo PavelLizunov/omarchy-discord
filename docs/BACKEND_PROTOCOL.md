@@ -83,7 +83,10 @@ On every client connect, before reading any request, the backend pushes:
 2. if `lifecycle` is `qr_pending`: one `qr_code` event (the live code, see § QR
    login events) so a client that connects mid-flow can show it;
 3. if `lifecycle` is `ready`: one `guilds_synced` event (full guild + DM structure,
-   including per-channel unread/mention counts).
+   including per-channel unread/mention counts);
+4. if `lifecycle` is `ready`: one `voice_members` event per guild that currently has
+   somebody in voice, so a connecting client can draw occupancy immediately (guilds
+   with nobody in voice are what a client starts from and are left out here).
 
 Thereafter events are pushed as things change. A client can force a refresh at any
 time with `get_state` / `list_guilds`.
@@ -109,7 +112,7 @@ events.
 | `not_logged_in` | no session exists (`starting`, `logged_out`, `error` without a token). `reauth_needed` keeps its cached session and does **not** produce this for read-only structure commands; write commands (`send`, `edit`, `delete`, `react`, `typing`, `upload`, `set_presence`) do get it in `reauth_needed`, and a write whose REST call returns 401 fails with it while the lifecycle moves to `reauth_needed` |
 | `login_failed` | token rejected at login (invalid/revoked) |
 | `qr_unavailable` | remote-auth gateway unreachable or flow already running |
-| `gateway_unavailable` | a session exists but has not processed its first READY (`connecting` after login/start) — structure is not yet known; for write commands, also when the gateway is currently disconnected. Retry later |
+| `gateway_unavailable` | a session exists but has not processed its first READY (`connecting` after login/start) — structure is not yet known; for write commands, also when the gateway is currently disconnected; for `voice_*`, also when this build/session has no voice engine. Retry later |
 | `unknown_guild` | guild id not in session state |
 | `unknown_channel` | channel id not visible to this account |
 | `unknown_message` | message id not found in the channel |
@@ -137,6 +140,15 @@ events.
 | `unread_dm_channel_id` | string\|null | most recent unread DM (bar middle-click target); null if none |
 | `generation` | int | monotonically increasing; discard stale states |
 | `error` | string | redacted human-readable detail when lifecycle is `error`/`reauth_needed`, else `""` |
+| `voice` | object | voice-call status, always present (below) |
+
+`voice` is `{status ("idle"|"connecting"|"connected"|"error"), guild_id
+(string|null), channel_id (string|null), muted (bool), deafened (bool), error
+(string)}`. `guild_id`/`channel_id` are null while `idle` and set from `connecting`
+onwards; `error` is redacted detail, `""` unless `status` is `"error"`. Every change
+— including mute/deafen — bumps `generation` and emits a `state_changed`, so the
+call survives a client restart or hot reload. A session that loses its token
+(`reauth_needed`) or logs out drops back to `idle`.
 
 `reauth_needed` semantics: entered when the gateway closes with a fatal code
 (4004/4010–4014 — token invalid) or a REST 401 on any command. The backend drops the
@@ -348,7 +360,9 @@ safe to call on every keystroke).
   (string), score (number)}]}`.
   - Candidates are every openable channel the account can see: guild `text` and
     `announcement` channels, unarchived `thread`s whose parent is visible, `dm`
-    and `group_dm`. Categories, voice, stage and forum channels never appear.
+    and `group_dm`. Categories, voice, stage and forum channels are never
+    candidates: voice channels ship on the wire as type `voice` but are joined,
+    not opened; the others are not openable either.
   - With a non-empty query, only fuzzy matches are returned: `score` is the
     subsequence match of the query against the channel name (for DMs the
     recipient names), or half the match against the guild name when that is
@@ -664,6 +678,49 @@ The response arrives on completion.
 {"type":"response","v":1,"id":44,"ok":true,"result":{"message_id":"1049931401540221011","nonce":"e5f6a7b8c9d0e1f2"}}
 ```
 
+### Voice
+
+One call at a time, per daemon. All three commands answer immediately with `{}`; the
+call's progress is reported by `state.voice` through `state_changed`, never by the
+response. Audio never crosses this socket — it lives in the daemon (PulseAudio in,
+PulseAudio out). `check` reports whether the audio server is reachable
+(`audio_server`).
+
+#### `voice_join`
+Join a guild voice channel; joining while already in a call leaves the old one first.
+- Request: `{guild_id: string, channel_id: string}` — must name a cached `voice`
+  channel of that guild.
+- Result: `{}`, sent as soon as the join was accepted. `state.voice` goes
+  `connecting` → `connected`, or `error` (with a message) on failure.
+- Errors: `invalid_argument` (bad snowflake, not a voice channel, stage channel —
+  stage is not supported), `unknown_channel` (not cached, or not in that guild),
+  `forbidden` (the account lacks VIEW_CHANNEL / CONNECT — Discord ignores such a join
+  silently, so it is refused from the cache), `not_logged_in`, `gateway_unavailable`
+  (session not ready, or this build has no voice engine), `discord_error`.
+
+#### `voice_leave`
+Leave the current call. Idempotent: leaving when idle succeeds and changes nothing.
+- Request: `{}`. Result: `{}`. `state.voice` returns to `idle`.
+- Errors: `gateway_unavailable`, `discord_error`.
+
+#### `voice_set`
+Set mute / deafen. Absent fields are left unchanged; an empty request is a no-op.
+Mute stops the microphone and sets `self_mute`; deafen stops playback and sets
+`self_deaf`. Both are remembered by the engine and reported in `state.voice`.
+- Request: `{muted?: bool, deafened?: bool}`. Result: `{}`.
+- Errors: `invalid_argument`, `gateway_unavailable`, `discord_error`.
+
+```json
+{"v":1,"id":70,"command":"voice_join","guild_id":"1000000000000000001","channel_id":"1000000000000000012"}
+{"type":"response","v":1,"id":70,"ok":true,"result":{}}
+{"type":"event","v":1,"event":"state_changed","state":{"...":"...","voice":{"status":"connecting","guild_id":"1000000000000000001","channel_id":"1000000000000000012","muted":false,"deafened":false,"error":""}}}
+{"type":"event","v":1,"event":"state_changed","state":{"...":"...","voice":{"status":"connected","guild_id":"1000000000000000001","channel_id":"1000000000000000012","muted":false,"deafened":false,"error":""}}}
+{"v":1,"id":72,"command":"voice_set","muted":true}
+{"type":"response","v":1,"id":72,"ok":true,"result":{}}
+{"v":1,"id":71,"command":"voice_leave"}
+{"type":"response","v":1,"id":71,"ok":true,"result":{}}
+```
+
 ---
 
 ## Events
@@ -674,7 +731,7 @@ connection, event order is the order the backend processed them (ningen's
 
 ### `state_changed`
 `{state: state}` — full session-state object (§ wire objects). Fires on connect
-(snapshot), on every lifecycle/user/presence/total-mention change. Unchanged states
+(snapshot), on every lifecycle/user/presence/total-mention/voice change. Unchanged states
 are not re-sent. This is the only event a client is guaranteed before `ready`,
 except that a connect while `qr_pending` is also followed by a `qr_code` replay.
 
@@ -787,6 +844,30 @@ Discord sends PRESENCE_UPDATE for friends and for guild members it chooses to
 (large guilds mostly push status changes through the member list instead), so a
 member pane must also take statuses from each `member_list_update`.
 
+### `voice_members`
+`{guild_id, channels: [{channel_id, users: [{id, username, display_name,
+avatar_url}]}]}` — who is in voice in one guild, delivered to **every** connection.
+Every event is a full replacement for that guild: QML replaces the guild's voice
+occupancy on receipt. Only occupied channels appear (a channel that empties simply
+drops out, and `channels: []` means nobody in the guild is in voice); `channels` is
+never null. Channels are ordered by id and occupants by display name (nick > global
+display name > username); `avatar_url` is the plain CDN URL (no `?size=`).
+Occupancy of channels this account cannot see is never reported. Fires on every
+VOICE_STATE_UPDATE for the guild (join, leave, move, server mute), plus once per
+guild — **every** guild, empty ones included — right after `guilds_synced`, plus the
+occupied guilds on connect (§ Snapshot on connect). The post-`guilds_synced` seed is a
+full re-seed: updates that arrive while the gateway is reconnecting are not pushed, so
+a guild that emptied out during the drop is corrected by its empty list. DM and
+group-DM calls are not reported.
+
+### `voice_speaking`
+`{user_id, speaking: bool}` — another participant in the current call started or
+stopped transmitting, delivered to **every** connection. It carries no channel id:
+the call is the one in `state.voice`. `speaking` goes true on the first packet from
+a user and false after a short silence; **every** tracked user is reported false
+when the call ends, so a client can drive the speaking ring straight off these
+events. The account's own microphone is not reported.
+
 ### `media_ready`
 `{url: string, ok: bool, path: string ("" on failure), error: string ("" on
 success, redacted)}` — completion of a `fetch_media` cache miss, delivered to
@@ -858,5 +939,7 @@ approval; there is no auto-restart — call `start_qr_login` again for a fresh c
 | `member_list_update` | our own Op 14 `GuildSubscribeCommand{Channels: {ch: [[0,99]]}}` (ningen's `RequestMemberList` is unusable — its chunk arithmetic panics once it holds a list with < 100 visible members) → `GuildMemberListUpdateEvent`, matched to channels by the list id the backend computes itself (`memberListID`: Discord's "everyone" rule + murmur3 of the view-channel overwrites sorted as strings, computed on a thread's *parent*; ningen's `ComputeListID` does not match live lists); DM lists from the recipient list + `PresenceStore`; coalesced per channel (100 ms) |
 | `presence_update` | `PresenceUpdateEvent`, routed by the users of the last emitted member lists and the open-DM recipient index |
 | `read_state_changed` | ningen `read.UpdateEvent` (async goroutine — serialized into the writer) |
+| `voice_members` | `Cabinet.VoiceStates(guild)` seeded from READY/GuildCreate, re-read on every `VoiceStateUpdateEvent` (sync handler) for that guild alone |
+| `voice_speaking` | the voice engine's receiver (first packet → true; silence frames / 250 ms gap → false; all cleared on leave) |
 | `media_ready` / `upload_progress` | backend media cache / counting reader |
 | `qr_*` | ported remote-auth gateway client (discordo protocol) + `ExchangeRemoteAuthTicket` |

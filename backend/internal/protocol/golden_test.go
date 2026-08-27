@@ -40,10 +40,12 @@ var goldens = []struct {
 		ProtocolVersion: 1, BackendVersion: BackendVersion, Lifecycle: LifecycleReady,
 		User:     &User{ID: "183627919046737920", Username: "m", DisplayName: "m", AvatarURL: "https://cdn.discordapp.com/avatars/183627919046737920/a.png"},
 		Presence: "online", TotalMentionCount: 3, UnreadDMChannelID: str("1049931213073821696"), Generation: 7, Error: "",
+		// A session in a call: the non-idle shape of the voice object.
+		Voice: VoiceState{Status: VoiceConnected, GuildID: str("1000000000000000001"), ChannelID: str("1000000000000000012"), Muted: true, Deafened: false, Error: ""},
 	}), &typedResponse[State]{}},
 	{"response_get_state_logged_out", OKResponse(3, State{
 		ProtocolVersion: 1, BackendVersion: BackendVersion, Lifecycle: LifecycleLoggedOut,
-		User: nil, Presence: "", TotalMentionCount: 0, UnreadDMChannelID: nil, Generation: 1, Error: "",
+		User: nil, Presence: "", TotalMentionCount: 0, UnreadDMChannelID: nil, Generation: 1, Error: "", Voice: IdleVoice(),
 	}), &typedResponse[State]{}},
 	{"response_login", OKResponse(4, LoginResult{User: User{ID: "183627919046737920", Username: "m", DisplayName: "m", AvatarURL: "https://cdn.discordapp.com/avatars/183627919046737920/a.png"}, KeyringStored: true}), &typedResponse[LoginResult]{}},
 	{"response_logout", OKResponse(5, EmptyResult{}), &typedResponse[EmptyResult]{}},
@@ -63,7 +65,7 @@ var goldens = []struct {
 	{"response_invalid_request", ErrResponse(0, &Error{Code: CodeInvalidRequest, Message: "malformed request"}), &typedResponse[struct{}]{}},
 	{"event_state_changed", NewStateChanged(State{
 		ProtocolVersion: 1, BackendVersion: BackendVersion, Lifecycle: LifecycleConnecting,
-		User: nil, Presence: "", TotalMentionCount: 0, UnreadDMChannelID: nil, Generation: 2, Error: "",
+		User: nil, Presence: "", TotalMentionCount: 0, UnreadDMChannelID: nil, Generation: 2, Error: "", Voice: IdleVoice(),
 	}), &StateChangedEvent{}},
 	{"event_guilds_synced", NewGuildsSynced(7,
 		[]Guild{{ID: "1000000000000000001", Name: "Omarchy", IconURL: nil, Unread: UnreadUnread, MentionCount: 0, Position: 0}},
@@ -151,6 +153,18 @@ var goldens = []struct {
 	{"event_member_list_update_empty", NewMemberListUpdate("1049931213073821696", str("1000000000000000001"), nil, nil), &MemberListUpdateEvent{}},
 	{"event_presence_update", NewPresenceUpdate("2000000000000000001", "idle", "Listening to Spotify"), &PresenceUpdateEvent{}},
 	{"event_presence_update_offline", NewPresenceUpdate("2000000000000000001", "offline", ""), &PresenceUpdateEvent{}},
+	// Voice.
+	{"event_voice_members", NewVoiceMembers("1000000000000000001", []VoiceChannelMembers{
+		{ChannelID: "1000000000000000012", Users: []User{
+			{ID: "183627919046737920", Username: "m", DisplayName: "m", AvatarURL: "https://cdn.discordapp.com/avatars/183627919046737920/a.png"},
+			{ID: "2000000000000000001", Username: "ada", DisplayName: "Ada", AvatarURL: "https://cdn.discordapp.com/avatars/2000000000000000001/b.png"},
+		}},
+		{ChannelID: "1000000000000000013", Users: []User{
+			{ID: "2000000000000000002", Username: "lin", DisplayName: "lin", AvatarURL: ""},
+		}},
+	}), &VoiceMembersEvent{}},
+	{"event_voice_members_empty", NewVoiceMembers("1000000000000000001", nil), &VoiceMembersEvent{}},
+	{"event_voice_speaking", NewVoiceSpeaking("2000000000000000001", true), &VoiceSpeakingEvent{}},
 }
 
 var archivedThread = func() Channel {
@@ -384,6 +398,19 @@ func TestGoldenRequests(t *testing.T) {
 			}
 		}},
 		{"request_list_emoji", 64, "list_emoji", nil},
+		{"request_voice_join", 70, "voice_join", func(t *testing.T, r *Request) {
+			var p VoiceJoinParams
+			if e := r.Params(&p); e != nil || p.GuildID != "1000000000000000001" || p.ChannelID != "1000000000000000012" {
+				t.Fatalf("voice_join params: %v %+v", e, p)
+			}
+		}},
+		{"request_voice_leave", 71, "voice_leave", nil},
+		{"request_voice_set", 72, "voice_set", func(t *testing.T, r *Request) {
+			var p VoiceSetParams
+			if e := r.Params(&p); e != nil || p.Muted == nil || !*p.Muted || p.Deafened != nil {
+				t.Fatalf("voice_set params: %v %+v", e, p)
+			}
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -43,7 +43,7 @@ and designed specifically for building user-account clients.
 - Tens of MB of RAM, not ~1 GB
 
 **Non-goals (v1)**
-- **Voice and video.** Out of scope. Show call state in the sidebar at most; join calls elsewhere.
+- **Voice.** Delivered on the `voice` branch — join a guild voice channel, talk, hear, mute/deafen/leave, and see who is in voice and who is speaking. **Video and screen share** stay out of scope.
 - Server management, moderation tooling, Nitro store surfaces
 - Multiple simultaneous accounts
 - Password login — token/QR only, so captchas never enter the picture

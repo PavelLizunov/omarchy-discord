@@ -123,6 +123,7 @@ func TestLifecycleFromFixture(t *testing.T) {
 	if len(gs.Guilds) != 2 || len(gs.DMs) != 2 {
 		t.Fatalf("guilds_synced: %+v", gs)
 	}
+	drainVoiceSeed(t, m)
 	// Structure carries a generation newer than the state that preceded it.
 	if gs.Generation <= st.Generation {
 		t.Fatalf("guilds_synced generation %d not after state generation %d", gs.Generation, st.Generation)
@@ -164,6 +165,7 @@ func TestLifecycleFromFixture(t *testing.T) {
 		t.Fatalf("%+v", st)
 	}
 	nextEvent(t, m) // guilds_synced
+	drainVoiceSeed(t, m)
 
 	// Fatal close → reauth_needed with user cleared.
 	dispatch(n, &ws.CloseEvent{Code: 4004})
@@ -257,6 +259,7 @@ func TestReplacementResetsUserState(t *testing.T) {
 		t.Fatalf("ready state: %+v", st)
 	}
 	nextEvent(t, m) // guilds_synced
+	drainVoiceSeed(t, m)
 
 	n2, _ := newUnopenedState(t)
 	m.replaceSession(n2, "tok2")

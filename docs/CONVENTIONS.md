@@ -614,16 +614,20 @@ cursor. The implementation patterns to copy are spotify's, verbatim:
 `build-backend.sh`: prebuilt-wins (if `dist/$(uname -m)/omarchy-discord-backend` is a
 real executable file, `install -m 755` it into the runtime dir); a symlink there is
 refused outright; else require the Go toolchain and build with output outside the
-tree, then `install`. Only `x86_64` ships a prebuilt today, so other architectures
-need Go. Backend gitignore mirrors spotify's dist-negation block (verify with `git
+tree (`CGO_ENABLED=1 go build -tags nolibopusfile -trimpath -ldflags='-s -w'`), then
+`install`. Only `x86_64` ships a prebuilt today, so other architectures need Go.
+Both paths end in the same probe — `ldd "$destination" | grep -q 'not found'` — because
+the binary links libopus and ld.so aborts before `main()` when it is missing, so the
+backend cannot report that itself. Backend gitignore mirrors spotify's dist-negation block (verify with `git
 check-ignore -v backend/dist/x86_64/omarchy-discord-backend`).
 
 Exit codes, shared by `build-backend.sh`, `setup.sh` and `backend-runtime.sh sync`
 and mapped to distinct UI messages in `DaemonManager.qml`: **30** = no prebuilt for
-this architecture and no Go toolchain; **31** = the build or install failed; `sync`
-additionally uses **0** = already current and **10** = installed or updated. Never
-collapse 30 and 31 into one message — "Go is not installed" is wrong and confusing
-for a build that simply failed.
+this architecture and no Go toolchain; **31** = the build or install failed; **32** =
+the installed binary is missing a shared library (libopus — `sudo pacman -S opus`);
+`sync` additionally uses **0** = already current and **10** = installed or updated.
+Never collapse these into one message — "Go is not installed" is wrong and confusing
+for a build that simply failed, and a missing distro package is not a build failure.
 
 ### systemd static user unit
 
@@ -716,8 +720,10 @@ the cache dir.
   forks — everything we need was verified upstream except QR (which we port as our own
   code, §6).
 - Quality gate, run before every commit touching `backend/`:
-  `gofmt -l` (empty output) · `go vet ./...` · `go test ./...` · `go build ./...`
-  — all with the build/test cache outside the plugin tree when the checkout is the
+  `gofmt -l` (empty output) · `CGO_ENABLED=1 go vet -tags nolibopusfile ./...` ·
+  `CGO_ENABLED=1 go test -tags nolibopusfile ./...` ·
+  `CGO_ENABLED=1 go build -tags nolibopusfile ./...` — the daemon links the system
+  `libopus` for voice, so the module is cgo-only; all with the build/test cache outside the plugin tree when the checkout is the
   live plugin dir (`GOCACHE=$XDG_CACHE_HOME/omarchy-discord/gocache`, `-o` into
   `$XDG_CACHE_HOME/omarchy-discord/target`).
 - **Golden tests for the protocol**: every request/response/event shape in

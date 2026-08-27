@@ -14,6 +14,7 @@
 #   10  the runtime was installed or updated (and restarted if the binary moved)
 #   30  no prebuilt for this architecture and no Go toolchain to build one
 #   31  the backend failed to build or install
+#   32  the installed backend is missing a shared library (libopus)
 set -euo pipefail
 
 action=${1:-}

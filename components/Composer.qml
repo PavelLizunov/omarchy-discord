@@ -57,6 +57,10 @@ FocusScope {
   signal cheatsheetRequested()
   // Alt+m: the TextArea would otherwise type an "m".
   signal membersRequested()
+  // Ctrl+Shift+M / D / H: the call controls work from every zone, so the
+  // composer claims them too and hands the action ("mute" / "deafen" /
+  // "leave") to the panel.
+  signal voiceRequested(string action)
 
   readonly property color foreground: Color.foreground
   readonly property color muted: Api.secondaryColor(Color.muted, Color.foreground, Color.background)
@@ -189,6 +193,9 @@ FocusScope {
     else if (alt && key === Qt.Key_M) membersRequested()
     // Alt+Up/Down (channel stepping) belongs to the panel.
     else if (alt) return
+    else if (ctrl && shift && key === Qt.Key_M) voiceRequested("mute")
+    else if (ctrl && shift && key === Qt.Key_D) voiceRequested("deafen")
+    else if (ctrl && shift && key === Qt.Key_H) voiceRequested("leave")
     else if ((key === Qt.Key_Return || key === Qt.Key_Enter) && !shift) submit()
     else if (key === Qt.Key_Escape) {
       if (editing) cancelEdit()
@@ -214,10 +221,15 @@ FocusScope {
     var key = event.key
     var text = event.text
     var alt = (event.modifiers & Qt.AltModifier) !== 0
+    var ctrl = (event.modifiers & Qt.ControlModifier) !== 0
+    var shift = (event.modifiers & Qt.ShiftModifier) !== 0
     if (alt && key === Qt.Key_H) moveZone("left")
     else if (alt && key === Qt.Key_L) moveZone("right")
     else if (alt && key === Qt.Key_M) membersRequested()
     else if (alt) return
+    else if (ctrl && shift && key === Qt.Key_M) voiceRequested("mute")
+    else if (ctrl && shift && key === Qt.Key_D) voiceRequested("deafen")
+    else if (ctrl && shift && key === Qt.Key_H) voiceRequested("leave")
     else if (key === Qt.Key_Escape) focusInput()
     else if ((event.modifiers & Qt.ControlModifier) && key === Qt.Key_K) switcherRequested()
     else if ((event.modifiers & Qt.ControlModifier) && key === Qt.Key_Slash) cheatsheetRequested()
