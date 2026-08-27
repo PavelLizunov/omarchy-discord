@@ -16,8 +16,10 @@ from the active Omarchy theme, light themes included. It is keyboard-first
 throughout — `Ctrl+/` shows the cheatsheet.
 
 **Status: Phase 3 complete** (see `docs/PLAN.md` for the roadmap and what is
-deliberately deferred). Voice, video, server management and multiple accounts are
-non-goals; voice and stage channels are hidden entirely.
+deliberately deferred). Voice now ships — join a guild voice channel, talk and hear,
+mute / deafen, and see who is in voice and who is speaking. Video, screen share, server
+management and multiple accounts remain non-goals, and stage channels stay hidden
+entirely.
 
 ## Screenshots
 
@@ -203,6 +205,7 @@ node -e 'var s=require("fs").readFileSync("Keymap.js","utf8");eval(s);sections()
 | `g / G · Home / End` | First / last row |
 | `Enter · l · →` | Rail: open the server's channel list and the channel it was last left on (a server also falls back to #general, then its first channel; Direct messages restore only what you left open) |
 | `Enter` | Channel list: open the channel or thread (the composer takes focus); on a forum: show its threads |
+| `Enter` | Channel list: on a voice channel, join it — on the one you are already in, focus the call bar |
 | `t` | Channel list: show / hide the channel's active threads beneath it (from the timeline: the open channel's) |
 | `h · ← · Esc` | Channel list: back to the server rail |
 | `l · →` | Channel list: focus the open channel's timeline |
@@ -247,6 +250,14 @@ node -e 'var s=require("fs").readFileSync("Keymap.js","utf8");eval(s);sections()
 | `j / k · ↑ / ↓` | Move the cursor over the members (g / G: first / last) |
 | `Y` | Copy the member's @username to the clipboard |
 | `Esc` | Back to the composer (Alt+h too) |
+
+**Voice call**
+
+| Key | Action |
+|---|---|
+| `Ctrl+Shift+M` | Mute / unmute your microphone (from any app via the Hyprland bind) |
+| `Ctrl+Shift+D` | Deafen / undeafen: stop playing what the others say |
+| `Ctrl+Shift+H` | Leave the voice channel |
 
 **Quick switcher**
 
@@ -345,6 +356,72 @@ channel. Middle-clicking the bar mark opens the most recent unread DM. The open
 channel keeps a rolling window of the newest 500 messages while you are at the
 bottom; nothing is trimmed while you are scrolled up.
 
+### Voice
+
+Voice channels show in the channel list with their occupants indented beneath them and
+a speaking ring on whoever is talking. `Enter` on a voice channel joins it; a call bar
+appears at the bottom of the channel column with the channel name, connection status,
+and mute / deafen / leave. `Ctrl+Shift+M` mutes, `Ctrl+Shift+D` deafens, `Ctrl+Shift+H`
+leaves — from any zone, the composer included. `Enter` on the channel you are already in
+focuses the call bar. One call at a time; joining another leaves the first.
+
+The same three actions are on the `quickshell.discord.voice` IPC target
+(`mute` / `deafen` / `leave`), so you can drive the call from Hyprland without the panel
+focused, the way the panel and switcher binds work:
+
+```ini
+bindd = CTRL SHIFT, M, Discord mute, exec, omarchy-shell quickshell.discord.voice mute
+bindd = CTRL SHIFT, D, Discord deafen, exec, omarchy-shell quickshell.discord.voice deafen
+bindd = CTRL SHIFT, H, Discord leave call, exec, omarchy-shell quickshell.discord.voice leave
+```
+
+**Audio (PipeWire).** The backend captures and plays through the default PipeWire source
+and sink; it appears as a PipeWire node named `omarchy-discord`, so route it, set its
+volume, or mute it in `wiremix` or `pavucontrol` like any other stream. The client does
+no echo cancellation or noise suppression of its own — that is PipeWire's to do, and
+yours to enable system-side. Drop either of these into
+`~/.config/pipewire/pipewire.conf.d/` and restart PipeWire
+(`systemctl --user restart pipewire`), then point the `omarchy-discord` capture at the
+processed source in `wiremix`.
+
+Echo cancellation with the WebRTC backend (also does noise suppression and AGC),
+`echo-cancel.conf`:
+
+```
+context.modules = [
+  { name = libpipewire-module-echo-cancel
+    args = {
+      aec.method = webrtc
+      aec.args = {
+        webrtc.gain_control       = true
+        webrtc.noise_suppression  = true
+      }
+    }
+  }
+]
+```
+
+Or RNNoise as a filter-chain source (needs the `rnnoise-ladspa` plugin), `rnnoise.conf`:
+
+```
+context.modules = [
+  { name = libpipewire-module-filter-chain
+    args = {
+      node.description = "Noise Cancelling Source"
+      filter.graph = {
+        nodes = [
+          { type = ladspa  label = noise_suppressor_mono
+            plugin = librnnoise_ladspa
+            control = { "VAD Threshold (%)" = 50.0 } }
+        ]
+      }
+      capture.props = { node.name = "rnnoise_capture" }
+      source.props  = { node.name = "rnnoise_source"  media.class = Audio/Source }
+    }
+  }
+]
+```
+
 ## Notifications and media
 
 New messages raise desktop notifications through the Omarchy notification center
@@ -433,7 +510,7 @@ background. The Phase 3 QA pass rendered every view on the five bundled light th
 
 ## Non-goals
 
-Voice and video (call state is not shown either), server management and moderation
+Video, screen share and stage channels, server management and moderation
 tooling, Nitro store surfaces, password login (token / QR only, so captchas never
 enter the picture), multiple simultaneous accounts, and `:shortcode:` emoji typing.
 Search, drag-and-drop uploads and a presence-rich member pane beyond the first

@@ -52,13 +52,16 @@ strings on the wire: a 64-bit id does not survive a JavaScript double.
 | `components/Composer.qml` | Text input zone: send / reply / edit / paste / chips, key interception on the TextArea |
 | `components/AttachmentChip.qml` | Staged upload chip with progress |
 | `components/MemberList.qml` | Member pane: group headers, member rows, presence dots, its own roving cursor |
+| `components/Avatar.qml` | Circular avatar via the media cache; shared by the member pane and the voice occupant rows |
+| `components/CallBar.qml` | Voice call bar at the bottom of the channel column: status, mute / deafen / leave |
 | `components/EmojiPicker.qml` | Modal picker: reactions → frequent → server emoji per guild → catalogue |
 | `components/Cheatsheet.qml` | Modal `Ctrl+/` overlay rendered from `Keymap.js` |
 | `Api.js` | Pure helpers: redaction, id comparison, channel filters, thread counts, member rows, theme contrast helpers |
 | `Markdown.js` | Discord markdown → Qt rich text (never throws on hostile input) |
 | `Emoji.js` | Picker model, catalogue parsing, frequent-emoji persistence |
 | `Keymap.js` | The one key table: footer states and cheatsheet sections both render from it |
-| `backend/` | Go module: `cmd/omarchy-discord-backend`, `internal/{socket,protocol,session,media,remoteauth,keyring,redact}` |
+| `backend/` | Go module: `cmd/omarchy-discord-backend`, `internal/{socket,protocol,session,voice,media,remoteauth,keyring,redact}` |
+| `backend/internal/voice/` | Voice engine: disgo/voice + dave-go DAVE E2EE + hraban/opus + jfreymuth/pulse, owned by the session |
 | `systemd/omarchy-discord.service` | Static user unit with the hardening block |
 | `scripts/` | `setup.sh`, `build-backend.sh`, `install-local.sh`, `backend-runtime.sh`, `remove-runtime.sh` |
 | `components/harness/` | Offscreen Timeline harness and the Markdown node tests |

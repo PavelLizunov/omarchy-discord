@@ -360,7 +360,9 @@ safe to call on every keystroke).
   (string), score (number)}]}`.
   - Candidates are every openable channel the account can see: guild `text` and
     `announcement` channels, unarchived `thread`s whose parent is visible, `dm`
-    and `group_dm`. Categories, voice, stage and forum channels never appear.
+    and `group_dm`. Categories, voice, stage and forum channels are never
+    candidates: voice channels ship on the wire as type `voice` but are joined,
+    not opened; the others are not openable either.
   - With a non-empty query, only fuzzy matches are returned: `score` is the
     subsequence match of the query against the channel name (for DMs the
     recipient names), or half the match against the guild name when that is
