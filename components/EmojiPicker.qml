@@ -1,8 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
-import qs.Commons
-import qs.Ui
+import "../ui"
 
 import "../Api.js" as Api
 
@@ -230,8 +229,6 @@ FocusScope {
                       return base + index
                     }
                     readonly property bool hasCursor: flatIndex === root.cursor
-                    readonly property string emojiFile: cell.custom && root.service
-                      ? String(root.service.emojiPath(cell.custom, false) || "") : ""
                     readonly property int emojiPx: Math.round(Style.font.heading)
                     width: root.cellSize
                     height: root.cellSize
@@ -243,20 +240,7 @@ FocusScope {
                       ? Border.controlSpec("hover-cursor", root.foreground, Color.accent)
                       : (cell.me ? Border.controlSpec("selected", root.foreground, Color.accent) : Border.none())
 
-                    Image {
-                      visible: cellItem.emojiFile !== ""
-                      anchors.centerIn: parent
-                      width: cellItem.emojiPx
-                      height: cellItem.emojiPx
-                      asynchronous: true
-                      fillMode: Image.PreserveAspectFit
-                      sourceSize.width: cellItem.emojiPx * 2
-                      sourceSize.height: cellItem.emojiPx * 2
-                      source: cellItem.emojiFile ? "file://" + cellItem.emojiFile : ""
-                      onStatusChanged: if (status === Image.Error && root.service) root.service.mediaError(cellItem.emojiFile)
-                    }
                     Text {
-                      visible: cellItem.emojiFile === ""
                       anchors.centerIn: parent
                       width: parent.width - Style.spacing.xs
                       horizontalAlignment: Text.AlignHCenter

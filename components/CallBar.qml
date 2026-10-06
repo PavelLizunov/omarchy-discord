@@ -1,7 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
-import qs.Commons
-import qs.Ui
+import "../ui"
 
 import "../Api.js" as Api
 
@@ -109,7 +108,8 @@ Item {
 
         Button {
           width: controls.cell
-          iconText: root.isMuted ? "\uf131" : "\uf130"  // mic-slash / mic
+          text: root.isMuted ? "Unmute" : "Mute"
+          focusable: true
           active: root.isMuted
           enabled: root.connected
           foreground: root.foreground
@@ -119,7 +119,8 @@ Item {
         }
         Button {
           width: controls.cell
-          iconText: root.isDeafened ? "\udb80\udecc" : "\uf025"  // headphones-off / headphones
+          text: root.isDeafened ? "Hear" : "Deafen"
+          focusable: true
           active: root.isDeafened
           enabled: root.connected
           foreground: root.foreground
@@ -129,7 +130,8 @@ Item {
         }
         Button {
           width: controls.cell
-          iconText: "\uf08b"  // sign-out
+          text: "Leave"
+          focusable: true
           // The one destructive control of the three, in the urgent token.
           foreground: Color.urgent
           fontFamily: root.fontFamily

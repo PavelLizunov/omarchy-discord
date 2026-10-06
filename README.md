@@ -1,25 +1,91 @@
-# Omarchy Discord
+# Omacord
+
+A keyboard-first, text-only Discord client for the Omarchy desktop. Maintained
+in [PavelLizunov/omarchy-discord](https://github.com/PavelLizunov/omarchy-discord),
+forked from [zgt/omarchy-discord](https://github.com/zgt/omarchy-discord),
+originally authored by Matt Calayo. Omacord is an unofficial client and is not
+affiliated with Discord.
+
+The plugin ID remains `quickshell.discord`; backend paths, the systemd unit,
+keyring identifiers and existing window titles remain unchanged for compatibility.
+Omacord and the original plugin share these identifiers and are not separate,
+side-by-side installations.
 
 A text-only Discord client shipped as an Omarchy Quattro shell plugin
 (`quickshell.discord`): a themed Quickshell panel and bar widget in front of a small
-Go backend, instead of the 1 GB Electron app. Same architecture as
+Go backend, without Electron. Same architecture as
 quickshell.spotify: QML owns everything visible, a systemd user unit owns the
 Discord connection, and a private JSON-lines socket joins them.
 
 What you get: the bar mark with a mention badge and unread dot; a panel with the
 server rail, channel list (threads and forums included), a virtualized timeline with
-history paging, markdown, images, embeds, reactions and spoilers; a composer with
+history paging, markdown, text embeds, reactions and spoilers; a composer with
 send / reply / edit / delete, typing both ways and screenshot paste; a member list
 with presence; the `Ctrl+K` quick switcher that works from any app; desktop
 notifications through the Omarchy notification center; QR login; and every colour
 from the active Omarchy theme, light themes included. It is keyboard-first
 throughout — `Ctrl+/` shows the cheatsheet.
 
-**Status: Phase 3 complete** (see `docs/PLAN.md` for the roadmap and what is
-deliberately deferred). Voice now ships — join a guild voice channel, talk and hear,
-mute / deafen, and see who is in voice and who is speaking. Video, screen share, server
+**Status: development snapshot, not a verified release.** The text-only changes
+are published on `feature/omacord-text-only`; the fork's `main` branch still
+contains the inherited upstream version. Clone the development branch explicitly
+to inspect this build. Fresh full-suite, visual and live acceptance are pending.
+`docs/PLAN.md` records the inherited upstream roadmap, not Omacord release
+acceptance. The inherited voice backend supports joining a guild voice channel,
+talking and listening, muting / deafening, and seeing participants and speakers. Video, screen share, server
 management and multiple accounts remain non-goals, and stage channels stay hidden
 entirely.
+
+## Local text-only build
+
+This checkout keeps the Discord connection and voice backend but renders a
+text-only client. It never requests `fetch_media`: no server icons, avatars,
+attachment previews or custom-emoji images are downloaded or read from the old
+media cache. Custom emoji use `:name:`; attachments show filename, size and an
+explicit link. Opening a link delegates to the system handler, which may download
+it. Pasting an image for an explicit upload remains supported; its staging chip
+is text-only. The locally generated login QR remains the only client image.
+
+`ClientView.qml` and `SwitcherView.qml` are ordinary Qt Quick items. The running
+Omarchy wrappers and MCP fixtures consume these same components. `ui/` carries
+the native host controls and theme tokens with desktop I/O removed; `Panel.qml`
+supplies the active Omarchy theme. The MCP does not need Quickshell imports,
+mock modules, or a production desktop connection to render these consumers.
+
+The local development checkout is `/home/slovn/Work/omarchy-plugins/quickshell.discord`; Omarchy
+loads the copy under `~/.config/omarchy/plugins/quickshell.discord/`. Preserve
+these local changes before pulling upstream updates. `imagePreviews` is fixed
+to `Off` in this build; `mediaCacheMB` is an old disk-cache setting, not a RAM
+reservation. Existing cached files are retained and are not displayed.
+
+Run the inert checks from this checkout:
+
+```sh
+node tests/no-media.cjs
+node --test components/harness/api.test.js components/harness/markdown.test.js
+QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
+  /usr/lib/qt6/bin/qmltestrunner -input tests/visual
+```
+
+For QML Preview MCP 0.3.0, render `tests/visual/Preview.qml` with
+`readyProperty: ready`, `locale: ru_RU`, no additional imports, and explicit
+dependency hashes. States: `chat`, `empty`, `loading`, `error`, `login`, `qr`,
+`members`, `voice`. `lightTheme` and `themeRadius` select fixture theme variants.
+`tests/visual/SwitcherPreview.qml` renders the real quick switcher. The fixture
+QR encodes an `example.invalid` URL and cannot sign into Discord. Rendering is
+separate from keyboard checks and live authenticated behavior.
+
+Use `omarchy-shell quickshell.discord.panel status` for connection state and
+text-mode media queue counts. It does not expose messages or credentials.
+
+Reaction-only message updates do not reparse unchanged Markdown. Text edits
+and context changes still update formatting. `tests/visual/tst_computation.qml`
+checks parser call counts using the production MessageRow.
+
+Voice participants and members without a cached display name use a known
+message-author name when available, otherwise `User #<id>`. This fallback
+does not issue REST lookups or download avatars; the underlying backend may
+not have received that participant's profile yet.
 
 ## Screenshots
 
@@ -28,8 +94,13 @@ quick switcher, and the same views on a light theme._
 
 ## Install
 
+The URL below targets the Omacord fork's default branch, `main`. It currently
+installs the inherited upstream version, not the text-only development snapshot
+described above. Enabling the plugin can install and start the backend; installing
+this fork replaces the plugin with the same `quickshell.discord` ID.
+
 ```sh
-omarchy plugin add https://github.com/mattcalayo/omarchy-discord --enable
+omarchy plugin add https://github.com/PavelLizunov/omarchy-discord --enable
 ```
 
 No build step and no toolchain: the repo ships a prebuilt x86_64 backend at
@@ -54,7 +125,7 @@ pipewire-audio dependency).
 ### Development install
 
 ```sh
-git clone https://github.com/mattcalayo/omarchy-discord
+git clone --branch feature/omacord-text-only https://github.com/PavelLizunov/omarchy-discord
 cd omarchy-discord
 scripts/install-local.sh          # --section left|center|right
 ```
@@ -62,8 +133,9 @@ scripts/install-local.sh          # --section left|center|right
 `install-local.sh` validates the manifest, installs the backend and unit, rsyncs the
 checkout into `~/.config/omarchy/plugins/quickshell.discord/` (a copy, not a symlink,
 because `omarchy plugin validate` refuses symlinks and in-tree edits would hot-reload
-the shell), rescans, and enables the widget. **Re-run it after every change** — the
-plugin runs from that copy, not from your checkout. The backend is reinstalled
+the shell), rescans, and enables the widget. Run it only for an intentional,
+verified deployment: it can replace installed code and restart the backend.
+Saving source changes alone does not deploy them. The backend is reinstalled
 whenever a file under `backend/` is newer than the installed binary
 (`scripts/setup.sh --reinstall-backend` forces it); on x86_64 that means installing
 the committed prebuilt, elsewhere building it with Go, always outside the plugin tree.
@@ -305,7 +377,7 @@ is opened.
 `m` (or `Alt+m` in the composer, or the Members button) shows a right-hand pane with
 the channel's member list as Discord serves it: one header per group — hoisted roles,
 then Online and Offline — with Discord's total count ("Online — 1,204"), and the first
-hundred or so rows with avatar, name, status dot (online = accent, idle = muted,
+hundred or so rows with text initials, name, status dot (online = accent, idle = muted,
 do-not-disturb = urgent, offline = faded) and the activity line. DMs list their
 recipients. The pane follows the open channel, updates live (member list and presence
 events), and is a focus zone of its own while shown: `Alt+l` from the composer, `j`/`k`
@@ -335,7 +407,7 @@ removes yours), **Frequently used** (your last 16 distinct picks by count, store
 the plugin's `shell.json` entry as `frequentEmoji`), one section per **server** with
 custom emoji — the current server first, 48 per server until you type, 200 with a
 filter — and the unicode catalogue (the shell's own emoji list). Custom emoji
-render through the media cache and react as `name:id`; Discord may refuse another
+render as `:name:` text and react as `name:id`; Discord may refuse another
 server's emoji for accounts without Nitro. Clicking a reaction chip under a message
 toggles it too. Reaction changes arrive back through `message_update`, so the chips
 reflect Discord, not an optimistic guess. Typing `:shortcodes:` in the composer is
@@ -443,11 +515,12 @@ messages keep arriving. The summary is "Author in #channel"
 ("Author" for a DM), the body the first ~200 characters of the message as plain text,
 plus a paperclip when it carries attachments.
 
-Images (avatars, guild icons, attachments, embed images, custom emoji) are downloaded by
-the backend into `$XDG_CACHE_HOME/omarchy-discord/media/` (Discord CDN hosts only) and
-rendered from there. `imagePreviews` `Off` turns attachment and embed images back into
-filename chips (avatars and emoji stay). Spoiler images stay covered until you press
-`Enter` on the message or click them. `mediaCacheMB` caps the cache (LRU, default 512).
+Omacord's frontend does not admit remote media requests. Avatars and server icons
+use text initials, custom emoji use text names, and attachments use explicit links.
+The inherited backend retains its media cache support under
+`$XDG_CACHE_HOME/omarchy-discord/media/`, but Omacord does not request or display
+those files. `imagePreviews` is fixed to `Off`; `mediaCacheMB` remains a legacy
+cache limit (default 512 MiB), not a RAM reservation.
 
 ## Settings
 
@@ -465,8 +538,8 @@ change, values are normalized (unknown enum values fall back to the default,
 | `showMentionCount` | `On` / `Off` | `On` | Show the mention count next to the bar mark (`Off` keeps the dimmed-mark / unread-dot states) |
 | `middleClick` | `Last unread DM` / `Raise panel` | `Last unread DM` | Middle-click action on the bar mark: open the panel on the most recent unread DM (the panel itself when there is none) / open or remap the panel |
 | `window` | `On demand` / `Persistent` | `On demand` | `On demand` maps the client window when you open it and unmaps it on close. `Persistent` keeps it mapped from shell start so Hyprland rules can place it, and the bind focuses / hides it instead (see "Persistent window") |
-| `imagePreviews` | `On` / `Off` | `On` | Inline image attachments and embed images in the timeline; `Off` shows filename chips instead (avatars and emoji stay) |
-| `mediaCacheMB` | 64–4096 | 512 | Media cache size cap in MiB, pushed to the backend with `set_config` on connect and on change |
+| `imagePreviews` | `Off` | `Off` | Fixed in the text-only build; remote image requests and previews are disabled |
+| `mediaCacheMB` | 64–4096 | 512 | Legacy backend disk-cache limit in MiB; Omacord does not request or display cached remote media |
 
 The entry also carries `frequentEmoji`, a small JSON string the emoji picker maintains;
 it is not a setting and survives `omarchy bar set` of the other keys.
@@ -518,6 +591,9 @@ hundred rows are deferred (PLAN.md Phase 4).
 
 ## Credits
 
+- Matt Calayo — original Omarchy Discord author; Omacord forks
+  [zgt/omarchy-discord](https://github.com/zgt/omarchy-discord). The original
+  copyright notice and MIT license are preserved in `LICENSE`.
 - [diamondburned/arikawa](https://github.com/diamondburned/arikawa) and
   [diamondburned/ningen](https://github.com/diamondburned/ningen) — the Go Discord
   library stack the backend is built on (gateway, REST, read state, member lists).

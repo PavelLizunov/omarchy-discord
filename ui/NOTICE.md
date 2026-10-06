@@ -1,0 +1,10 @@
+# Native UI provenance
+
+The portable theme and controls are derived from Omarchy 4.0.4's
+`shell/Commons` and `shell/Ui` (MIT license). Their rendering and sizing logic
+is retained. Quickshell I/O and desktop queries are removed; `Panel.qml`
+supplies the active host palette, typography, spacing and corner radius.
+The same files are used by the live client and offscreen consumer fixtures.
+
+This is a project-owned consumer module, not a mock import of `qs.Commons`
+or `Quickshell`. No command, network access or theme-file read runs here.

@@ -1,9 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
-import Quickshell
-import qs.Commons
-import qs.Ui
+import "../ui"
 
 import "../Api.js" as Api
 
@@ -27,6 +25,7 @@ FocusScope {
   signal escapeRequested()
   signal moveZone(string direction)
   signal copied()
+  signal copyRequested(string text)
 
   readonly property var rows: Api.memberRows(list)
   property string cursorId: ""
@@ -100,7 +99,7 @@ FocusScope {
     if (!isMember(row) || !row.user) return
     var name = String(row.user.username || "")
     if (!name) return
-    Quickshell.clipboardText = "@" + name
+    copyRequested("@" + name)
     copied()
   }
 
@@ -181,7 +180,7 @@ FocusScope {
           readonly property bool header: row.kind === "group"
           readonly property var user: row.user || ({})
           readonly property bool hasCursor: root.active && index === root.cursor && !header
-          readonly property string displayName: String(user.display_name || user.username || "")
+          readonly property string displayName: Api.userLabel(user, root.service ? root.service.knownUsers : null)
           readonly property string activity: String(row.activity || "")
           width: listView.width
           height: header ? Style.spacing.controlHeight

@@ -112,10 +112,10 @@ function lifecycleLabel(lifecycle, connected) {
 
 function channelGlyph(type) {
   switch (String(type || "")) {
-    case "announcement": return ""
-    case "voice": return ""
-    case "forum": return ""
-    case "thread": return ""
+    case "announcement": return "!"
+    case "voice": return "V"
+    case "forum": return "F"
+    case "thread": return ">"
     case "category": return ""
     case "dm": return "@"
     case "group_dm": return "@@"
@@ -133,6 +133,13 @@ function compareIds(a, b) {
 }
 
 // Guild rail label: first letters of up to three words ("Omarchy Dev" -> "OD").
+function userLabel(user, knownUsers) {
+  var value = user || {}
+  var id = String(value.id || "")
+  return String(value.display_name || value.username || (knownUsers && knownUsers[id])
+    || (id ? "User #" + id : "Unknown user"))
+}
+
 function initials(name) {
   var words = String(name || "").trim().split(/[\s\-_]+/).filter(function(w) { return w.length > 0 })
   var out = ""

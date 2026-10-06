@@ -26,7 +26,8 @@ Item {
   readonly property string pluginId: manifest && manifest.id
     ? String(manifest.id) : "quickshell.discord"
   readonly property string pluginDir: manifest && manifest.__sourceDir
-    ? String(manifest.__sourceDir) : ""
+    ? String(manifest.__sourceDir)
+    : decodeURIComponent(String(Qt.resolvedUrl(".")).replace(/^file:\/\//, "").replace(/\/$/, ""))
 
   readonly property alias daemon: daemonManager
   readonly property alias backend: backendClient
@@ -38,7 +39,7 @@ Item {
     showMentionCount: "On",
     middleClick: "Last unread DM",
     window: "On demand",
-    imagePreviews: "On",
+    imagePreviews: "Off",
     mediaCacheMB: 512
   })
   property var settings: defaults()
@@ -49,7 +50,8 @@ Item {
   // The panel window is always mapped and Hyprland places it; the host's
   // open/close then focus and hide it instead of mapping and unmapping.
   readonly property bool persistentWindow: settings.window === "Persistent"
-  readonly property bool imagePreviews: settings.imagePreviews !== "Off"
+  readonly property bool imagePreviews: false
+  readonly property bool textOnly: true
   readonly property int mediaCacheMB: settings.mediaCacheMB
   readonly property int idleDisconnectMinutes: 15
 
@@ -332,7 +334,7 @@ Item {
   // after the window is gone; media only goes over the wire while something
   // can show it.
   property bool panelMapped: false
-  readonly property bool mediaAllowed: uiVisible || panelMapped
+  readonly property bool mediaAllowed: false
   onMediaAllowedChanged: if (mediaAllowed) flushMediaRequests()
   property double lastActivityAt: Date.now()
 
@@ -384,7 +386,7 @@ Item {
     next.middleClick = Api.oneOf(next.middleClick,
       ["Last unread DM", "Raise panel"], "Last unread DM")
     next.window = Api.oneOf(next.window, ["On demand", "Persistent"], "On demand")
-    next.imagePreviews = Api.onOff(next.imagePreviews, "On")
+    next.imagePreviews = "Off"
     next.mediaCacheMB = Api.clampInt(next.mediaCacheMB, 64, 4096, 512)
     return next
   }
@@ -405,7 +407,7 @@ Item {
   }
 
   function configuredEntry() {
-    var config = shell && shell.shellConfig ? shell.shellConfig : null
+    var config = shell ? { bar: shell.barConfig } : null
     if (!config) return null
     var layout = config.bar && config.bar.layout ? config.bar.layout : null
     var sections = ["left", "center", "right"]
@@ -1624,12 +1626,6 @@ Item {
   // bindings: the only reactive read is mediaPaths and nothing is written
   // synchronously.
   function mediaPath(url, size) {
-    var u = String(url || "")
-    if (!u) return ""
-    var key = mediaKey(u, size)
-    var known = mediaPaths[key]
-    if (known) return String(known)
-    requestMedia(u, size)
     return ""
   }
 
@@ -1637,6 +1633,7 @@ Item {
   // defers the fetch_media to the next event-loop turn (Qt.callLater
   // coalesces), so callers inside bindings never write to the socket.
   function requestMedia(url, size) {
+    if (textOnly) return
     var u = String(url || "")
     if (!u) return
     var key = mediaKey(u, size)
@@ -1650,6 +1647,7 @@ Item {
   // (in-flight fetches die with the socket) and when a surface comes back
   // (the wants queued while none was up).
   function flushMediaRequests() {
+    if (textOnly) return
     if (!connected || !mediaAllowed) return
     for (var key in mediaWanted) {
       if (mediaPaths[key]) { delete mediaWanted[key]; continue }
@@ -1660,6 +1658,7 @@ Item {
   }
 
   function fetchMedia(key, url, size) {
+    if (textOnly) return
     var fields = { url: url }
     if (size > 0) fields.size = size
     backendClient.sendCommand("fetch_media", fields, function(ok, result, error) {
@@ -1705,6 +1704,7 @@ Item {
   // With a single size outstanding the path is adopted directly, otherwise
   // each size is re-requested (a completed one is now a cache hit).
   function applyMediaReady(message) {
+    if (textOnly) return
     var url = String(message.url || "")
     if (!url) return
     var prefix = url + "|"
@@ -2261,6 +2261,13 @@ Item {
     function toggle(): string { return root.togglePanel() }
     function open(): string { return root.openPanel(null) }
     function close(): string { return root.closePanel() }
+    function status(): string {
+      return JSON.stringify({ pluginDir: root.pluginDir, textOnly: root.textOnly,
+        mediaQueued: Object.keys(root.mediaWanted).length, mediaPending: Object.keys(root.mediaPending).length,
+        runtimeAvailable: daemonManager.runtimeAvailable,
+        running: daemonManager.running, connected: root.connected, lifecycle: root.lifecycle,
+        error: Api.redact(daemonManager.lastError || root.lastError) })
+    }
   }
 
   // omarchy-shell quickshell.discord.voice mute — call controls from any

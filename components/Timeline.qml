@@ -1,9 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
-import Quickshell
-import qs.Commons
-import qs.Ui
+import "../ui"
 
 import "../Api.js" as Api
 
@@ -60,6 +58,7 @@ FocusScope {
   signal moveZone(string direction)
   signal openLink(string url)
   signal copied()
+  signal copyRequested(string text)
   signal linkCopied()
   signal activateMessage(string messageId)
   signal reachedBottom()
@@ -389,7 +388,7 @@ FocusScope {
     for (var i = 0; i < attachments.length; i++)
       if (attachments[i] && attachments[i].url) text += (text ? "\n" : "") + String(attachments[i].url)
     if (!text) return
-    Quickshell.clipboardText = text
+    copyRequested(text)
     copied()
   }
 
@@ -418,7 +417,7 @@ FocusScope {
     if (!hasSelection) return
     var text = String(selectionOwner.selection).replace(/[\u2028\u2029]/g, "\n")
     if (!text) return
-    Quickshell.clipboardText = text
+    copyRequested(text)
     copied()
   }
 
@@ -427,7 +426,7 @@ FocusScope {
   function copyLink(url) {
     var link = String(url || "")
     if (!link) return
-    Quickshell.clipboardText = link
+    copyRequested(link)
     linkCopied()
   }
 
@@ -444,27 +443,14 @@ FocusScope {
     if (index < 0) return
     var url = Markdown.firstLink(rows[index])
     if (!url) return
-    var attachments = Array.isArray(rows[index].attachments) ? rows[index].attachments : []
-    for (var i = 0; i < attachments.length; i++) {
-      if (!attachments[i] || String(attachments[i].url || "") !== url) continue
-      var local = localPath(url)
-      if (local) url = local
-      break
-    }
     openLink(url)
-  }
-
-  function localPath(url) {
-    if (!ctx || typeof ctx.mediaPath !== "function") return ""
-    try { return String(ctx.mediaPath(url, 0) || "") } catch (e) { return "" }
   }
 
   function hasCoveredSpoiler(row) {
     if (!row || revealed[String(row.id || "")]) return false
     var attachments = Array.isArray(row.attachments) ? row.attachments : []
     for (var i = 0; i < attachments.length; i++)
-      if (attachments[i] && attachments[i].spoiler
-          && String(attachments[i].content_type || "").indexOf("image/") === 0) return true
+      if (attachments[i] && attachments[i].spoiler) return true
     return false
   }
 

@@ -25,7 +25,7 @@
       "showMentionCount": "On",
       "middleClick": "Last unread DM",
       "window": "On demand",
-      "imagePreviews": "On",
+      "imagePreviews": "Off",
       "mediaCacheMB": 512
     },
     "schema": [
@@ -73,9 +73,9 @@
         "key": "imagePreviews",
         "type": "enum",
         "label": "Image previews",
-        "options": ["On", "Off"],
-        "defaultValue": "On",
-        "description": "Render image attachments and embeds inline in the timeline."
+        "options": ["Off"],
+        "defaultValue": "Off",
+        "description": "Text-only build: attachments are links; remote images are never downloaded."
       },
       {
         "key": "mediaCacheMB",
