@@ -29,6 +29,7 @@ FocusScope {
   signal requestHistory(string beforeId)
   signal escapeRequested()
   signal moveZone(string direction)
+  signal cycleFocus(int delta)
   signal openLink(string url)
   signal copied()
   signal copyRequested(string text)
@@ -36,6 +37,8 @@ FocusScope {
   signal activateMessage(string messageId)
   signal reachedBottom()
   signal replyRequested(string messageId)
+  signal editRequested(string messageId)
+  readonly property alias messageActions: actions
   signal deleteRequested(string messageId)
   signal reactRequested(string messageId)
   signal reactionToggled(string messageId, string emoji)
@@ -428,7 +431,21 @@ FocusScope {
     var wasG = now - lastGAt <= doubleTapMs
     lastGAt = 0
     var armed = armedDeleteId !== ""
-    if (armed && text !== "D") disarmDelete()
+    if (armed && text !== "D" && !(actions.activeFocus && (key === Qt.Key_Return || key === Qt.Key_Enter || key === Qt.Key_Space))) disarmDelete()
+    if (actions.activeFocus && (key === Qt.Key_Return || key === Qt.Key_Enter || key === Qt.Key_Space)) return
+    if (key === Qt.Key_Tab || key === Qt.Key_Backtab) {
+      var buttons = actions.children.filter(function(item) { return item.visible && item.enabled && item.focusable })
+      var index = -1
+      for (var i = 0; i < buttons.length; i++) if (buttons[i].activeFocus) index = i
+      var reverse = key === Qt.Key_Backtab || (event.modifiers & Qt.ShiftModifier) !== 0
+      if (index < 0 && !reverse && buttons.length) buttons[0].forceActiveFocus()
+      else if (reverse && index === 0) timeline.forceActiveFocus()
+      else if (index >= 0 && index + (reverse ? -1 : 1) >= 0 && index + (reverse ? -1 : 1) < buttons.length)
+        buttons[index + (reverse ? -1 : 1)].forceActiveFocus()
+      else cycleFocus(reverse ? -1 : 1)
+      event.accepted = true
+      return
+    }
 
     if ((event.modifiers & Qt.ControlModifier) !== 0) {
       if (key !== Qt.Key_C || !hasSelection) return
@@ -514,6 +531,7 @@ FocusScope {
       id: list
       anchors.fill: parent
       anchors.margins: frame.padding + Style.normalBorderWidth
+      anchors.bottomMargin: frame.padding + Style.normalBorderWidth + actions.height + Style.spacing.xs
       clip: true
       reuseItems: false
       cacheBuffer: Style.space(150)
@@ -651,6 +669,55 @@ FocusScope {
           }
           Component.onDestruction: timeline.releaseSelection(messageRow)
         }
+      }
+    }
+
+    Flow {
+      id: actions
+      objectName: "message-actions"
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.bottom: parent.bottom
+      anchors.margins: frame.padding + Style.normalBorderWidth
+      spacing: Style.spacing.xs
+      visible: timeline.rows.length > 0
+      enabled: !timeline.loading
+      Keys.onEscapePressed: { timeline.disarmDelete(); timeline.forceActiveFocus() }
+      readonly property bool available: timeline.cursorIndex >= 0 && !timeline.rows[timeline.cursorIndex].pending
+      Button {
+        text: "Reply"
+        enabled: actions.available
+        focusable: true
+        tooltipText: "Reply to selected message (R)"
+        onClicked: timeline.replyRequested(timeline.cursorMessageId)
+      }
+      Button {
+        text: "React"
+        enabled: actions.available
+        focusable: true
+        tooltipText: "React to selected message (E)"
+        onClicked: timeline.reactRequested(timeline.cursorMessageId)
+      }
+      Button {
+        text: "Copy"
+        enabled: actions.available
+        focusable: true
+        tooltipText: "Copy selected message (Y)"
+        onClicked: timeline.copyCursorMessage()
+      }
+      Button {
+        text: "Edit"
+        visible: timeline.isOwnRow(timeline.cursorIndex)
+        focusable: true
+        onClicked: timeline.editRequested(timeline.cursorMessageId)
+      }
+      Button {
+        text: timeline.armedDeleteId ? "Confirm delete" : "Delete"
+        visible: timeline.isOwnRow(timeline.cursorIndex)
+        focusable: true
+        foreground: Color.urgent
+        tooltipText: "Click twice within 3 seconds to delete selected message"
+        onClicked: timeline.requestDelete()
       }
     }
 

@@ -20,7 +20,8 @@ runtime_dir=${OMARCHY_DISCORD_RUNTIME_DIR:-"$HOME/.local/lib/omarchy-discord"}
 backend_binary="$runtime_dir/omarchy-discord-backend"
 stamp_file="$runtime_dir/installed-version"
 
-systemctl --user stop omarchy-discord.service 2>/dev/null || true
+source_root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+"$source_root/scripts/backend-runtime.sh" stop
 rm -f -- "$unit_file" "$backend_binary" "$stamp_file"
 rmdir -- "$runtime_dir" 2>/dev/null || true
 systemctl --user daemon-reload
@@ -47,7 +48,7 @@ if (( purge )); then
     for _ in {1..20}; do
       secret-tool clear service quickshell-discord kind user-token >/dev/null 2>&1 || break
     done
-    echo "Cleared matching Omarchy Discord keyring entries."
+    echo "Attempted to clear matching Omarchy Discord keyring entries; verify in your keyring manager."
   fi
 fi
 

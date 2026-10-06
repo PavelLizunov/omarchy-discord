@@ -30,7 +30,9 @@ Item {
   readonly property alias members: membersView
   readonly property alias controls: headerControls
   readonly property bool qrImageReady: qrImage.status === Image.Ready
-  readonly property bool overlayShown: cheatsheetView.shown || pickerView.shown
+  readonly property alias logoutConfirmation: logoutConfirm
+  readonly property bool overlayShown: cheatsheetView.shown || pickerView.shown || logoutConfirm.shown
+  readonly property bool compactMembers: width < Style.space(900)
 
   readonly property string pluginId: manifest && manifest.id
     ? String(manifest.id) : "quickshell.discord"
@@ -46,6 +48,7 @@ Item {
   readonly property real controlsRowHeight: Math.max(Style.spacing.controlHeight, headerControls.height)
   readonly property real controlButtonsWidth:
     (currentChannelId !== "" ? membersButton.width + Style.spacing.controlGap : 0)
+    + searchButton.width + helpButton.width + Style.spacing.controlGap * 2
     + logoutButton.width + Style.spacing.controlGap
     + closeButton.width
   readonly property real channelHeaderRoom: channelHeader.width - Style.spacing.sm * 2
@@ -77,7 +80,8 @@ Item {
   property string zone: "sidebar"
   property string column: "rail"
   readonly property bool buttonFocused: logoutButton.activeFocus || closeButton.activeFocus
-    || membersButton.activeFocus || startBackendButton.activeFocus || callBarFocused
+    || membersButton.activeFocus || searchButton.activeFocus || helpButton.activeFocus
+    || startBackendButton.activeFocus || callBarFocused
   readonly property bool callBarFocused: callBar.visible && callBar.activeFocus
   readonly property string activeVoiceChannelId: {
     if (!service || !service.voice) return ""
@@ -324,6 +328,7 @@ Item {
   }
 
   function close() {
+    logoutConfirm.shown = false
     tokenField.clear()
     cheatsheetView.shown = false
     pickerView.shown = false
@@ -548,6 +553,7 @@ Item {
     if (!currentChannelId) { hint = "Open a channel first"; return }
     service.setMembersWanted(!service.membersWanted)
     hint = ""
+    if (service.membersWanted && compactMembers) enterMembers()
     if (!service.membersWanted && zone === "members") { zone = "composer"; focusZone() }
   }
 
@@ -559,6 +565,7 @@ Item {
   }
 
   function leaveMembers() {
+    if (compactMembers && service) service.setMembersWanted(false)
     zone = "composer"
     focusZone()
   }
@@ -638,10 +645,10 @@ Item {
 
   function cycleFocus(delta) {
     var stops = ["rail", "channels", "timeline", "composer", "callbar", "members", "startBackend",
-      "membersButton", "logout", "close"]
+      "search", "help", "membersButton", "logout", "close"]
     var current = callBarFocused ? "callbar"
       : (buttonFocused
-        ? (closeButton.activeFocus ? "close"
+        ? (closeButton.activeFocus ? "close" : searchButton.activeFocus ? "search" : helpButton.activeFocus ? "help"
           : (membersButton.activeFocus ? "membersButton"
             : (startBackendButton.activeFocus ? "startBackend" : "logout")))
         : (zone === "sidebar" ? column : zone))
@@ -655,6 +662,8 @@ Item {
       if (stop === "members" && !membersVisible) continue
       if (stop === "startBackend" && !startBackendButton.visible) continue
       if (stop === "membersButton" && !membersButton.visible) continue
+      if (stop === "search" && !searchButton.visible) continue
+      if (stop === "help" && !helpButton.visible) continue
       if (stop === "logout" && !logoutButton.visible) continue
       focusStop(stop, delta)
       return
@@ -663,6 +672,8 @@ Item {
 
   function focusStop(stop, delta) {
     hint = ""
+    if (stop === "search") { searchButton.forceActiveFocus(); return }
+    if (stop === "help") { helpButton.forceActiveFocus(); return }
     if (stop === "logout") { logoutButton.forceActiveFocus(); return }
     if (stop === "close") { closeButton.forceActiveFocus(); return }
     if (stop === "membersButton") { membersButton.forceActiveFocus(); return }
@@ -778,6 +789,11 @@ Item {
   }
 
   function dispatchKey(event) {
+    if (logoutConfirm.shown) {
+      if (event.key === Qt.Key_Escape) logoutConfirm.hide()
+      event.accepted = true
+      return true
+    }
     if (cheatsheetView.shown) { cheatsheetView.handleKey(event); return event.accepted }
     if (pickerView.shown) { pickerView.handleKey(event); return event.accepted }
     if (ready && !buttonFocused) {
@@ -873,6 +889,25 @@ Item {
         }
 
         Button {
+          id: searchButton
+          objectName: "search-button"
+          visible: root.ready
+          text: "Search"
+          focusable: true
+          activeFocusOnTab: false
+          tooltipText: "Find a channel or direct message (Ctrl+K)"
+          onClicked: root.openSwitcher()
+        }
+        Button {
+          id: helpButton
+          objectName: "help-button"
+          text: "Help"
+          focusable: true
+          activeFocusOnTab: false
+          tooltipText: "Keyboard shortcuts (Ctrl+/)"
+          onClicked: root.toggleCheatsheet()
+        }
+        Button {
           id: membersButton
           visible: root.ready && root.currentChannelId !== ""
           text: "Members"
@@ -890,7 +925,7 @@ Item {
           focusable: true
           activeFocusOnTab: false
           foreground: root.foreground
-          onClicked: if (root.service) root.service.logout()
+          onClicked: logoutConfirm.show()
         }
         Button {
           id: closeButton
@@ -910,6 +945,14 @@ Item {
           var at = root.indexOfId(root.channelRows, channelId)
           if (at >= 0) root.setChannelCursor(at)
         }
+      }
+
+      Components.LogoutConfirm {
+        id: logoutConfirm
+        anchors.fill: parent
+        z: 20
+        onConfirmed: if (root.service) root.service.logout()
+        onDismissed: Qt.callLater(function() { logoutButton.forceActiveFocus() })
       }
 
       Components.Cheatsheet {
@@ -1191,6 +1234,7 @@ Item {
           }
 
           Row {
+            id: conversationRow
             anchors.fill: parent
             visible: root.ready
             spacing: Style.spacing.panelGap
@@ -1585,7 +1629,7 @@ Item {
 
             Column {
               width: parent.width - railPane.width - channelPane.width - parent.spacing * 2
-                - (membersView.visible ? membersView.width + parent.spacing : 0)
+                - (root.membersVisible && !root.compactMembers ? membersView.width + parent.spacing : 0)
               height: parent.height
               spacing: Style.spacing.xs
 
@@ -1652,6 +1696,7 @@ Item {
                 onRequestHistory: function(beforeId) {
                   if (root.service) root.service.loadHistory(root.currentChannelId)
                 }
+                onCycleFocus: function(delta) { root.cycleFocus(delta) }
                 onEscapeRequested: root.leaveTimeline(true)
                 onMoveZone: function(direction) { root.moveZone(direction) }
                 onOpenLink: function(url) { root.linkRequested(String(url)) }
@@ -1662,6 +1707,9 @@ Item {
                 onActiveFocusChanged: if (activeFocus && root.zone !== "timeline") root.zone = "timeline"
                 onPinnedChanged: root.publishPinned()
                 onReplyRequested: function(messageId) { root.replyTo(messageId) }
+                onEditRequested: function(messageId) {
+                  if (composerView.startEdit(messageId)) root.enterComposer()
+                }
                 onDeleteRequested: function(messageId) {
                   if (root.service) root.service.deleteMessage(root.currentChannelId, messageId)
                 }
@@ -1693,6 +1741,7 @@ Item {
                 channelName: root.currentChannel
                   ? Api.channelGlyph(root.currentChannel.type) + String(root.currentChannel.name || "") : ""
                 active: root.focusedZone === "composer" && root.ready
+                attachmentHeightLimit: Math.min(Style.space(80), parent.height * 0.2)
 
                 onLeave: root.leaveComposer(true)
                 onMoveZone: function(direction) { root.moveZone(direction) }
@@ -1708,9 +1757,15 @@ Item {
             Components.MemberList {
               id: membersView
               objectName: "members"
+              parent: root.compactMembers ? body : conversationRow
               visible: root.membersVisible
-              width: Math.min(Style.space(220), body.width * 0.22)
+              z: root.compactMembers ? 5 : 0
+              x: root.compactMembers ? body.width - width : 0
+              width: root.compactMembers ? Math.min(Style.space(320), body.width * 0.65)
+                : Math.min(Style.space(220), body.width * 0.22)
               height: parent.height
+              dismissible: root.compactMembers
+              onCloseRequested: { root.toggleMembers(); root.focusZone() }
               service: root.service
               list: root.service && root.service.memberList
                 && String(root.service.memberList.channel_id || "") === root.currentChannelId
@@ -1769,6 +1824,7 @@ Item {
           }
           Text {
             width: parent.width
+            objectName: "shortcut-hint"
             elide: Text.ElideRight
             text: {
               if (!root.ready) {
@@ -1777,6 +1833,17 @@ Item {
                   return Keymap.footer(root.qrCancelable ? "qrRunning" : "qrDone")
                 }
                 return Keymap.footer(root.showLogin ? "login" : "down")
+              }
+              if (root.width < Style.space(900)) {
+                if (root.callBarFocused) return "Mute · Deafen · Leave · Help for keys"
+                if (root.buttonFocused) return "Enter activates · Esc returns · Help for keys"
+                if (root.zone === "composer" && root.composer.chipFocused) return "←/→ move · Delete removes · Esc returns"
+                if (root.zone === "composer") return root.composer.editing
+                  ? "Enter saves · Esc cancels · Help for keys"
+                  : "Enter sends · Shift+Enter newline · Help for keys"
+                if (root.zone === "members") return "↑/↓ move · Y copies name · Esc closes"
+                if (root.zone === "timeline") return "↑/↓ move · R reply · E react · Help for keys"
+                return "↑/↓ move · Enter opens · Help for keys"
               }
               if (root.callBarFocused) return Keymap.footer("voice")
               if (root.buttonFocused) {
@@ -1787,16 +1854,13 @@ Item {
               if (root.zone === "composer") {
                 if (root.composer.chipFocused) return Keymap.footer("chips")
                 if (root.composer.editing) return Keymap.footer("composerEdit")
-                return Keymap.footer("composer", root.composer.chips.length ? "composerChips" : "",
-                  root.membersVisible ? "composerMembers" : "", "composerTail")
+                return "Enter sends · Shift+Enter newline · Ctrl+V pastes · Help for all keys"
               }
               if (root.zone === "members") return Keymap.footer("members")
               if (root.zone === "timeline")
-                return Keymap.footer(root.timeline.hasSelection ? "timelineSelection" : "", "timeline",
-                  root.canToggleCurrentThreads ? "timelineThreads" : "", "timelineTail")
-              if (root.column === "rail") return Keymap.footer("rail")
-              return Keymap.footer("channels", root.currentChannelId ? "channelsTimeline" : "",
-                root.currentChannelId ? "channelsMembers" : "", "channelsTail")
+                return "↑/↓ move · R reply · E react · Y copy · Help for all keys"
+              if (root.column === "rail") return "↑/↓ move · Enter opens channels · Ctrl+K search · Help for all keys"
+              return "↑/↓ move · Enter opens · Ctrl+K search · Help for all keys"
             }
             color: root.muted
             font.family: root.fontFamily

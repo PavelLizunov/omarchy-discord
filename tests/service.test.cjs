@@ -46,6 +46,22 @@ test('scoped bar settings use the signal of their owning property', () => {
   ctx.syncSettings();
   assert.equal(ctx.observed, 'Persistent');
 });
+test('daemon stop callback preserves active state on failure', () => {
+  const daemon = fs.readFileSync(path.join(root, 'DaemonManager.qml'), 'utf8');
+  const stop = daemon.slice(daemon.indexOf('    id: stopCommand'));
+  const callback = stop.match(/onExited: function\(exitCode\) \{([\s\S]*?)\n    \}/)[1];
+  let stopped = 0;
+  const model = {busy: true, serviceActive: true, lastError: '', stopped(){stopped++;}};
+  const ctx = vm.createContext({root: model});
+  vm.runInContext('(function(exitCode) {' + callback + '})(7)', ctx);
+  assert.equal(model.serviceActive, true);
+  assert.equal(model.busy, false);
+  assert.equal(stopped, 0);
+  assert.equal(model.lastError, 'Could not stop the Discord backend');
+  vm.runInContext('(function(exitCode) {' + callback + '})(0)', ctx);
+  assert.equal(model.serviceActive, false);
+  assert.equal(stopped, 1);
+});
 test('disabled plugin teardown distinguishes a hot reload', () => {
   let stops = 0;
   const ctx = load(['stopBackendIfDisabled'], {

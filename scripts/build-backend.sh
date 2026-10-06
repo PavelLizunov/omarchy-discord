@@ -6,6 +6,17 @@ runtime_dir=${OMARCHY_DISCORD_RUNTIME_DIR:-"$HOME/.local/lib/omarchy-discord"}
 destination="$runtime_dir/omarchy-discord-backend"
 architecture=$(uname -m)
 prebuilt="$source_root/backend/dist/$architecture/omarchy-discord-backend"
+source_stamp="$source_root/backend/dist/$architecture/source.sha256"
+
+source_fingerprint() {
+  (
+    cd -- "$source_root/backend"
+    { sha256sum go.mod go.sum
+      find cmd internal -type f -name '*.go' ! -name '*_test.go' -print0 \
+        | sort -z | xargs -0 sha256sum
+    } | sha256sum | cut -d' ' -f1
+  )
+}
 
 check_shared_libraries() {
   if ldd "$destination" 2>/dev/null | grep -q 'not found'; then
@@ -24,7 +35,8 @@ if [[ -L $prebuilt ]]; then
   exit 31
 fi
 
-if [[ -f $prebuilt && -x $prebuilt ]]; then
+if [[ -f $prebuilt && -x $prebuilt && -f $source_stamp ]] \
+    && [[ $(< "$source_stamp") == "$(source_fingerprint)" ]]; then
   install -d -m 700 -- "$runtime_dir"
   install -m 755 -- "$prebuilt" "$destination" || exit 31
   check_shared_libraries
@@ -33,7 +45,7 @@ if [[ -f $prebuilt && -x $prebuilt ]]; then
 fi
 
 if [[ -e $prebuilt ]]; then
-  echo "build-backend.sh: $prebuilt is not executable; ignoring it" >&2
+  echo "build-backend.sh: bundled backend is unavailable or does not match the sources; building from source" >&2
 fi
 
 command -v go >/dev/null 2>&1 || {

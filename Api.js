@@ -59,13 +59,16 @@ function contrastRatio(a, b) {
   return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
 }
 
-var SECONDARY_MIN_CONTRAST = 3.0
+var SECONDARY_MIN_CONTRAST = 4.5
 var SECONDARY_ALPHA = 0.6
 
 function secondaryColor(muted, foreground, background) {
   if (muted && background && contrastRatio(muted, background) >= SECONDARY_MIN_CONTRAST) return muted
   if (!foreground || foreground.r === undefined) return muted
-  return Qt.rgba(foreground.r, foreground.g, foreground.b, SECONDARY_ALPHA)
+  var secondary = Qt.rgba(foreground.r, foreground.g, foreground.b, SECONDARY_ALPHA)
+  if (background && contrastRatio(blend(secondary, background, secondary.a), background) < SECONDARY_MIN_CONTRAST)
+    return foreground
+  return secondary
 }
 
 function blend(color, background, alpha) {

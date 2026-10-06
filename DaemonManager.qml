@@ -147,9 +147,12 @@ Item {
     stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
       root.busy = false
-      root.serviceActive = false
-      if (exitCode === 0) root.stopped()
-      else root.lastError = "Could not stop the Discord backend"
+      if (exitCode === 0) {
+        root.serviceActive = false
+        root.stopped()
+      } else {
+        root.lastError = "Could not stop the Discord backend"
+      }
     }
   }
 }

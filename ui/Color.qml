@@ -9,8 +9,8 @@ QtObject {
   property color foreground: "#cacccc"
   property color background: "#101315"
   property color accent: "#cacccc"
-  property color urgent: "#a55555"
-  property color muted: "#707880"
+  property color urgent: "#bc6868"
+  property color muted: "#78818a"
 
   property var shellValues: ({})
 

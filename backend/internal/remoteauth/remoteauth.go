@@ -152,12 +152,14 @@ func (f *flow) run(ctx context.Context) (string, string, error) {
 	}()
 
 	var (
-		heartbeat   *time.Ticker
-		heartbeatC  <-chan time.Time
-		expiry      *time.Timer
-		expiryC     <-chan time.Time
-		fingerprint string
-		gotHello    bool
+		heartbeat    *time.Ticker
+		heartbeatC   <-chan time.Time
+		expiry       *time.Timer
+		expiryC      <-chan time.Time
+		fingerprint  string
+		gotHello     bool
+		heartbeatErr error
+		drainC       <-chan time.Time
 	)
 	defer func() {
 		if heartbeat != nil {
@@ -174,9 +176,14 @@ func (f *flow) run(ctx context.Context) (string, string, error) {
 			return "", "", ctx.Err()
 		case <-expiryC:
 			return "", "", ErrExpired
+		case <-drainC:
+			return "", "", heartbeatErr
 		case <-heartbeatC:
 			if err := f.send(map[string]string{"op": "heartbeat"}); err != nil {
-				return "", "", fmt.Errorf("remoteauth: send heartbeat: %w", err)
+				// Preserve ordered terminal events already sent by the closing peer.
+				heartbeatErr = fmt.Errorf("remoteauth: send heartbeat: %w", err)
+				heartbeatC = nil
+				drainC = time.After(time.Second)
 			}
 		case r := <-reads:
 			if r.err != nil {
@@ -185,6 +192,9 @@ func (f *flow) run(ctx context.Context) (string, string, error) {
 				}
 				if websocket.IsCloseError(r.err, 4003) {
 					return "", "", ErrExpired
+				}
+				if heartbeatErr != nil {
+					return "", "", heartbeatErr
 				}
 				return "", "", fmt.Errorf("remoteauth: gateway read: %w", r.err)
 			}

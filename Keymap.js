@@ -35,7 +35,7 @@ var ENTRIES = [
   { id: "global.channelStep", zone: "global", keys: "Alt+↑ / Alt+↓", hintKeys: "Alt+↑/↓", hint: "channel (Shift: unread)",
     action: "Previous / next channel in the list; add Shift to jump between unread channels only" },
   { id: "global.tab", zone: "global", keys: "Tab / Shift+Tab", hintKeys: "Tab", hint: "reaches buttons",
-    action: "Cycle rail → channels → timeline → composer (and its attachments) → member list → Members → Log out → Close" },
+    action: "Cycle rail → channels → timeline and message actions → composer, attachments and Send → member list → Search → Help → Members → Log out → Close" },
   { id: "global.tabCycle", zone: "global", cheatsheet: false, keys: "Tab / Shift+Tab", hintKeys: "Tab/Shift+Tab", hint: "cycle",
     action: "Cycle the focus stops" },
   { id: "global.reload", zone: "global", keys: "r", hint: "reloads",

@@ -13,6 +13,11 @@ FocusScope {
   property string channelName: ""
   property bool active: false
   readonly property int maxLines: 6
+  property real attachmentHeightLimit: Style.space(80)
+  readonly property bool canSubmit: !!service && channelId !== "" && !uploading
+    && (editing ? text.trim().length > 0 : text.trim().length > 0 || chips.length > 0)
+  readonly property alias sendControl: sendButton
+  readonly property alias attachmentViewport: chipViewport
 
   property string editingId: ""
   property string replyToId: ""
@@ -89,10 +94,18 @@ FocusScope {
     var id = service.lastOwnMessageId(channelId)
     var message = id ? service.findMessage(channelId, id) : null
     if (!message) return false
+    return startEdit(id)
+  }
+
+  function startEdit(id) {
+    var message = service ? service.findMessage(channelId, id) : null
+    if (!message || message.pending || String((message.author || {}).id || "") !== String(service.selfId)) return false
+    if (editing) cancelEdit()
     cancelReply()
     savedDraft = input.text
     editingId = id
     setText(message.content)
+    focusInput()
     return true
   }
 
@@ -142,6 +155,15 @@ FocusScope {
     if (!chips.length) { focusInput(); return }
     chipCursor = Math.max(0, Math.min(index, chips.length - 1))
     chipFocus.forceActiveFocus()
+    Qt.callLater(ensureChipVisible)
+  }
+
+  function ensureChipVisible() {
+    var item = chipRepeater.itemAt(chipCursor)
+    if (!item) return
+    if (item.y < chipViewport.contentY) chipViewport.contentY = item.y
+    else if (item.y + item.height > chipViewport.contentY + chipViewport.height)
+      chipViewport.contentY = item.y + item.height - chipViewport.height
   }
 
   function pasteFromClipboard() {
@@ -183,7 +205,7 @@ FocusScope {
     else if (ctrl && key === Qt.Key_V) pasteFromClipboard()
     else if (ctrl && key === Qt.Key_K) switcherRequested()
     else if (ctrl && key === Qt.Key_Slash) cheatsheetRequested()
-    else if (key === Qt.Key_Tab) { if (chips.length) focusChip(0); else cycleFocus(1) }
+    else if (key === Qt.Key_Tab) { if (chips.length) focusChip(0); else if (sendButton.enabled) sendButton.forceActiveFocus(); else cycleFocus(1) }
     else if (key === Qt.Key_Backtab) cycleFocus(-1)
     else if (key === Qt.Key_Left && chips.length && input.cursorPosition === 0 && !shift) focusChip(chips.length - 1)
     else if (key === Qt.Key_Right && chips.length && input.cursorPosition === input.length && !shift) focusChip(0)
@@ -208,7 +230,7 @@ FocusScope {
     else if ((event.modifiers & Qt.ControlModifier) && key === Qt.Key_K) switcherRequested()
     else if ((event.modifiers & Qt.ControlModifier) && key === Qt.Key_Slash) cheatsheetRequested()
     else if (key === Qt.Key_Return || key === Qt.Key_Enter) submit()
-    else if (key === Qt.Key_Tab) { if (chipCursor + 1 < chips.length) focusChip(chipCursor + 1); else { chipCursor = -1; cycleFocus(1) } }
+    else if (key === Qt.Key_Tab) { if (chipCursor + 1 < chips.length) focusChip(chipCursor + 1); else { chipCursor = -1; if (sendButton.enabled) sendButton.forceActiveFocus(); else cycleFocus(1) } }
     else if (key === Qt.Key_Backtab) { if (chipCursor > 0) focusChip(chipCursor - 1); else focusInput() }
     else if (key === Qt.Key_Right || text === "l") { if (chipCursor + 1 < chips.length) focusChip(chipCursor + 1); else focusInput() }
     else if (key === Qt.Key_Left || text === "h") { if (chipCursor > 0) focusChip(chipCursor - 1); else focusInput() }
@@ -271,26 +293,56 @@ FocusScope {
       font.pixelSize: Style.font.caption
     }
 
-    Flow {
+    Flickable {
+      id: chipViewport
+      objectName: "attachment-viewport"
       width: parent.width
+      height: Math.min(chipFlow.implicitHeight, composer.attachmentHeightLimit)
       visible: composer.chips.length > 0
-      spacing: Style.spacing.sm
-
-      Repeater {
-        model: composer.chips.length
-        delegate: AttachmentChip {
-          required property int index
-          item: composer.chips[index] || ({})
-          cursor: composer.chipFocused && index === composer.chipCursor
-          onClicked: composer.focusChip(index)
-          onRemove: composer.removeChip(index)
+      contentWidth: width
+      contentHeight: chipFlow.implicitHeight
+      clip: true
+      boundsBehavior: Flickable.StopAtBounds
+      ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+      onWidthChanged: Qt.callLater(composer.ensureChipVisible)
+      Flow {
+        id: chipFlow
+        width: chipViewport.width - Style.spacing.md
+        spacing: Style.spacing.sm
+        Repeater {
+          id: chipRepeater
+          model: composer.chips.length
+          delegate: AttachmentChip {
+            required property int index
+            width: Math.min(implicitWidth, chipFlow.width)
+            item: composer.chips[index] || ({})
+            cursor: composer.chipFocused && index === composer.chipCursor
+            onClicked: composer.focusChip(index)
+            onRemove: composer.removeChip(index)
+          }
         }
       }
     }
 
+    Row {
+      width: parent.width
+      spacing: Style.spacing.xs
+      layoutDirection: Qt.RightToLeft
+      Button {
+        id: sendButton
+        objectName: "send-button"
+        text: composer.editing ? "Save" : "Send"
+        enabled: composer.canSubmit
+        focusable: true
+        tooltipText: composer.editing ? "Save edit (Enter)" : "Send message (Enter)"
+        onClicked: { composer.submit(); composer.focusInput() }
+        Keys.onTabPressed: composer.cycleFocus(1)
+        Keys.onBacktabPressed: composer.focusInput()
+        Keys.onEscapePressed: composer.focusInput()
+      }
     BorderSurface {
       id: frame
-      width: parent.width
+      width: parent.width - sendButton.width - parent.spacing
       height: flick.height + Style.spacing.inputPaddingY * 2
       radius: Style.cornerRadius
       color: Style.controlFill(composer.inputFocused, composer.active, composer.foreground, composer.accent)
@@ -341,6 +393,7 @@ FocusScope {
           }
         }
       }
+    }
     }
   }
 }

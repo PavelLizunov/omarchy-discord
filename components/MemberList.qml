@@ -14,6 +14,8 @@ FocusScope {
   property bool timedOut: false
   property bool active: false
   property string channelName: ""
+  property bool dismissible: false
+  signal closeRequested()
 
   signal escapeRequested()
   signal moveZone(string direction)
@@ -125,7 +127,7 @@ FocusScope {
 
       PanelSectionHeader {
         width: parent.width
-        text: "Members"
+        text: root.dismissible ? "Members · Esc closes" : "Members"
         foreground: root.foreground
       }
 
@@ -145,6 +147,7 @@ FocusScope {
         id: listView
         width: parent.width
         height: parent.height - Style.spacing.controlHeight
+          - (root.dismissible ? Style.spacing.controlHeight + Style.spacing.sm : 0)
         visible: root.rows.length > 0
         clip: true
         reuseItems: true
@@ -253,8 +256,19 @@ FocusScope {
                 root.forceActiveFocus()
               }
             }
+            PanelToolTip {
+              visible: rowMouse.containsMouse || memberRow.hasCursor
+              text: memberRow.displayName + "\n@" + String(memberRow.user.username || "")
+                + (memberRow.activity ? "\n" + memberRow.activity : "")
+            }
           }
         }
+      }
+      Button {
+        visible: root.dismissible
+        text: "Close members"
+        focusable: true
+        onClicked: root.closeRequested()
       }
     }
   }

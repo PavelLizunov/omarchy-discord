@@ -66,7 +66,15 @@ case $action in
     systemctl --user start "$backend_unit"
     ;;
   stop)
-    systemctl --user stop "$backend_unit" 2>/dev/null || true
+    load_state=$(systemctl --user show --property=LoadState --value "$backend_unit")
+    if [[ $load_state != "not-found" ]]; then
+      systemctl --user stop "$backend_unit"
+      active_state=$(systemctl --user show --property=ActiveState --value "$backend_unit")
+      case $active_state in
+        inactive|failed) ;;
+        *) echo "backend-runtime.sh: backend is not stopped ($active_state)" >&2; exit 1 ;;
+      esac
+    fi
     ;;
   sync)
     was_ready=0
