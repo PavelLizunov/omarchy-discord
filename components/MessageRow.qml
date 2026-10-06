@@ -4,7 +4,6 @@ import "../ui"
 import "../Markdown.js" as Markdown
 import "../Api.js" as Api
 
-// Text-only row. Remote media is represented by explicit links, never Image.
 Item {
   id: root
   property var message: ({})

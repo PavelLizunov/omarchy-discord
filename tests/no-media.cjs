@@ -1,4 +1,3 @@
-// Run the actual shared Service functions with a recorder instead of a socket.
 const fs = require('node:fs');
 const vm = require('node:vm');
 const assert = require('node:assert/strict');

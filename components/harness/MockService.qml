@@ -1,16 +1,9 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 
-// Stand-in for Service.qml inside the offscreen Panel harness: enough of the
-// surface for Panel.qml and its components to build, plus call recording so
-// the harness can assert what the panel asked the service to do. It is NOT a
-// second implementation — every function here either records or does the one
-// state assignment the real service would do. Service.qml's own logic is
-// exercised against the real object in service.qml.
 QtObject {
   id: mock
 
-  // --- recording ---
   property var calls: []
   function note(name, arg) {
     var next = calls.slice()
@@ -30,7 +23,6 @@ QtObject {
   }
   function reset() { calls = [] }
 
-  // --- lifecycle / status ---
   property bool connected: true
   property string lifecycle: "ready"
   property bool showStructure: true
@@ -51,7 +43,6 @@ QtObject {
     property bool running: true
   }
 
-  // --- structure ---
   property var guilds: []
   property var dms: []
   property var channelsByGuild: ({})
@@ -74,7 +65,6 @@ QtObject {
   function loadChannels(guildId, force) { note("loadChannels", guildId) }
   function listThreads(parentId) { note("listThreads", parentId) }
 
-  // The two calls the guild-entry contract is about.
   signal guildEntered(string guildId, string channelId)
   function enterGuild(guildId) { note("enterGuild", guildId) }
   function showChannel(channelId, guildId) {
@@ -93,14 +83,12 @@ QtObject {
   function typing(channelId) {}
   function lastOwnMessageId(channelId) { return "" }
 
-  // --- member pane ---
   property bool membersWanted: false
   property string membersChannelId: ""
   property bool membersTimedOut: false
   property var memberList: null
   function setMembersWanted(value) { membersWanted = !!value; note("setMembersWanted", value) }
 
-  // --- voice ---
   property var voice: ({ status: "idle", guildId: "", channelId: "", muted: false, deafened: false, error: "" })
   property var voiceMembers: ({})
   property var speaking: ({})
@@ -118,7 +106,6 @@ QtObject {
   function toggleMute() { note("toggleMute"); return true }
   function toggleDeafen() { note("toggleDeafen"); return true }
 
-  // --- panel plumbing ---
   property bool panelActive: false
   property bool panelMapped: false
   property string panelScreenName: ""
@@ -135,7 +122,6 @@ QtObject {
   function dismissQr() { note("dismissQr") }
   function restartQrLogin() { note("restartQrLogin") }
 
-  // --- media / markdown / emoji ---
   property var frequentEmoji: []
   property var emojiCatalog: []
   property var serverEmoji: []

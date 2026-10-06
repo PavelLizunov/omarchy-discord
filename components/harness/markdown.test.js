@@ -1,4 +1,3 @@
-// Unit test for Markdown.js. Run: node --test components/harness/markdown.test.js
 const test = require("node:test")
 const assert = require("node:assert/strict")
 const M = require("../../Markdown.js")
@@ -37,11 +36,7 @@ test("code", () => {
   assert.equal(r("`**not bold**`"), "<code style=\"font-family:'mono';background-color:#c;\">**not bold**</code>")
   assert.equal(r("```js\nlet a = 1;\n```"), "<pre style=\"font-family:'mono';background-color:#c;white-space:pre-wrap;\">let a = 1;</pre>")
   assert.equal(r("```\n<b>\n```"), "<pre style=\"font-family:'mono';background-color:#c;white-space:pre-wrap;\">&lt;b&gt;</pre>")
-  // A fenced block wraps an overlong token instead of running off the row
-  // (white-space:pre-wrap), while still keeping its newlines and indentation.
   assert.equal(r("```\n  a\n  b\n```"), "<pre style=\"font-family:'mono';background-color:#c;white-space:pre-wrap;\">  a\n  b</pre>")
-  // forceSpoilerColor rewrites the style of a spoilered fence: it strips the
-  // colours, never the wrap declaration.
   assert.equal(r("||```\nx\n```||"),
     "<span style=\"background-color:#s;color:#s\"><pre style=\"font-family:'mono';white-space:pre-wrap;background-color:#s;color:#s\">x</pre></span>")
   assert.equal(p("```js\nlet a = 1;\n```"), "let a = 1;")
@@ -65,14 +60,11 @@ test("spoilers", () => {
 
 test("spoilers cover what they wrap", () => {
   const cover = (inner) => `<span style="background-color:#s;color:#s">${inner}</span>`
-  // mention, link, inline code keep their markup but take the spoiler colour
   assert.equal(r("||<@1>||"), cover("<span style=\"background-color:#s;color:#s\"><b>@ada</b></span>"))
   assert.equal(r("||[t](https://x.y)||"), cover("<a href=\"https://x.y\" style=\"background-color:#s;color:#s\">t</a>"))
   assert.equal(r("||https://x.y/a||"), cover("<a href=\"https://x.y/a\" style=\"background-color:#s;color:#s\">https://x.y/a</a>"))
   assert.equal(r("||`c`||"), cover("<code style=\"font-family:'mono';background-color:#s;color:#s\">c</code>"))
-  // the colour override is not applied outside the spoiler
   assert.equal(r("<@1> ||x||"), "<span style=\"color:#m;background-color:#mb;\"><b>@ada</b></span> " + cover("x"))
-  // markup inside and around a spoiler still formats; code inside stays literal
   assert.equal(r("**||a||**"), "<b>" + cover("a") + "</b>")
   assert.equal(r("||**a**||"), cover("<b>a</b>"))
   assert.equal(r("||`**x**`||"), cover("<code style=\"font-family:'mono';background-color:#s;color:#s\">**x**</code>"))
@@ -97,17 +89,13 @@ test("custom emoji images", () => {
   const img = "<img src=\"file:///home/m/.cache/omarchy-discord/media/ab.png\" width=\"17\" height=\"17\" alt=\":smile:\">"
   assert.equal(M.render("<:smile:123>", ectx), img)
   assert.equal(M.render("<a:smile:123>", ectx), img)
-  // unknown emoji keep the :name: fallback; plain text never gets an image
   assert.equal(M.render("<:wave:4>", ectx), ":wave:")
   assert.equal(M.plainText("<:smile:123>", ectx), ":smile:")
-  // size from fontSize when emojiSize is absent (12 * 1.4 -> 17)
   assert.equal(M.render("<:smile:123>", { emojiPath: () => "/a.png" }),
     "<img src=\"file:///a.png\" width=\"17\" height=\"17\" alt=\":smile:\">")
-  // emoji inside formatting and spoilers still work
   assert.equal(M.render("**<:smile:123>**", ectx), "<b>" + img + "</b>")
   assert.equal(M.render("||<:smile:123>||", ectx),
     "<span style=\"background-color:#s;color:#s\">" + img + "</span>")
-  // the emoji id is the only thing reaching the resolver
   let seen = null
   M.render("<:x:999>", Object.assign({}, ectx, { emojiPath: (id, animated) => { seen = [id, animated]; return "" } }))
   assert.deepEqual(seen, ["999", false])
@@ -125,10 +113,8 @@ test("emoji path cannot inject markup", () => {
   const thrown = M.render("<:smile:123>", { emojiPath: () => { throw new Error("boom") } })
   assert.equal(thrown, ":smile:")
   assert.equal(M.render("<:smile:123>", { emojiPath: "not a function" }), ":smile:")
-  // a path with a space is fine, quotes never reach the attribute unescaped
   assert.equal(M.render("<:smile:123>", { emojiPath: () => "/a b/c.png" }),
     "<img src=\"file:///a b/c.png\" width=\"17\" height=\"17\" alt=\":smile:\">")
-  // the name in alt is escaped by construction (\\w+ only) and the id is digits only
   assert.equal(M.render("<:<b>:123>", { emojiPath: () => "/a.png" }), "&lt;:&lt;b&gt;:123&gt;")
 })
 
@@ -157,7 +143,6 @@ test("html escaping everywhere", () => {
   assert.equal(M.render("<@1>", { users: { "1": "<img>" } }),
     "<b>@&lt;img&gt;</b>")
   assert.equal(p("<b>&amp;</b>"), "<b>&amp;</b>")
-  // placeholder control characters in input cannot address the stash
   assert.equal(r("\u00010\u0002"), "0")
   assert.equal(r("a \u0001 1 \u0002 b"), "a  1  b")
 })

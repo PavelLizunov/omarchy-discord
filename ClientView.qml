@@ -8,44 +8,21 @@ import "Api.js" as Api
 import "Keymap.js" as Keymap
 import "components" as Components
 
-// Panel: login/status screens, then guild rail + channel list + timeline +
-// composer. Host contract: root Item with shell/manifest/service injected,
-// `opened`, open(payloadJson) (JSON string), close(). The manifest sets
-// keepLoaded, so this item outlives a hide, but authoritative state (selected
-// guild, open channel, messages, drafts, staged files) still lives in
-// Service.qml; this file only keeps cursors.
-//
-// Two window modes (the `window` setting). On demand: the window maps on
-// open() and unmaps on close(), and `opened` is that host-driven flag.
-// Persistent: the window is mapped from shell start for Hyprland to place,
-// and `opened` — "someone is looking", which gates read-acks, refreshes and
-// notification suppression — is keyboard focus instead.
 Item {
   id: root
 
   property var shell: null
   property var manifest: null
   property var service: null
-  // Host-driven open state; `opened` is this only in On demand mode.
   property bool hostOpened: false
   readonly property bool opened: hostOpened
   property bool windowActive: false
   property bool mapped: false
+  readonly property bool reading: opened && mapped && windowActive
   property string screenName: ""
   signal closeRequested()
   signal linkRequested(string url)
   signal copyRequested(string text)
-  // Persistent mode: the window's own mapped state. A compositor close
-  // (SUPER+W) unmaps it and the next open() maps it again.
-  // open() asked to summon the window before the compositor had mapped it.
-  // Where the window is parked when dismissed: the special workspace the
-  // window-rule first mapped it on (e.g. "special:scratchpad"), captured once.
-  // Empty when no rule parks it on a special workspace — then dismiss unmaps.
-  // The panel's own Hyprland window. Live only after refreshToplevels() —
-  // Quickshell never populates the toplevel model on its own — and its
-  // `workspace` fills in when Hyprland maps the surface, a frame or more
-  // after `visible` goes true.
-  // Exposed for offscreen harnesses (dispatchKey + state inspection).
   readonly property alias timeline: timelineView
   readonly property alias composer: composerView
   readonly property alias cheatsheet: cheatsheetView
@@ -53,7 +30,6 @@ Item {
   readonly property alias members: membersView
   readonly property alias controls: headerControls
   readonly property bool qrImageReady: qrImage.status === Image.Ready
-  // A modal overlay (cheatsheet / emoji picker) owns the keyboard.
   readonly property bool overlayShown: cheatsheetView.shown || pickerView.shown
 
   readonly property string pluginId: manifest && manifest.id
@@ -63,44 +39,20 @@ Item {
   readonly property color background: Color.background
   readonly property color accent: Color.accent
   readonly property string fontFamily: Style.font.family
-  // Voice occupant rows under a voice channel in the sidebar.
   readonly property int voiceAvatarSize: Style.space(16)
   readonly property int voiceOccupantHeight: Style.space(22)
   readonly property var panelBorderSpec: Border.flat(Color.popups.border,
     Math.max(1, Style.normalBorderWidth))
-  // The controls row is a Button tall, which is more than controlHeight once
-  // the focus ring's reserved border is counted; both hosts reserve that so
-  // the ring is never clipped by the pane below.
   readonly property real controlsRowHeight: Math.max(Style.spacing.controlHeight, headerControls.height)
-  // The three buttons at their natural width, the gaps between them included
-  // (a Row skips an invisible child and the gap it would have taken). Their
-  // visibility conditions are repeated here rather than read off `visible`,
-  // which answers EFFECTIVE visibility: while the top strip hosts the row
-  // that answer depends on controlsInHeader, and reading it would close the
-  // loop. `ready` is the other half of both conditions and controlsInHeader
-  // already demands it.
   readonly property real controlButtonsWidth:
     (currentChannelId !== "" ? membersButton.width + Style.spacing.controlGap : 0)
     + logoutButton.width + Style.spacing.controlGap
     + closeButton.width
-  // What the channel-title row can give the controls while still leaving the
-  // title its gap. Driven by the timeline column's width alone, so nothing in
-  // the row can feed back into it.
   readonly property real channelHeaderRoom: channelHeader.width - Style.spacing.sm * 2
     - Style.spacing.controlGap
-  // The channel name is the one thing that row exists to show, so it keeps a
-  // floor and the status gives way first. When even the buttons plus that
-  // floor do not fit — a narrow window, more so with the member pane open —
-  // the controls go back to the top strip. Hosting them regardless would push
-  // the row off the left edge of the timeline column and paint it over the
-  // channel list and the guild rail.
   readonly property real channelTitleFloor: Style.space(120)
   readonly property bool controlsInHeader: ready
     && channelHeaderRoom - controlButtonsWidth >= channelTitleFloor
-  // The status is whatever is left over the title floor, still under its own
-  // cap; on the full-width top strip only the cap applies. Too narrow to read
-  // is worse than absent — a zero width drops it, and the Row then skips the
-  // gap it would have taken too.
   readonly property real statusWidthBudget: {
     if (!controlsInHeader) return Style.space(200)
     var room = channelHeaderRoom - controlButtonsWidth - channelTitleFloor
@@ -110,61 +62,34 @@ Item {
 
   readonly property string lifecycle: service ? service.lifecycle : ""
   readonly property bool connected: !!(service && service.connected)
-  // Structure stays visible through the short reconnect grace (Service.showStructure).
   readonly property bool ready: !!(service && service.showStructure)
   readonly property bool showLogin: connected
     && (lifecycle === "logged_out" || lifecycle === "reauth_needed" || lifecycle === "qr_pending")
   readonly property string errorText: service ? Api.redact(service.lastError) : ""
-  // QR login: the service mirrors qr_* events in `qr`; the QR view replaces
-  // the login choices while a flow runs or has just ended (Try again).
   readonly property var qr: service ? service.qr : null
   readonly property string qrStage: qr ? String(qr.stage || "") : ""
-  // Gate on the lifecycle, the pending start and any qr object so the view
-  // never flashes the choices between a response and its events.
   readonly property bool qrView: showLogin && (lifecycle === "qr_pending"
     || !!(service && service.qrBusy) || qr !== null)
-  // Any running flow can be cancelled, code in hand or not (after a
-  // reconnect the code is replayed; until then Cancel must still work).
   readonly property bool qrCancelable: lifecycle === "qr_pending" && qrStage !== "approved"
-  // Reconnected mid-flow and the replayed code never came: Try again.
   readonly property bool qrMissing: !!(service && service.qrMissing)
   property int qrSecondsLeft: 0
-  // The panel window owns keyboard focus (notification suppression).
 
-  // --- zones: "sidebar" (columns "rail" | "channels"), "timeline", "composer",
-  // "members" (only while the member pane is shown) ---
-  // `zone` is the last keyboard zone; the panel controls sit outside the
-  // zones, so while one of them owns focus `focusedZone` is "" and no pane
-  // paints a focus border. Esc (or Tab around) hands focus back to `zone`.
   property string zone: "sidebar"
   property string column: "rail"
   readonly property bool buttonFocused: logoutButton.activeFocus || closeButton.activeFocus
     || membersButton.activeFocus || startBackendButton.activeFocus || callBarFocused
-  // The call bar is one of those out-of-zone stops: Enter on the voice
-  // channel you are already in lands here, and Esc / Tab leave it again.
   readonly property bool callBarFocused: callBar.visible && callBar.activeFocus
-  // The channel of a call that is up or coming up. A failed call keeps its
-  // ids on the wire, so gating on the id alone would leave the row reading
-  // as joined and Enter parked on the error instead of retrying the join.
   readonly property string activeVoiceChannelId: {
     if (!service || !service.voice) return ""
     var status = String(service.voice.status || "")
     if (status !== "connected" && status !== "connecting") return ""
     return String(service.voice.channelId || "")
   }
-  // The member pane: toggle state lives in the service (survives a
-  // re-summon); it is a zone only while visible and a channel is open.
   readonly property bool membersVisible: !!(service && service.membersWanted) && currentChannelId !== "" && ready
-  // Parent channel id -> true while its threads are listed beneath it.
   property var expandedThreads: ({})
-  // Whether `t` from the timeline has a parent to expand (see
-  // currentThreadParent): false in DMs and on an unknown channel.
   readonly property bool canToggleCurrentThreads: currentThreadParent() !== null
   readonly property string focusedZone: buttonFocused ? "" : zone
-  // The composer's input or one of its chips owns the keyboard: plain keys
-  // are text, only Alt chords and Tab are panel-level.
   readonly property bool composerFocused: composerView.activeFocus
-  // Roving cursors keyed by id so a resync/reorder keeps the same row.
   property string guildCursorId: "dms"
   property string channelCursorId: ""
 
@@ -183,8 +108,6 @@ Item {
     return rows
   }
   readonly property bool dmsSelected: selectedGuildId === "dms"
-  // Active-thread counts per parent (from the raw channel list, which
-  // carries every thread the cache knows) — the "N threads" affordance.
   readonly property var threadCounts: service && selectedGuildId && !dmsSelected
     ? Api.threadCounts(service.channelsFor(selectedGuildId)) : ({})
   readonly property var channelRows: {
@@ -212,8 +135,6 @@ Item {
       if (String(guildRows[i].id) === selectedGuildId) return String(guildRows[i].name || "")
     return ""
   }
-  // The open channel's row: prefer the structure mirror (live unread state),
-  // fall back to the open_channel response.
   readonly property var currentChannel: {
     if (!service || !currentChannelId) return null
     var lists = [service.dms]
@@ -226,7 +147,6 @@ Item {
     }
     return currentEntry ? currentEntry.channel : null
   }
-  // A thread's header reads "#parent › thread".
   readonly property string currentChannelTitle: {
     if (!currentChannel) return ""
     var name = String(currentChannel.name || "")
@@ -272,7 +192,6 @@ Item {
     return tokenField.activeFocus || composerView.inputFocused
   }
 
-  // --- overlays: quick switcher (service-owned), cheatsheet, emoji picker ---
   function openSwitcher() {
     if (service) service.openSwitcher()
   }
@@ -282,8 +201,6 @@ Item {
     else { pickerView.hide(); cheatsheetView.show() }
   }
 
-  // E on a timeline row: pick an emoji for that message. The picker lists
-  // the row's own reactions first so Enter on one toggles it.
   function openPicker(messageId) {
     var message = service ? service.findMessage(currentChannelId, messageId) : null
     if (!message || message.pending) return
@@ -296,8 +213,6 @@ Item {
     service.toggleReaction(currentChannelId, messageId, emoji)
   }
 
-  // Chords that work from every zone, text inputs included (Ctrl+K, Ctrl+/)
-  // or only outside them (/ and ?). Returns true when handled.
   function handleGlobalKey(event) {
     var key = event.key
     var text = event.text
@@ -308,9 +223,6 @@ Item {
     else if (ctrl && shift && key === Qt.Key_H) voiceAction("leave")
     else if (ctrl && key === Qt.Key_K) openSwitcher()
     else if (ctrl && key === Qt.Key_Slash) toggleCheatsheet()
-    // Gated on the text input itself, not on the composer zone: an
-    // attachment chip owns the keyboard without being a text input, so / and
-    // ? keep working from there.
     else if (!textInputFocused() && !showLogin && text === "/") openSwitcher()
     else if (!textInputFocused() && !showLogin && text === "?") toggleCheatsheet()
     else return false
@@ -322,14 +234,10 @@ Item {
     if (service) service.panelActive = windowActive
   }
 
-  // Tell the service whether the window is on screen at all: with keepLoaded
-  // the delegates keep resolving avatars and attachments while it is unmapped.
   function publishMapped() {
     if (service) service.panelMapped = mapped
   }
 
-  // Login screen Tab order: Scan QR -> token field -> Log in -> Close; in
-  // the QR view: Cancel / Try again -> Close.
   function loginStops() {
     return qrView ? [qrActionButton, closeButton] : [scanQrButton, tokenField, loginButton, closeButton]
   }
@@ -352,8 +260,6 @@ Item {
     if (service) service.startQrLogin()
   }
 
-  // Esc in the QR view: cancel a running flow, dismiss a finished one. An
-  // approved flow is past cancelling (the backend is exchanging the ticket).
   function leaveQr() {
     if (!service) return
     if (lifecycle === "qr_pending") { if (qrStage !== "approved") service.cancelQrLogin() }
@@ -383,22 +289,10 @@ Item {
     }
   }
 
-  function qrAvatarUrl() {
-    var user = qr && qr.user ? qr.user : null
-    if (!user || !user.id || !user.avatar_hash) return ""
-    return "https://cdn.discordapp.com/avatars/" + String(user.id) + "/" + String(user.avatar_hash) + ".png"
-  }
-
   function updateQrCountdown() {
     qrSecondsLeft = qr && qr.expiresAt ? Math.max(0, Math.ceil((Number(qr.expiresAt) - Date.now()) / 1000)) : 0
   }
 
-  // --- host contract ---
-  // Someone started / stopped looking: a host summon in On demand mode, the
-  // window gaining / losing keyboard focus in Persistent mode. That fires on
-  // every focus change, so these hold only the cheap half; refreshing and
-  // restoring the cursors belong to an actual open() (alt-tabbing back must
-  // not move the cursor or re-fetch the structure).
   function enter() {
     if (service) service.setUiVisible("full-panel", true)
     publishScreen()
@@ -436,38 +330,14 @@ Item {
     hostOpened = false
   }
 
-  // Omarchy Quattro's Hyprland evaluates every dispatch as Lua — it wraps the
-  // string as `return hl.dispatch(<string>)` — so plain "movetoworkspace ..."
-  // is rejected (this is why focus/reveal never worked). We send the Lua
-  // dispatcher form, selecting the window by title so only this window moves —
-  // the scratchpad it parks on is shared with other windows — and without
-  // relying on Quickshell's toplevel model (which can be empty here).
 
-  // The workspace a summon should land on: whatever the user is looking at.
-  // When a special workspace (scratchpad) is revealed on the focused monitor,
-  // Hyprland keeps activeworkspace pointing at the normal workspace behind it,
-  // but new windows belong in the special one — so target it by name. Its name
-  // is only in the monitor's raw ipc object, not on the workspace wrapper.
 
-  // Persistent mode's open: bring the window to the workspace the user is on
-  // and focus it, pulling it off its park rather than revealing that shared
-  // workspace in place. move alone does not land keyboard focus when the
-  // target is already the active workspace, so focus explicitly.
 
-  // Persistent mode's close: send the window back to its park workspace
-  // silently (follow = false, so the user is not switched away), leaving it
-  // mapped and ready for the next summon. With no known park, unmap it — the
-  // same state SUPER+W leaves behind, which open() maps back.
 
-  // Tell the service whether the timeline is scrolled up, so it never trims
-  // the rolling message window out from under the user (nobody is looking
-  // while the panel is closed).
   function publishPinned() {
     if (service) service.timelinePinned = !opened || timelineView.pinned
   }
 
-  // Tell the bar widgets which monitor hosts the panel, so a click on the
-  // same monitor closes it while a click elsewhere remaps it.
   function publishScreen() {
     if (!service) return
     service.panelScreenName = opened ? screenName : ""
@@ -477,7 +347,6 @@ Item {
     closeRequested()
   }
 
-  // Put the cursors back on the view the service remembers.
   function restoreView() {
     guildCursorId = selectedGuildId || "dms"
     channelCursorId = currentChannelId
@@ -503,7 +372,6 @@ Item {
     return ""
   }
 
-  // --- cursor helpers ---
   function clampCursor(index, length) {
     if (length <= 0) return 0
     return ((index % length) + length) % length
@@ -535,8 +403,6 @@ Item {
     channelList.positionViewAtIndex(index, ListView.Contain)
   }
 
-  // Steps from `from` by `delta` (wrapping) to the next row satisfying
-  // `accept`; -1 when none does.
   function findChannel(from, delta, accept) {
     var count = channelRows.length
     if (!count) return -1
@@ -558,16 +424,12 @@ Item {
   function ensureCursors() {
     if (guildCursor < 0) guildCursorId = "dms"
     if (channelCursor >= 0 && Api.isSelectableChannel(channelRows[channelCursor])) return
-    // The open channel wins over row zero: entering a guild clears the cursor
-    // and the restored channel only appears once its list lands, so this is
-    // what puts the cursor on the channel that just opened.
     var at = indexOfId(channelRows, currentChannelId)
     if (at < 0) at = findChannel(-1, 1, Api.isSelectableChannel)
     if (at >= 0) setChannelCursor(at)
     else channelCursorId = ""
   }
 
-  // --- navigation ---
   function selectGuild(index) {
     if (index < 0 || index >= guildRows.length || !service) return
     setGuildCursor(index)
@@ -581,19 +443,12 @@ Item {
 
   function enterChannels() {
     var index = guildCursor < 0 ? 0 : guildCursor
-    // Read before selectGuild mutates the selection: re-entering the server
-    // that already owns the open channel must not tear the timeline down.
     var target = index >= 0 && index < guildRows.length ? String(guildRows[index].id || "") : ""
     var owned = target !== "" && target === selectedGuildId && currentChannelId !== ""
     selectGuild(index)
     zone = "sidebar"
     column = "channels"
     hint = ""
-    // Open the channel this server was last left on. When its list is already
-    // cached this resolves synchronously, which is why it runs before the
-    // cursor fixup below; otherwise ensureCursors() catches the cursor up when
-    // the list lands. Focus deliberately stays in the channel column — unlike
-    // activateChannel this never drags the keyboard into the composer.
     if (!owned && service) service.enterGuild(target)
     if (currentChannelId && indexOfId(channelRows, currentChannelId) >= 0)
       channelCursorId = currentChannelId
@@ -606,17 +461,10 @@ Item {
     hint = ""
   }
 
-  // `origin` is the zone the activation came from: Enter in the channel list,
-  // a click and a summon leave it empty and focus the composer (PLAN keyboard
-  // contract), while Alt+↑/↓ stepping passes its zone so the keyboard stays
-  // where it was — in the timeline (cursor on the newest row) or the member
-  // pane — instead of being dragged into the composer.
   function activateChannel(index, origin) {
     var row = channelRows[index]
     if (!row || !service) return
-    // A forum is not a channel to read: Enter lists its threads instead.
     if (String(row.type || "") === "forum") { toggleThreads(index); return }
-    // A voice channel is not a channel to read either: Enter joins it.
     if (String(row.type || "") === "voice") { joinVoice(index); return }
     if (!Api.isOpenableChannel(row)) return
     hint = ""
@@ -628,9 +476,6 @@ Item {
     else enterComposer()
   }
 
-  // --- voice ---
-  // Enter on a voice row: join it, or — when it is the call already running —
-  // put the keyboard on the call bar instead of re-joining.
   function joinVoice(index) {
     var row = channelRows[index]
     if (!row || !service) return
@@ -646,7 +491,6 @@ Item {
     callBar.forceActiveFocus()
   }
 
-  // The three call chords, from every zone (Composer forwards its own).
   function voiceAction(action) {
     if (!service) return
     if (action === "mute") service.toggleMute()
@@ -654,10 +498,6 @@ Item {
     else if (action === "leave") service.voiceLeave()
   }
 
-  // t on a channel (or a thread: its parent): list / hide the active
-  // threads beneath it. The list comes from list_threads (cached, refreshed
-  // on channel_update for that parent); until it answers the thread rows
-  // the channel list already carries stand in.
   function toggleThreads(index) {
     var row = channelRows[index]
     if (!row || !service || dmsSelected) return
@@ -666,9 +506,6 @@ Item {
     toggleThreadsFor(id, String(row.id || ""))
   }
 
-  // Expand / collapse a parent by id (the row may not be in the list yet —
-  // `t` from a thread's timeline expands the parent in a guild whose channels
-  // are still loading).
   function toggleThreadsFor(parentId, cursorId) {
     var id = String(parentId || "")
     if (!id || !service) return
@@ -679,14 +516,9 @@ Item {
       service.listThreads(id)
     }
     expandedThreads = next
-    // The cursor is id-keyed: it stays on the row as the list reflows, or
-    // moves up to the parent when the row was one of the threads hidden.
     channelCursorId = next[id] ? String(cursorId || id) : id
   }
 
-  // The parent the open channel's threads hang off: itself for a text /
-  // announcement / forum channel, its parent for a thread. null when `t`
-  // from the timeline has nothing to do (DMs, unknown channel).
   function currentThreadParent() {
     var row = currentChannel
     if (!row) return null
@@ -698,9 +530,6 @@ Item {
     return id ? { guildId: guildId, id: id } : null
   }
 
-  // t from the timeline: the open channel's threads (a thread's parent's),
-  // cursor on the open channel. The parent may live in another guild than
-  // the one the sidebar shows, so select that guild first.
   function toggleCurrentThreads() {
     var target = currentThreadParent()
     if (!target) return
@@ -714,11 +543,8 @@ Item {
     focusZone()
   }
 
-  // --- member pane ---
   function toggleMembers() {
     if (!service) return
-    // The pane is a channel's member list: with nothing open there is
-    // nothing to show, so say so instead of arming it invisibly.
     if (!currentChannelId) { hint = "Open a channel first"; return }
     service.setMembersWanted(!service.membersWanted)
     hint = ""
@@ -760,14 +586,11 @@ Item {
     focusZone()
   }
 
-  // Esc out of the composer: the channel was being read, so ack its newest
-  // row on the way to the timeline.
   function leaveComposer(markRead) {
     if (markRead && service && currentChannelId) service.markChannelRead(currentChannelId)
     enterTimeline()
   }
 
-  // Reply from the timeline's R: reply mode in the composer, focus there.
   function replyTo(messageId) {
     var message = service ? service.findMessage(currentChannelId, messageId) : null
     if (!message) return
@@ -790,18 +613,14 @@ Item {
     else if (column === "channels") leaveChannels()
   }
 
-  // Alt+Up/Down (and Shift for unread only): step through the current list
-  // from the open channel and open the neighbour.
   function stepChannel(delta, unreadOnly) {
     var from = indexOfId(channelRows, currentChannelId)
-    // Open channel not in this list: the cursor row itself is the first candidate.
     if (from < 0) from = channelCursor >= 0 ? channelCursor - delta : (delta > 0 ? -1 : 0)
     var accept = unreadOnly
       ? function(row) { return Api.isOpenableChannel(row) && Api.isUnread(row) }
       : Api.isOpenableChannel
     var next = findChannel(from, delta, accept)
     if (next < 0 || next === from) return
-    // Stepping keeps the keyboard where it is (timeline / member pane).
     activateChannel(next, zone)
   }
 
@@ -817,9 +636,6 @@ Item {
     else sidebarFocus.forceActiveFocus()
   }
 
-  // Tab order: rail -> channels -> timeline -> composer (then its chips) ->
-  // member list -> Members -> Log out -> Close -> rail. Stops that cannot
-  // take focus right now (no open channel, hidden pane or button) are skipped.
   function cycleFocus(delta) {
     var stops = ["rail", "channels", "timeline", "composer", "callbar", "members", "startBackend",
       "membersButton", "logout", "close"]
@@ -833,7 +649,6 @@ Item {
     for (var step = 0; step < stops.length; step++) {
       index = clampCursor(index + delta, stops.length)
       var stop = stops[index]
-      // No zones while the login / status screen covers the panel body.
       if ((stop === "rail" || stop === "channels") && !ready) continue
       if ((stop === "timeline" || stop === "composer") && !currentChannelId) continue
       if (stop === "callbar" && !(ready && callBar.visible)) continue
@@ -857,7 +672,6 @@ Item {
     if (stop === "channels") { enterChannels(); return }
     if (stop === "composer") {
       zone = "composer"
-      // Shift+Tab backwards lands on the last chip first, then the input.
       if (delta < 0 && composerView.chips.length) composerView.focusChip(composerView.chips.length - 1)
       else composerView.focusInput()
       return
@@ -867,8 +681,6 @@ Item {
     focusZone()
   }
 
-  // `r` while the browser is down: start the backend if it is not running,
-  // otherwise re-pull state.
   function retry() {
     if (!service) return
     if (!connected) service.startBackend()
@@ -890,8 +702,6 @@ Item {
     token = ""
   }
 
-  // Panel-level keys. The Timeline and the Composer handle their own keys
-  // first when they have focus and only unhandled ones arrive here.
   function handleKey(event) {
     var key = event.key
     var text = event.text
@@ -900,7 +710,6 @@ Item {
     if (overlayShown) return
     if (handleGlobalKey(event)) return
     if (showLogin) {
-      // Buttons take Enter themselves; the token field takes its text.
       if (key === Qt.Key_Tab || key === Qt.Key_Backtab) cycleLoginFocus(key === Qt.Key_Backtab || shift ? -1 : 1)
       else if (key === Qt.Key_Escape) { if (qrView) leaveQr(); else root.requestClose() }
       else return
@@ -909,9 +718,6 @@ Item {
     }
     if (tokenField.activeFocus) return
     if (!ready) {
-      // The footer promises Tab reaches the buttons: cycleFocus skips every
-      // stop that cannot take focus right now, which down here leaves
-      // Start backend (when it is shown) and Close.
       if (key === Qt.Key_Tab || key === Qt.Key_Backtab) cycleFocus(key === Qt.Key_Backtab || shift ? -1 : 1)
       else if (key === Qt.Key_Escape) root.requestClose()
       else if (text === "r") retry()
@@ -920,8 +726,6 @@ Item {
       return
     }
     if (composerFocused) {
-      // Everything but the channel-stepping chords is text (or chip keys);
-      // Alt+m is claimed by the composer itself (membersRequested).
       if (alt && key === Qt.Key_Down) stepChannel(1, shift)
       else if (alt && key === Qt.Key_Up) stepChannel(-1, shift)
       else return
@@ -930,7 +734,6 @@ Item {
     }
     if (key === Qt.Key_Tab || key === Qt.Key_Backtab) cycleFocus(key === Qt.Key_Backtab || shift ? -1 : 1)
     else if (buttonFocused) {
-      // The button handles Enter/Space itself; Esc returns to the zone.
       if (key !== Qt.Key_Escape) return
       focusZone()
     }
@@ -948,9 +751,6 @@ Item {
   }
 
   function handleSidebarKey(key, text) {
-    // The rail is the end of the Esc ladder: Esc is consumed here so walking
-    // back out can never close the panel. Closing is the Close button, the
-    // window close, the bar widget, or the quickshell.discord.panel IPC.
     if (key === Qt.Key_Escape) {
       if (column === "channels") leaveChannels()
       return true
@@ -977,8 +777,6 @@ Item {
     return true
   }
 
-  // Synthesized-key entry point for offscreen harnesses (mirrors the focus
-  // chain: the timeline first when it owns the zone, then the panel).
   function dispatchKey(event) {
     if (cheatsheetView.shown) { cheatsheetView.handleKey(event); return event.accepted }
     if (pickerView.shown) { pickerView.handleKey(event); return event.accepted }
@@ -994,34 +792,21 @@ Item {
   onGuildRowsChanged: ensureCursors()
   onChannelRowsChanged: ensureCursors()
   onShowLoginChanged: if (showLogin && opened) Qt.callLater(focusLogin)
-  // Switching between the choices and the QR view moves the focus stop.
   onQrViewChanged: if (showLogin && opened) Qt.callLater(focusLogin)
   onWindowActiveChanged: publishActive()
-  // Host-driven and focus-driven transitions share the same two functions.
+  onReadingChanged: if (reading && ready && timelineView.pinned
+    && (focusedZone === "timeline" || focusedZone === "composer")) ackTimer.restart()
   onOpenedChanged: opened ? enter() : leave()
-  // The compositor has the window now. Capture its park workspace the first
-  // time it maps there (the window rule's special workspace), then run any
-  // summon that open() deferred until the recreated surface existed.
 
-  // Fallback for the deferred summon: Quickshell does not always refresh its
-  // toplevel model for a window it just remapped, so onToplevelMappedChanged
-  // may not fire. Retry a few times until the surface has mapped; summonHere
-  // is idempotent, so a late toplevel signal doing it too is harmless.
-  // Quickshell leaves the toplevel model empty until something asks for it,
-  // and only tracks it live from that point on.
   onMappedChanged: publishMapped()
   onScreenNameChanged: publishScreen()
   Component.onCompleted: publishMapped()
   onQrChanged: updateQrCountdown()
-  // Losing the session hides the panes; put the zone and the keyboard focus
-  // back on the rail together (the timeline would otherwise keep focus while
-  // the zone says "rail", and reclaim it when the panes reappear).
   onReadyChanged: {
     if (!ready) { zone = "sidebar"; column = "rail" }
     if (opened) focusZone()
   }
   onMembersVisibleChanged: if (!membersVisible && zone === "members" && opened) { zone = "composer"; focusZone() }
-  // A guild switch drops the expansion state with the rows it applied to.
   onSelectedGuildIdChanged: expandedThreads = ({})
 
   Component.onDestruction: {
@@ -1043,14 +828,11 @@ Item {
     onTriggered: root.updateQrCountdown()
   }
 
-  // Ack-on-read: the timeline reached its newest row while focused and
-  // visible; debounce so a burst of arrivals acks once, and re-check at fire
-  // time that we are still pinned to the bottom.
   Timer {
     id: ackTimer
     interval: 500
     onTriggered: {
-      if (!root.opened || !root.currentChannelId) return
+      if (!root.reading || !root.currentChannelId) return
       if (root.focusedZone !== "timeline" && root.focusedZone !== "composer") return
       if (!timelineView.pinned || !root.service) return
       root.service.markChannelRead(root.currentChannelId)
@@ -1065,7 +847,6 @@ Item {
       Keys.priority: Keys.BeforeItem
       Keys.onPressed: function(event) { root.handleKey(event) }
 
-      // Keyboard owner for the sidebar zone (keys bubble to focusScope).
       Item {
         id: sidebarFocus
         focus: true
@@ -1073,13 +854,6 @@ Item {
         height: 0
       }
 
-      // The panel controls, declared once and reparented between two hosts:
-      // the channel-title row while the client is up, a slim top strip during
-      // the login / QR / status screens. cycleFocus(), focusStop(),
-      // buttonFocused and loginStops() address these buttons by id, so a
-      // second copy would break the Tab cycle (and duplicate ids are illegal
-      // anyway). Anchorless on purpose — anchors cannot survive a reparent;
-      // each host slot sizes itself to the row instead.
       Row {
         id: headerControls
         parent: root.controlsInHeader ? channelControlsSlot : topControlsSlot
@@ -1087,10 +861,6 @@ Item {
 
         Text {
           anchors.verticalCenter: parent.verticalCenter
-          // The status shares a row with the channel title now, so it takes
-          // what that row can spare (statusWidthBudget) and drops out
-          // entirely — the Row skips it and its gap — before the title is
-          // squeezed.
           width: Math.min(implicitWidth, root.statusWidthBudget)
           visible: width > 0
           elide: Text.ElideRight
@@ -1102,9 +872,6 @@ Item {
           font.pixelSize: Style.font.bodySmall
         }
 
-        // All three buttons are reached through the panel's own Tab cycle
-        // (cycleFocus); Qt's tab chain would otherwise capture Tab while a
-        // button has focus and bounce between them.
         Button {
           id: membersButton
           visible: root.ready && root.currentChannelId !== ""
@@ -1135,9 +902,6 @@ Item {
         }
       }
 
-      // The channel a guild entry restored (Service.resolveGuildEntry): its
-      // list may only have landed a moment ago, by which point ensureCursors()
-      // has already parked the cursor on the first row.
       Connections {
         target: root.service
         ignoreUnknownSignals: true
@@ -1148,8 +912,6 @@ Item {
         }
       }
 
-      // Modal overlays above the whole panel; each returns the keyboard to
-      // the last zone when it closes.
       Components.Cheatsheet {
         id: cheatsheetView
         anchors.fill: parent
@@ -1171,11 +933,6 @@ Item {
         anchors.margins: Style.spacing.panelPadding
         spacing: Style.spacing.panelGap
 
-        // The login / QR / status screens have no channel-title row to host
-        // the controls, and neither does a channel-title row too narrow to
-        // hold them, so a slim strip at the top right takes them. It is
-        // hidden (not zero-height) otherwise, so the Column drops its
-        // panelGap too and the body reclaims the whole space.
         Item {
           id: topStrip
           width: parent.width
@@ -1191,17 +948,12 @@ Item {
           }
         }
 
-        // Body
         Item {
           id: body
           width: parent.width
-          // A Column skips invisible children and the gap they would have
-          // added, so the top strip's height and its gap only count while it
-          // is shown.
           height: parent.height - footer.height - parent.spacing
             - (topStrip.visible ? topStrip.height + parent.spacing : 0)
 
-          // Status (backend down / starting / connecting)
           Column {
             anchors.centerIn: parent
             visible: !root.showLogin && !root.ready
@@ -1240,16 +992,12 @@ Item {
                 && !root.service.daemon.running)
               text: "Start backend"
               focusable: true
-              // Reached through cycleFocus like the panel controls; Qt's own
-              // tab chain would otherwise compete for Tab.
               activeFocusOnTab: false
               foreground: root.foreground
               onClicked: if (root.service) root.service.startBackend()
             }
           }
 
-          // Login: Scan QR (default) or paste a token; the QR view takes over
-          // while a flow runs.
           Column {
             anchors.centerIn: parent
             visible: root.showLogin
@@ -1264,7 +1012,6 @@ Item {
               font.pixelSize: Style.font.heading
             }
 
-            // --- QR view ---
             Column {
               id: qrColumn
               width: parent.width
@@ -1274,14 +1021,10 @@ Item {
               Item {
                 id: qrFrame
                 anchors.horizontalCenter: parent.horizontalCenter
-                // Half the backend's 512 px PNG: an exact 2:1 downscale keeps
-                // every module crisp for the phone camera.
                 width: Style.space(256)
                 height: width
                 visible: root.qrStage === "code" || root.qrStage === ""
 
-                // The PNG is rewritten per qr_code; the revision query defeats
-                // Qt's pixmap cache so a fresh code always reloads.
                 Rectangle {
                   anchors.fill: parent
                   radius: Style.cornerRadius
@@ -1310,7 +1053,6 @@ Item {
                 }
               }
 
-              // Scanned: who is logging in.
               Row {
                 anchors.horizontalCenter: parent.horizontalCenter
                 visible: root.qrStage === "scanned"
@@ -1383,7 +1125,6 @@ Item {
               }
             }
 
-            // --- choices: Scan QR / token ---
             Column {
               width: parent.width
               visible: !root.qrView
@@ -1449,13 +1190,11 @@ Item {
             }
           }
 
-          // Three-column client
           Row {
             anchors.fill: parent
             visible: root.ready
             spacing: Style.spacing.panelGap
 
-            // Guild rail
             BorderSurface {
               id: railPane
               objectName: "server-rail"
@@ -1493,7 +1232,6 @@ Item {
                   width: guildList.width
                   height: Style.space(48)
 
-                  // Selected-guild indicator along the left edge.
                   Rectangle {
                     anchors.left: parent.left
                     anchors.verticalCenter: parent.verticalCenter
@@ -1530,11 +1268,8 @@ Item {
                       font.bold: guildRow.unread
                     }
 
-                    // Guild icon through the media cache, masked to the tile
-                    // shape; the initials stay until it lands.
                   }
 
-                  // Mention badge, bottom-right of the tile.
                   Rectangle {
                     visible: guildRow.mentions > 0
                     anchors.right: guildTile.right
@@ -1577,7 +1312,6 @@ Item {
               }
             }
 
-            // Channel list
             BorderSurface {
               id: channelPane
               objectName: "channel-pane"
@@ -1593,8 +1327,6 @@ Item {
               Column {
                 anchors.fill: parent
                 anchors.margins: Style.spacing.sm
-                // The call bar is pinned to the bottom of this pane, so the
-                // list is short by exactly its height while a call is up.
                 anchors.bottomMargin: Style.spacing.sm
                   + (callBar.visible ? callBar.height + Style.spacing.sm : 0)
                 spacing: Style.spacing.xs
@@ -1643,12 +1375,8 @@ Item {
                     readonly property bool unread: Api.isUnread(row)
                     readonly property int mentions: Number(row.mention_count) || 0
                     readonly property bool voice: type === "voice"
-                    // The call is on this row (Enter focuses the call bar
-                    // instead of joining again).
                     readonly property bool joined: voice && root.activeVoiceChannelId !== ""
                       && root.activeVoiceChannelId === String(row.id || "")
-                    // Occupants come straight off voice_members: each user
-                    // carries its own name and avatar, so nothing is resolved.
                     readonly property var occupants: voice && root.service
                       ? root.service.voiceUsers(root.selectedGuildId, String(row.id || "")) : []
                     readonly property bool dim: !!row.muted || (!unread && !open && !joined)
@@ -1710,10 +1438,6 @@ Item {
                         font.pixelSize: Style.font.body
                         font.bold: channelRow.unread
                       }
-                      // The right-hand count: "⌥ N threads" on a channel
-                      // that has them (t lists them beneath), the occupant
-                      // count on a voice channel. A voice channel never
-                      // carries threads, so the slot is never contested.
                       Text {
                         id: rowHint
                         anchors.right: channelBadge.visible ? channelBadge.left
@@ -1769,16 +1493,11 @@ Item {
                           root.zone = "sidebar"
                           root.column = "channels"
                           root.activateChannel(channelRow.index)
-                          // A forum row only expands; the zone must still
-                          // take the keyboard.
                           root.focusZone()
                         }
                       }
                     }
 
-                    // Who is in the voice channel, indented beneath it. The
-                    // ring is voice_speaking; the rows are not focus stops
-                    // (there is nothing to do to a participant).
                     Column {
                       anchors.top: channelSurface.bottom
                       anchors.left: parent.left
@@ -1844,11 +1563,6 @@ Item {
                 }
               }
 
-              // The call, while there is one: pinned to the bottom of the
-              // channel column (the list above shrinks by exactly its
-              // height), so the channel you are reading and the channel you
-              // are talking in can differ without either one hiding, and the
-              // composer is never crowded.
               Components.CallBar {
                 id: callBar
                 anchors.left: parent.left
@@ -1865,32 +1579,20 @@ Item {
                 secondary: root.muted
                 accent: root.accent
                 fontFamily: root.fontFamily
-                // Hanging up while the bar holds the keyboard (Tab'd here
-                // from the timeline, or Ctrl+Shift+H) takes the focused item
-                // out from under the focus: hand it back to the zone, the
-                // same place Esc would have put it.
                 onVisibleChanged: if (!visible && activeFocus) root.focusZone()
               }
             }
 
-            // Timeline column
             Column {
               width: parent.width - railPane.width - channelPane.width - parent.spacing * 2
                 - (membersView.visible ? membersView.width + parent.spacing : 0)
               height: parent.height
               spacing: Style.spacing.xs
 
-              // Channel header: name + topic on the left, the panel controls
-              // (status + Members / Log out / Close) right-aligned on the
-              // same row.
               Item {
                 id: channelHeader
                 width: parent.width
                 height: root.controlsRowHeight
-                // The controls cannot overflow this row (controlsInHeader
-                // hosts them elsewhere long before that), but they are
-                // reparented in and out of it and a single frame of stale
-                // geometry would paint over the channel list and the rail.
                 clip: true
 
                 Text {
@@ -1898,10 +1600,6 @@ Item {
                   anchors.left: parent.left
                   anchors.leftMargin: Style.spacing.sm
                   anchors.verticalCenter: parent.verticalCenter
-                  // Thread titles ("#parent › thread") can be long: elide
-                  // before the controls, leaving the topic what is left.
-                  // channelTitleFloor keeps this above zero while the
-                  // controls are hosted here; the clamp covers the rest.
                   width: Math.min(implicitWidth, Math.max(0, parent.width
                     - Style.spacing.sm * 2 - channelControlsSlot.width
                     - Style.spacing.controlGap))
@@ -1925,10 +1623,6 @@ Item {
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.bodySmall
                 }
-                // Reserved seat for the panel controls, declared last so they
-                // paint above the title and topic. Zero-width while the
-                // controls live in the top strip, and always present so the
-                // two Texts have a legal sibling to anchor against.
                 Item {
                   id: channelControlsSlot
                   anchors.right: parent.right
@@ -1952,7 +1646,7 @@ Item {
                 selfId: root.service ? root.service.selfId : ""
                 lastReadMessageId: root.currentEntry ? String(root.currentEntry.unreadMarkerId || "") : ""
                 active: root.focusedZone === "timeline" && root.ready
-                viewing: (root.focusedZone === "timeline" || root.focusedZone === "composer") && root.ready
+                viewing: root.reading && (root.focusedZone === "timeline" || root.focusedZone === "composer") && root.ready
                 ctx: root.service ? root.service.markdownCtx : ({})
 
                 onRequestHistory: function(beforeId) {
@@ -1964,7 +1658,7 @@ Item {
                 onCopyRequested: function(text) { root.copyRequested(text) }
                 onCopied: if (root.service) root.service.succeed("Copied to clipboard")
                 onLinkCopied: if (root.service) root.service.succeed("Copied link to clipboard")
-                onReachedBottom: if (root.opened && (root.focusedZone === "timeline" || root.focusedZone === "composer")) ackTimer.restart()
+                onReachedBottom: if (root.reading && (root.focusedZone === "timeline" || root.focusedZone === "composer")) ackTimer.restart()
                 onActiveFocusChanged: if (activeFocus && root.zone !== "timeline") root.zone = "timeline"
                 onPinnedChanged: root.publishPinned()
                 onReplyRequested: function(messageId) { root.replyTo(messageId) }
@@ -2011,7 +1705,6 @@ Item {
               }
             }
 
-            // Member pane (m): a zone only while visible.
             Components.MemberList {
               id: membersView
               objectName: "members"
@@ -2035,7 +1728,6 @@ Item {
           }
         }
 
-        // Footer: key hints + redacted error
         Column {
           id: footer
           width: parent.width
@@ -2075,8 +1767,6 @@ Item {
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
           }
-          // Key hints come from the same table as the cheatsheet (Keymap.js),
-          // so the two cannot drift.
           Text {
             width: parent.width
             elide: Text.ElideRight
@@ -2090,8 +1780,6 @@ Item {
               }
               if (root.callBarFocused) return Keymap.footer("voice")
               if (root.buttonFocused) {
-                // Esc goes where focusZone() goes: the last zone, unless it
-                // needs an open channel that is gone.
                 var back = (root.zone === "timeline" || root.zone === "composer" || root.zone === "members") && !root.currentChannelId ? "sidebar"
                   : (root.zone === "composer" ? "the composer" : (root.zone === "members" ? "the member list" : root.zone))
                 return Keymap.footer("global.activate", "global.tabCycle", { id: "global.escBack", hint: "back to " + back })

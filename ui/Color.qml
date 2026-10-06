@@ -2,11 +2,6 @@ pragma Singleton
 import QtQuick
 import "BorderGeometry.js" as Geometry
 
-// Color surfaces for the shell. Foundational palette (foreground, background,
-// accent, urgent) comes from theme/colors.toml. Per-surface roles come from
-// theme/shell.toml — generated per theme from default/themed/shell.toml.tpl,
-// or shipped directly by a theme to replace the generated file. Surfaces that
-// don't appear in shell.toml fall back to the foundational palette.
 QtObject {
   id: root
 
@@ -17,9 +12,6 @@ QtObject {
   property color urgent: "#a55555"
   property color muted: "#707880"
 
-  // Flat dictionary of "section.key" -> raw string from shell.toml.
-  // Reassigning this whole property is what makes surface bindings below
-  // re-evaluate when the theme swaps; mutating it in place would not.
   property var shellValues: ({})
 
   function pick(key, fallback) {
@@ -43,10 +35,13 @@ QtObject {
     return value
   }
 
-  function flatColor(value, fallback) {
+  function flatColor(value, fallback, seen) {
     var token = firstColorToken(value)
     var role = String(token || "").replace(/^\s+|\s+$/g, "").toLowerCase()
-    if (root.shellValues[role] && root.shellValues[role] !== token) return flatColor(root.shellValues[role], fallback)
+    var visited = seen || ({})
+    if (visited[role]) return fallback
+    visited[role] = true
+    if (root.shellValues[role] && root.shellValues[role] !== token) return flatColor(root.shellValues[role], fallback, visited)
     if (role === "foreground" || role === "text") return root.foreground
     if (role === "accent") return root.accent
     if (role === "urgent") return root.urgent
@@ -59,8 +54,6 @@ QtObject {
     return color
   }
 
-  // Compose a color from a base-color key and its `-alpha` companion. If the
-  // base token is a gradient, color-only consumers use the first stop.
   function composed(colorKey, alphaKey, colorFallback, alphaFallback) {
     return Util.alpha(flatColor(pick(colorKey, colorFallback), colorFallback), pickAlpha(alphaKey, alphaFallback))
   }
@@ -95,9 +88,6 @@ QtObject {
     property color selectedText: root.pick("menu.selected-text", root.accent)
     property color selectedBorder: root.composed("menu.selected-border", "menu.selected-border-alpha", root.foreground, 0.0)
   }
-  // polkit + lock share a single border-alpha across border / border-active /
-  // border-error: the three states are mutually exclusive in time, so one
-  // companion is enough.
   readonly property QtObject polkit: QtObject {
     property color background: root.composed("polkit.background", "polkit.background-alpha", root.background, 1.0)
     property color text: root.pick("polkit.text", root.foreground)
@@ -117,9 +107,6 @@ QtObject {
     property color borderError: root.composed("lock.border-error", "lock.border-alpha", root.urgent, 1.0)
     property color selection: root.composed("lock.selection", "lock.selection-alpha", root.accent, 0.45)
   }
-  // The image picker has no card surface; `scrim` is the full-screen dim
-  // wash, and per-slice dim overlays / text outlines use the foundational
-  // `background` color directly.
   readonly property QtObject imagePicker: QtObject {
     property color scrim: root.composed("image-picker.scrim", "image-picker.scrim-alpha", root.background, 0.5)
     property color text: root.pick("image-picker.text", root.foreground)
@@ -142,9 +129,6 @@ QtObject {
       if (!match) continue
       if (match[1] === "foreground") { foreground = match[2]; loadedForeground = true }
       else if (match[1] === "background") { background = match[2]; loadedBackground = true }
-      // Prefer the explicit `accent` key; only fall back to color4 when the
-      // theme doesn't define a separate accent. color4 appears later in the
-      // file so the old single-property approach clobbered accent with it.
       else if (match[1] === "accent") { accent = match[2]; foundAccent = true }
       else if (match[1] === "muted") { muted = match[2]; foundMuted = true }
       else if (match[1] === "color0") color0Value = match[2]
@@ -159,17 +143,9 @@ QtObject {
     if (!foundMuted) muted = color8Value.length > 0 ? color8Value : foreground
   }
 
-  // Last theme-supplied and user-supplied shell.toml dicts, kept separate so
-  // either can be reloaded without re-reading the other. `shellValues` is
-  // always the merge of theme (base) and user (override) — see mergeShell.
   property var themeShellValues: ({})
   property var userShellValues: ({})
 
-  // Single TOML walker for shell.toml. Both Color (surface roles) and Style
-  // (typography, spacing, bar, control states) consume the resulting dict.
-  // Accepts quoted strings, bare numeric values, bare width lists, and bare
-  // role names; tolerates inline comments. Numbers are kept as strings here —
-  // readers coerce when they pull a value.
   function parseShell(raw) {
     var parsed = {}
     var text = String(raw || "")
@@ -193,9 +169,6 @@ QtObject {
     return parsed
   }
 
-  // Re-derive `shellValues` from theme base + user override and push it to
-  // Style. User keys win, so a machine-level `~/.config/omarchy/shell.toml`
-  // survives theme switches (which replace only themeShellValues).
   function mergeShell() {
     var merged = {}
     for (var tk in themeShellValues) merged[tk] = themeShellValues[tk]
@@ -214,9 +187,4 @@ QtObject {
     mergeShell()
   }
 
-  // Startup load only. Runtime theme switches push the payload explicitly
-  // through shell IPC.
-  // Machine-level override, layered on top of whatever theme is active. This
-  // is where `omarchy display text size` writes `[font] base-size`. Watched so the
-  // CLI takes effect live without restarting the shell; absent by default.
 }

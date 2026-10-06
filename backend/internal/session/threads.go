@@ -11,11 +11,8 @@ import (
 	"github.com/mattcalayo/omarchy-discord/backend/internal/protocol"
 )
 
-// errUnknownChannel is returned by Threads for an uncached parent.
 var errUnknownChannel = errors.New("unknown channel")
 
-// Threads lists the active (unarchived) cached threads of a text channel,
-// newest activity first. errUnknownChannel when the parent is not cached.
 func Threads(n *ningen.State, parentID discord.ChannelID) ([]protocol.Channel, error) {
 	parent, err := n.Cabinet.Channel(parentID)
 	if err != nil {
@@ -47,7 +44,6 @@ func Threads(n *ningen.State, parentID discord.ChannelID) ([]protocol.Channel, e
 	return out, nil
 }
 
-// listThreads implements the list_threads command.
 func (m *Manager) listThreads(req *protocol.Request) (any, *protocol.Error) {
 	var p protocol.ListThreadsParams
 	if e := req.Params(&p); e != nil {
@@ -68,9 +64,6 @@ func (m *Manager) listThreads(req *protocol.Request) (any, *protocol.Error) {
 	return protocol.ListThreadsResult{Threads: threads}, nil
 }
 
-// installChannelHandlers turns gateway channel/thread lifecycle events into
-// channel_update broadcasts. Handlers are sync on ningen's handler, so the
-// cabinet already reflects the change.
 func (m *Manager) installChannelHandlers(n *ningen.State) {
 	live := func() bool {
 		m.mu.Lock()

@@ -23,15 +23,11 @@ import (
 )
 
 const (
-	// typingInterval is the self-throttle for outbound typing per channel.
-	typingInterval = 10 * time.Second
-	// contentLimit / contentLimitNitro bound message content (runes).
+	typingInterval    = 10 * time.Second
 	contentLimit      = 2000
 	contentLimitNitro = 4000
 )
 
-// restOps are the write calls against Discord. Tests replace them; the
-// defaults go through the live session's REST client.
 type restOps struct {
 	send      func(ctx context.Context, n *ningen.State, chID discord.ChannelID, data api.SendMessageData) (*discord.Message, error)
 	edit      func(ctx context.Context, n *ningen.State, chID discord.ChannelID, msgID discord.MessageID, content string) error
@@ -47,10 +43,6 @@ func liveREST() restOps {
 		send: func(ctx context.Context, n *ningen.State, chID discord.ChannelID, data api.SendMessageData) (*discord.Message, error) {
 			client := n.Client.WithContext(ctx)
 			if len(data.Files) > 0 {
-				// arikawa retries 429/5xx by re-sending the request, but the
-				// multipart body is a pipe that is consumed on the first
-				// attempt; a retry would send a corrupt body. One attempt,
-				// and the caller reports rate_limited / discord_error.
 				client.Retries = 1
 			}
 			return client.SendMessageComplex(chID, data)
@@ -77,13 +69,11 @@ func liveREST() restOps {
 	}
 }
 
-// typingThrottle remembers the last outbound typing call per channel.
 type typingThrottle struct {
 	mu   sync.Mutex
 	last map[discord.ChannelID]time.Time
 }
 
-// allow reports whether a typing call may go out now and records it if so.
 func (t *typingThrottle) allow(chID discord.ChannelID, now time.Time) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -97,7 +87,6 @@ func (t *typingThrottle) allow(chID discord.ChannelID, now time.Time) bool {
 	return true
 }
 
-// newNonce returns 16 random hex characters.
 func newNonce() string {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -106,8 +95,6 @@ func newNonce() string {
 	return hex.EncodeToString(b[:])
 }
 
-// sanitizeEmoji strips U+FE0F variation selectors (the REST call 400s on
-// them) and validates the shape: unicode, or "name:id" for custom emoji.
 func sanitizeEmoji(s string) (discord.APIEmoji, *protocol.Error) {
 	s = strings.ReplaceAll(strings.TrimSpace(s), "\ufe0f", "")
 	if s == "" {
@@ -124,8 +111,6 @@ func sanitizeEmoji(s string) (discord.APIEmoji, *protocol.Error) {
 	return discord.APIEmoji(s), nil
 }
 
-// liveSession returns the session for write commands: it must exist, have
-// seen READY, and currently be connected.
 func (m *Manager) liveSession() (*ningen.State, *protocol.Error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -138,7 +123,6 @@ func (m *Manager) liveSession() (*ningen.State, *protocol.Error) {
 	return m.n, nil
 }
 
-// requireOpen checks that the connection has the channel open.
 func requireOpen(ctx context.Context, chID string) (socket.Client, *protocol.Error) {
 	c := socket.ClientFromContext(ctx)
 	if c == nil || !c.HasOpen(chID) {
@@ -147,9 +131,6 @@ func requireOpen(ctx context.Context, chID string) (socket.Client, *protocol.Err
 	return c, nil
 }
 
-// restError maps a REST failure on any command. A 401 means the token is
-// dead: the session is moved to reauth_needed and the command fails with
-// not_logged_in. 404 maps to unknown_message for message-scoped calls.
 func (m *Manager) restError(n *ningen.State, err error, messageScoped bool) *protocol.Error {
 	var herr *httputil.HTTPError
 	if errors.As(err, &herr) {
@@ -166,8 +147,6 @@ func (m *Manager) restError(n *ningen.State, err error, messageScoped bool) *pro
 	return discordError(err)
 }
 
-// reauthFromREST handles a REST 401 on the live session: stop the gateway
-// loop, drop the token, clear the keyring, keep the cache read-only.
 func (m *Manager) reauthFromREST(n *ningen.State, cause error) {
 	m.mu.Lock()
 	if m.n != n || m.lifecycle == protocol.LifecycleReauthNeeded {
@@ -179,21 +158,16 @@ func (m *Manager) reauthFromREST(n *ningen.State, cause error) {
 		m.cancel = nil
 	}
 	m.token = ""
-	// The session is done: the call goes with it, even though the cache
-	// stays readable.
 	v := m.voice
 	m.voice, m.voiceState = nil, idleVoice
 	m.setLifecycleLocked(protocol.LifecycleReauthNeeded, "session invalidated: "+cause.Error())
 	m.mu.Unlock()
-	// Close the gateway off the command path; a later login's teardown
-	// tolerates an already-closed session.
 	go closeAndWait(n, nil, v)
 	if err := m.kr.Clear(context.Background()); err != nil {
 		redact.Logf("session: keyring clear after 401: %v", err)
 	}
 }
 
-// validateContent checks message text length against the account's cap.
 func validateContent(n *ningen.State, content string, allowEmpty bool) *protocol.Error {
 	if strings.TrimSpace(content) == "" {
 		if allowEmpty {
@@ -211,8 +185,6 @@ func validateContent(n *ningen.State, content string, allowEmpty bool) *protocol
 	return nil
 }
 
-// sendData builds SendMessageData for send/upload: nonce always set, reply
-// reference and reply mention when requested.
 func sendData(content, nonce, replyTo string, replyMention *bool) (api.SendMessageData, *protocol.Error) {
 	data := api.SendMessageData{Content: content, Nonce: nonce}
 	if replyTo != "" {
@@ -230,7 +202,6 @@ func sendData(content, nonce, replyTo string, replyMention *bool) (api.SendMessa
 	return data, nil
 }
 
-// send implements the send command.
 func (m *Manager) send(ctx context.Context, req *protocol.Request) (any, *protocol.Error) {
 	var p protocol.SendParams
 	if e := req.Params(&p); e != nil {
@@ -261,8 +232,6 @@ func (m *Manager) send(ctx context.Context, req *protocol.Request) (any, *protoc
 	return protocol.SendResult{MessageID: msg.ID.String(), Nonce: data.Nonce}, nil
 }
 
-// messageTarget parses the channel/message pair shared by edit/delete/react
-// and checks the channel is open on this connection.
 func (m *Manager) messageTarget(ctx context.Context, chStr, msgStr string) (*ningen.State, discord.ChannelID, discord.MessageID, *protocol.Error) {
 	chSF, e := parseSnowflake(chStr, "channel_id")
 	if e != nil {
@@ -282,7 +251,6 @@ func (m *Manager) messageTarget(ctx context.Context, chStr, msgStr string) (*nin
 	return n, discord.ChannelID(chSF), discord.MessageID(msgSF), nil
 }
 
-// edit implements the edit command (own messages only).
 func (m *Manager) edit(ctx context.Context, req *protocol.Request) (any, *protocol.Error) {
 	var p protocol.EditParams
 	if e := req.Params(&p); e != nil {
@@ -307,7 +275,6 @@ func (m *Manager) edit(ctx context.Context, req *protocol.Request) (any, *protoc
 	return protocol.EmptyResult{}, nil
 }
 
-// deleteMessage implements the delete command.
 func (m *Manager) deleteMessage(ctx context.Context, req *protocol.Request) (any, *protocol.Error) {
 	var p protocol.DeleteParams
 	if e := req.Params(&p); e != nil {
@@ -323,7 +290,6 @@ func (m *Manager) deleteMessage(ctx context.Context, req *protocol.Request) (any
 	return protocol.EmptyResult{}, nil
 }
 
-// react implements react (add=true) and unreact (add=false).
 func (m *Manager) react(ctx context.Context, req *protocol.Request, add bool) (any, *protocol.Error) {
 	var p protocol.ReactParams
 	if e := req.Params(&p); e != nil {
@@ -347,8 +313,6 @@ func (m *Manager) react(ctx context.Context, req *protocol.Request, add bool) (a
 	return protocol.EmptyResult{}, nil
 }
 
-// typing implements the typing command with the per-channel throttle; a
-// throttled call still succeeds.
 func (m *Manager) typing(ctx context.Context, req *protocol.Request) (any, *protocol.Error) {
 	var p protocol.TypingParams
 	if e := req.Params(&p); e != nil {
@@ -375,7 +339,6 @@ func (m *Manager) typing(ctx context.Context, req *protocol.Request) (any, *prot
 	return protocol.EmptyResult{}, nil
 }
 
-// setPresence implements set_presence.
 func (m *Manager) setPresence(req *protocol.Request) (any, *protocol.Error) {
 	var p protocol.SetPresenceParams
 	if e := req.Params(&p); e != nil {

@@ -13,8 +13,6 @@ import (
 	"github.com/mattcalayo/omarchy-discord/backend/internal/panics"
 )
 
-// installHandlers forwards arikawa's two voice events to disgo. Sync handlers
-// keep Discord's order (state update first, then server update).
 func (e *Engine) installHandlers() {
 	e.n.AddSyncHandler(func(ev *gateway.VoiceStateUpdateEvent) {
 		defer panics.Recover("voice: voice_state_update")
@@ -25,7 +23,6 @@ func (e *Engine) installHandlers() {
 			mgr.HandleVoiceStateUpdate(toVoiceState(ev))
 		}
 		if self.IsValid() && ev.UserID == self {
-			// Off the dispatch goroutine: Join blocks on this very event.
 			panics.Go("voice: self state", func() { e.onSelfState(gen, ev.GuildID, ev.ChannelID) })
 		}
 	})
@@ -40,11 +37,6 @@ func (e *Engine) installHandlers() {
 	})
 }
 
-// onSelfState tracks our own voice state in the call's guild: the server
-// moved us, or dropped us (channel 0 once connected). While connecting a
-// channel-0 echo is the previous call's leave (Join sends op 4 leave and op 4
-// join back to back, and the echoes land after gen was bumped); a refused
-// join surfaces as Join's timeout instead.
 func (e *Engine) onSelfState(gen uint64, guildID discord.GuildID, channelID discord.ChannelID) {
 	e.update(func() func() {
 		if gen != e.gen || guildID != e.st.GuildID || (e.st.Status != StatusConnecting && e.st.Status != StatusConnected) {
@@ -64,7 +56,6 @@ func (e *Engine) onSelfState(gen uint64, guildID discord.GuildID, channelID disc
 	})
 }
 
-// stateUpdate is disgo's StateUpdateFunc: op 4 over the main gateway.
 func (e *Engine) stateUpdate(ctx context.Context, guildID snowflake.ID, channelID *snowflake.ID, mute, deaf bool) error {
 	cmd := &gateway.UpdateVoiceStateCommand{GuildID: discord.GuildID(guildID), SelfMute: mute, SelfDeaf: deaf}
 	if channelID != nil {
@@ -78,7 +69,6 @@ func (e *Engine) stateUpdate(ctx context.Context, guildID snowflake.ID, channelI
 	return gw.Send(ctx, cmd)
 }
 
-// toVoiceState converts arikawa → disgo; ChannelID 0 → nil (left).
 func toVoiceState(ev *gateway.VoiceStateUpdateEvent) dgateway.EventVoiceStateUpdate {
 	u := dgateway.EventVoiceStateUpdate{VoiceState: ddiscord.VoiceState{
 		GuildID: snowflake.ID(ev.GuildID), UserID: snowflake.ID(ev.UserID), SessionID: ev.SessionID,
@@ -92,7 +82,6 @@ func toVoiceState(ev *gateway.VoiceStateUpdateEvent) dgateway.EventVoiceStateUpd
 	return u
 }
 
-// toVoiceServer converts arikawa → disgo; Endpoint "" → nil (no server yet).
 func toVoiceServer(ev *gateway.VoiceServerUpdateEvent) dgateway.EventVoiceServerUpdate {
 	u := dgateway.EventVoiceServerUpdate{Token: ev.Token, GuildID: snowflake.ID(ev.GuildID)}
 	if ev.Endpoint != "" {

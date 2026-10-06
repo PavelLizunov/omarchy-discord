@@ -12,8 +12,6 @@ import (
 	"github.com/mattcalayo/omarchy-discord/backend/internal/protocol"
 )
 
-// AllowedChannelTypes mirrors dissent's gtkcord.AllowedChannelTypes: what the
-// sidebar shows and what counts toward guild unread state.
 var AllowedChannelTypes = []discord.ChannelType{
 	discord.GuildText,
 	discord.GuildCategory,
@@ -79,7 +77,6 @@ func wireUser(u discord.User) protocol.User {
 	}
 }
 
-// mentionCount reads the per-channel mention count from ningen's read state.
 func mentionCount(n *ningen.State, chID discord.ChannelID) int {
 	if rs := n.ReadState.ReadState(chID); rs != nil {
 		return rs.MentionCount
@@ -87,8 +84,6 @@ func mentionCount(n *ningen.State, chID discord.ChannelID) int {
 	return 0
 }
 
-// lastReadMessageID reads the account's read marker from ningen's read state;
-// nil when the channel has none.
 func lastReadMessageID(n *ningen.State, chID discord.ChannelID) *string {
 	if rs := n.ReadState.ReadState(chID); rs != nil {
 		return optSnowflake(discord.Snowflake(rs.LastMessageID))
@@ -96,8 +91,6 @@ func lastReadMessageID(n *ningen.State, chID discord.ChannelID) *string {
 	return nil
 }
 
-// orderedGuilds returns the cached guilds in the user's configured order
-// (guild folders, then legacy positions, then anything unlisted by name).
 func orderedGuilds(n *ningen.State) ([]discord.Guild, error) {
 	gs, err := n.Cabinet.Guilds()
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
@@ -133,7 +126,6 @@ func orderedGuilds(n *ningen.State) ([]discord.Guild, error) {
 	return gs, nil
 }
 
-// Guilds lists the account's guilds as wire objects in display order.
 func Guilds(n *ningen.State) ([]protocol.Guild, error) {
 	gs, err := orderedGuilds(n)
 	if err != nil {
@@ -163,10 +155,8 @@ func Guilds(n *ningen.State) ([]protocol.Guild, error) {
 	return out, nil
 }
 
-// ErrUnknownGuild is returned by Channels for a guild not in the session.
 var ErrUnknownGuild = errors.New("unknown guild")
 
-// Channels lists a guild's visible channels in category-grouped display order.
 func Channels(n *ningen.State, guildID discord.GuildID) ([]protocol.Channel, error) {
 	if _, err := n.Cabinet.Guild(guildID); err != nil {
 		return nil, ErrUnknownGuild
@@ -183,9 +173,6 @@ func Channels(n *ningen.State, guildID discord.GuildID) ([]protocol.Channel, err
 	return out, nil
 }
 
-// displayOrder sorts like the official client: uncategorized channels first,
-// then each category (by position) followed by its children; within a group,
-// text-like channels precede voice, then by position, then by id.
 func displayOrder(chs []discord.Channel) []discord.Channel {
 	isCat := map[discord.ChannelID]bool{}
 	for _, ch := range chs {
@@ -269,7 +256,6 @@ func wireChannel(n *ningen.State, ch discord.Channel) protocol.Channel {
 	return c
 }
 
-// DMs lists private channels, most recent message first.
 func DMs(n *ningen.State) ([]protocol.Channel, error) {
 	chs, err := n.PrivateChannels()
 	if err != nil {
@@ -282,7 +268,6 @@ func DMs(n *ningen.State) ([]protocol.Channel, error) {
 	return out, nil
 }
 
-// UnreadDM returns the most recent unread DM channel id, or nil.
 func UnreadDM(n *ningen.State) *string {
 	chs, err := n.PrivateChannels()
 	if err != nil {

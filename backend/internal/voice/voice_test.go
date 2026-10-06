@@ -96,8 +96,6 @@ func TestGateHold(t *testing.T) {
 	}
 }
 
-// While alone in the channel nobody pulls; speech captured then must not be
-// sent once someone joins.
 func TestIdleQueueDropsOldest(t *testing.T) {
 	c, err := newCapture(slog.Default())
 	if err != nil {
@@ -107,7 +105,7 @@ func TestIdleQueueDropsOldest(t *testing.T) {
 		c.frame(tone(8000))
 	}
 	c.hold = 0
-	for i := 0; i < cap(c.frames); i++ { // speech over: gated frames flush the queue
+	for i := 0; i < cap(c.frames); i++ {
 		c.frame(tone(0))
 	}
 	for i := 0; i < cap(c.frames); i++ {
@@ -123,12 +121,12 @@ func TestMuteDropsCapturedAudio(t *testing.T) {
 		t.Fatal(err)
 	}
 	loud := tone(8000)
-	c.frame(loud) // encoded and queued before the mute
+	c.frame(loud)
 	if _, err := c.write(loud[:frameLen/2]); err != nil {
 		t.Fatal(err)
 	}
 	c.setMuted(true)
-	if _, err := c.write(loud[frameLen/2:]); err != nil { // must not complete the pending half
+	if _, err := c.write(loud[frameLen/2:]); err != nil {
 		t.Fatal(err)
 	}
 	if len(c.frames) != 0 || c.n != 0 {
@@ -148,7 +146,7 @@ func TestMuteDropsCapturedAudio(t *testing.T) {
 
 func TestQueueOrdering(t *testing.T) {
 	u := &user{}
-	for _, s := range []uint16{12, 10, 11, 11, 9} { // out of order, a dup, then late once primed
+	for _, s := range []uint16{12, 10, 11, 11, 9} {
 		u.push(frame{seq: s, opus: []byte{byte(s)}})
 	}
 	for _, want := range []uint16{9, 10, 11, 12} {
@@ -160,11 +158,10 @@ func TestQueueOrdering(t *testing.T) {
 	if len(u.q) != 0 {
 		t.Fatal("duplicate must be dropped")
 	}
-	u.push(frame{seq: 5}) // late: next is 13
+	u.push(frame{seq: 5})
 	if len(u.q) != 0 {
 		t.Fatal("late frame must be dropped")
 	}
-	// Gap → PLC, then the frame after the gap.
 	u.push(frame{seq: 14})
 	if f, plc := u.take(); f != nil || !plc {
 		t.Fatal("missing 13 must conceal")
@@ -172,7 +169,6 @@ func TestQueueOrdering(t *testing.T) {
 	if f, _ := u.take(); f == nil || f.seq != 14 {
 		t.Fatal("14 must follow the concealed frame")
 	}
-	// Empty queue conceals up to maxPLC, then the stream ends and re-primes.
 	for i := 0; i < maxPLC; i++ {
 		if _, plc := u.take(); !plc {
 			t.Fatalf("PLC %d expected", i)
@@ -181,11 +177,10 @@ func TestQueueOrdering(t *testing.T) {
 	if f, plc := u.take(); f != nil || plc {
 		t.Fatal("stream must end after maxPLC")
 	}
-	u.push(frame{seq: 3}) // sequence reset after silence: accepted, not "late"
+	u.push(frame{seq: 3})
 	if len(u.q) != 1 {
 		t.Fatal("unprimed queue must accept any sequence")
 	}
-	// Overflow drops the oldest.
 	u = &user{}
 	for s := uint16(0); s < queueCap+2; s++ {
 		u.push(frame{seq: s})
@@ -229,7 +224,7 @@ func TestMixerSaturation(t *testing.T) {
 		t.Fatal("read must fill")
 	}
 	peak := int16(0)
-	for _, s := range out[frameLen:] { // skip the first frame: opus pre-skip
+	for _, s := range out[frameLen:] {
 		if s > peak {
 			peak = s
 		}
@@ -241,7 +236,7 @@ func TestMixerSaturation(t *testing.T) {
 	if len(events) != 6 {
 		t.Fatalf("Close must clear speaking for every user: %v", events)
 	}
-	r.Close() // idempotent
+	r.Close()
 }
 
 func TestSpeakingSilenceAndTimeout(t *testing.T) {
@@ -272,7 +267,7 @@ func TestSpeakingSilenceAndTimeout(t *testing.T) {
 	next(true, "deafened still tracks")
 	r.mu.Lock()
 	after := len(r.users[7].q)
-	r.users[7].timer.Reset(0) // stand in for 250 ms without packets
+	r.users[7].timer.Reset(0)
 	r.mu.Unlock()
 	if after != before {
 		t.Fatal("deafened must drop packets")
@@ -287,8 +282,6 @@ func TestSpeakingSilenceAndTimeout(t *testing.T) {
 	}
 }
 
-// TestEngineOffline exercises the lock/emission flow without a session:
-// flags persist while idle, Join refuses before READY, Leave is idempotent.
 func TestEngineOffline(t *testing.T) {
 	var states []State
 	e := New(ningen.New("not-a-token"), Events{State: func(s State) { states = append(states, s) }}, nil)
@@ -312,9 +305,6 @@ func TestEngineOffline(t *testing.T) {
 	}
 }
 
-// harness drives the engine offline: the real disgo manager with stubConn
-// behind it, op 4 and audio replaced by recorders, self voice-state echoes
-// injected through arikawa's handler like the gateway would.
 type harness struct {
 	t      *testing.T
 	e      *Engine
@@ -322,12 +312,9 @@ type harness struct {
 	log    []string
 	states []State
 	lost   atomic.Bool
-	block  chan struct{} // op 4 with a channel blocks on it when set
+	block  chan struct{}
 }
 
-// stubConn: Open sends op 4 join and blocks until the join echo (as disgo's
-// does until the session description); Close sends op 4 leave and removes
-// itself from the manager.
 type stubConn struct {
 	dvoice.Conn
 	h      *harness
@@ -430,7 +417,6 @@ func (h *harness) noError() {
 	}
 }
 
-// wait polls cond for up to two seconds.
 func (h *harness) wait(what string, cond func() bool) {
 	h.t.Helper()
 	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
@@ -441,15 +427,10 @@ func (h *harness) wait(what string, cond func() bool) {
 	h.t.Fatalf("timed out waiting for %s; log=%v state=%+v", what, h.logged(), h.e.State())
 }
 
-// echo delivers our own voice-state echo the way arikawa's gateway would.
 func (h *harness) echo(guild discord.GuildID, ch discord.ChannelID) {
 	h.e.n.Call(&gateway.VoiceStateUpdateEvent{VoiceState: discord.VoiceState{GuildID: guild, UserID: 7, ChannelID: ch, SessionID: "s"}})
 }
 
-// join runs Join and answers it like Discord: the leave echo of the previous
-// call (if any), then the join echo. The leave echo is handled off the
-// dispatch goroutine; in production the session description that ends
-// Join's wait is a network round trip behind it, here a short sleep.
 func (h *harness) join(guild discord.GuildID, ch discord.ChannelID, prev discord.GuildID) error {
 	h.t.Helper()
 	done := make(chan error, 1)
@@ -498,7 +479,7 @@ func TestJoinSwitchSameGuild(t *testing.T) {
 	if got := h.logged(); !slices.Equal(got, want) {
 		t.Fatalf("wire order\n got %v\nwant %v", got, want)
 	}
-	h.noError() // the leave echo of the first call is not a disconnect
+	h.noError()
 }
 
 func TestJoinSwitchCrossGuild(t *testing.T) {
@@ -520,7 +501,6 @@ func TestJoinSwitchCrossGuild(t *testing.T) {
 		t.Fatalf("must leave the old guild before joining the new: %v", got)
 	}
 	h.noError()
-	// A foreign guild's channel-0 echo is not ours; our guild's is a kick.
 	h.echo(10, 0)
 	time.Sleep(20 * time.Millisecond)
 	if st := h.e.State(); st.Status != StatusConnected {
@@ -552,7 +532,7 @@ func TestSetMuteDoesNotOutliveLeave(t *testing.T) {
 		_ = h.e.Leave(context.Background())
 		close(leaveDone)
 	}()
-	time.Sleep(20 * time.Millisecond) // Leave must be parked behind the in-flight send
+	time.Sleep(20 * time.Millisecond)
 	if h.has("close 10") {
 		t.Fatalf("Leave ran while the mute op 4 was in flight; it would have re-joined: %v", h.logged())
 	}
@@ -609,7 +589,7 @@ func TestStaleGatewayNeverDials(t *testing.T) {
 	evh := func(dvoice.Gateway, dvoice.Opcode, int, dvoice.GatewayMessageData) {}
 	g := e.gatewayCreate(nil, evh, nil)
 	e.mu.Lock()
-	e.gen++ // the call this gateway belonged to is over
+	e.gen++
 	e.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -644,8 +624,8 @@ func TestSenderCloseWaitsForStart(t *testing.T) {
 	c := &daveConn{}
 	s := newSender(slog.Default(), &capture{frames: make(chan []byte)}, c)
 	s.Open()
-	s.Close() // before the goroutine ran: disgo's own Close nil-derefs here
-	s.Close() // idempotent
+	s.Close()
+	s.Close()
 	if c.calls.Load() == 0 {
 		t.Fatal("Close must wait for the sender goroutine to start")
 	}
@@ -657,8 +637,6 @@ func TestSenderCloseWaitsForStart(t *testing.T) {
 	}
 }
 
-// TestPulseSmoke opens the real record/playback streams for half a second.
-// Needs a Pulse/PipeWire socket: VOICE_PULSE_SMOKE=1 go test ./internal/voice -run Pulse
 func TestPulseSmoke(t *testing.T) {
 	if os.Getenv("VOICE_PULSE_SMOKE") == "" {
 		t.Skip("set VOICE_PULSE_SMOKE=1")

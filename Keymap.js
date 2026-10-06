@@ -1,13 +1,3 @@
-// The keymap, once. The panel footer hints and the Ctrl+/ cheatsheet both
-// render from ENTRIES, so they cannot drift: a footer state is a list of
-// entry ids (FOOTER), and the cheatsheet is ENTRIES grouped by ZONES.
-//
-// entry: { id, zone, keys, action, hint?, hintKeys? }
-//   keys     - as shown in the cheatsheet ("Alt+↑ / Alt+↓")
-//   action   - full sentence for the cheatsheet
-//   hint     - short verb phrase for the footer (defaults to `action`)
-//   hintKeys - shorter key text for the footer (defaults to `keys`)
-//   cheatsheet: false - footer-only variant of a sibling entry
 
 var ZONES = [
   { id: "global", title: "Anywhere in the panel" },
@@ -22,7 +12,6 @@ var ZONES = [
 ]
 
 var ENTRIES = [
-  // --- global ---
   { id: "global.switcher", zone: "global", keys: "Ctrl+K · /", hintKeys: "Ctrl+K", hint: "switcher",
     action: "Quick switcher: unread channels and DMs first, then everything (/ outside text inputs; from any app via the Hyprland bind)" },
   { id: "global.cheatsheet", zone: "global", keys: "Ctrl+/ · ?", hintKeys: "?", hint: "keys",
@@ -55,8 +44,6 @@ var ENTRIES = [
     action: "While the backend is down: start it, or re-pull state" },
   { id: "global.esc", zone: "global", keys: "Esc", hint: "back out",
     action: "Walk back out: composer → timeline (marking read) → channel list → server rail, where it stops — Esc never closes the panel" },
-  // Footer-only: the login / backend-down screens have no zone to fall back
-  // to, so Esc there really does close.
   { id: "global.escClose", zone: "global", cheatsheet: false, keys: "Esc", hint: "closes",
     action: "Close the panel" },
   { id: "global.activate", zone: "global", cheatsheet: false, keys: "Enter", hint: "activates",
@@ -64,7 +51,6 @@ var ENTRIES = [
   { id: "global.escBack", zone: "global", keys: "Esc", hint: "back to the last zone",
     action: "From a panel button: back to the last zone" },
 
-  // --- sidebar ---
   { id: "rail.move", zone: "sidebar", keys: "j / k · ↑ / ↓", hintKeys: "j/k", hint: "move",
     action: "Move the cursor (servers in the rail, channels in the list)" },
   { id: "rail.ends", zone: "sidebar", keys: "g / G · Home / End", hintKeys: "g/G", hint: "first/last",
@@ -84,7 +70,6 @@ var ENTRIES = [
   { id: "channels.timeline", zone: "sidebar", keys: "l · →", hintKeys: "l", hint: "timeline",
     action: "Channel list: focus the open channel's timeline" },
 
-  // --- timeline ---
   { id: "timeline.move", zone: "timeline", keys: "j / k · ↑ / ↓", hintKeys: "j/k", hint: "move",
     action: "Move the message cursor (k past the top loads history)" },
   { id: "timeline.ends", zone: "timeline", keys: "gg / G · Home / End", hintKeys: "gg/G", hint: "top/newest",
@@ -103,8 +88,6 @@ var ENTRIES = [
     action: "Open the first link, attachment (from the cache when present) or embed" },
   { id: "timeline.copyLink", zone: "timeline", keys: "L", hint: "copy link",
     action: "Copy the first link, attachment or embed URL to the clipboard (a link hovered with the mouse offers a Copy link chip)" },
-  // Footer-only pairing of O and L: the timeline footer is already long
-  // enough to elide, and two separate hints cost eight more characters.
   { id: "timeline.links", zone: "timeline", cheatsheet: false, keys: "O / L", hint: "open/copy link",
     action: "Open or copy the first link, attachment or embed" },
   { id: "timeline.copySelection", zone: "timeline", keys: "Ctrl+C", hint: "copies selection",
@@ -116,7 +99,6 @@ var ENTRIES = [
   { id: "timeline.esc", zone: "timeline", keys: "Esc", hint: "marks read, back to sidebar",
     action: "Mark the channel read and go back to the channel list (cancels an armed delete, then clears a text selection, first)" },
 
-  // --- composer ---
   { id: "composer.send", zone: "composer", keys: "Enter", hint: "sends",
     action: "Send (uploads the staged attachments when there are any)" },
   { id: "composer.newline", zone: "composer", keys: "Shift+Enter", hint: "newline",
@@ -140,7 +122,6 @@ var ENTRIES = [
   { id: "chips.esc", zone: "composer", keys: "Esc", hint: "back to the input",
     action: "On an attachment: back to the text input" },
 
-  // --- member list ---
   { id: "members.move", zone: "members", keys: "j / k · ↑ / ↓", hintKeys: "j/k", hint: "move",
     action: "Move the cursor over the members (g / G: first / last)" },
   { id: "members.copy", zone: "members", keys: "Y", hint: "copies @username",
@@ -148,9 +129,6 @@ var ENTRIES = [
   { id: "members.esc", zone: "members", keys: "Esc", hint: "back to the composer",
     action: "Back to the composer (Alt+h too)" },
 
-  // --- voice call ---
-  // The three chords work from every zone, the composer included, and the
-  // same three actions are on quickshell.discord.voice for Hyprland binds.
   { id: "voice.mute", zone: "voice", keys: "Ctrl+Shift+M", hint: "mute",
     action: "Mute / unmute your microphone (from any app via the Hyprland bind)" },
   { id: "voice.deafen", zone: "voice", keys: "Ctrl+Shift+D", hint: "deafen",
@@ -158,7 +136,6 @@ var ENTRIES = [
   { id: "voice.leave", zone: "voice", keys: "Ctrl+Shift+H", hint: "hangs up",
     action: "Leave the voice channel" },
 
-  // --- quick switcher ---
   { id: "switcher.type", zone: "switcher", keys: "type", hint: "to search",
     action: "Type to search channels and DMs (empty: unread first, then recent)" },
   { id: "switcher.move", zone: "switcher", keys: "↑ / ↓ · Tab · Ctrl+j / Ctrl+k · Ctrl+n / Ctrl+p", hintKeys: "↑/↓", hint: "move",
@@ -168,7 +145,6 @@ var ENTRIES = [
   { id: "switcher.esc", zone: "switcher", keys: "Esc", hint: "closes",
     action: "Clear the search, then close" },
 
-  // --- emoji picker ---
   { id: "picker.type", zone: "picker", keys: "type", hint: "filters",
     action: "Type to filter by name" },
   { id: "picker.move", zone: "picker", keys: "arrows · Ctrl+h/j/k/l", hintKeys: "arrows", hint: "move",
@@ -178,7 +154,6 @@ var ENTRIES = [
   { id: "picker.esc", zone: "picker", keys: "Esc", hint: "closes",
     action: "Clear the filter, then close" },
 
-  // --- login ---
   { id: "login.activate", zone: "login", keys: "Enter", hint: "activates",
     action: "Activate the focused button / submit the token" },
   { id: "login.tab", zone: "login", keys: "Tab", hint: "cycles Scan QR, token, Log in, Close",
@@ -195,8 +170,6 @@ var ENTRIES = [
     action: "QR view: Tab reaches Close" }
 ]
 
-// Footer states → entry ids. Panel.qml picks a state (and appends optional
-// ids for situational hints); every id must resolve in ENTRIES.
 var FOOTER = {
   login: ["login.activate", "login.tab", "login.esc"],
   qrRunning: ["qr.cancel", "qr.tab"],
@@ -208,28 +181,18 @@ var FOOTER = {
   composerTail: ["global.zoneLeft", "composer.esc"],
   composerMembers: ["global.zoneMembers", "global.membersAlt"],
   members: ["members.move", "members.copy", "global.zoneLeftComposer", "global.members", "members.esc"],
-  // The call bar is a focus stop, not a zone: its keys are the three chords
-  // (which work from every zone anyway) plus the way back out.
   voice: ["voice.mute", "voice.deafen", "voice.leave", "global.tabCycle", "global.escBack"],
   composerChips: ["composer.chips"],
   composerEdit: ["composer.save", "composer.newline", "composer.cancel"],
   chips: ["chips.move", "chips.remove", "composer.send", "chips.esc"],
-  // timeline.threads is appended only while the open channel has a parent to
-  // expand (Panel.canToggleCurrentThreads): in a DM `t` does nothing.
   timeline: ["timeline.move", "timeline.ends", "timeline.reply", "timeline.react", "timeline.delete",
     "timeline.copy", "timeline.links"],
   timelineThreads: ["timeline.threads"],
-  // Prepended (not appended) while a selection exists: the footer Text elides
-  // on the right, and these two are the only keys that act on the selection.
   timelineSelection: ["timeline.copySelection", "timeline.escSelection"],
   timelineTail: ["global.members", "global.channelStep", "global.zoneComposer", "timeline.esc"],
-  // No Esc hint on the rail: it is the end of the ladder and does nothing
-  // there, and a hint for a key that does nothing is noise. Tab is the
-  // discoverable route to the Close button.
   rail: ["rail.move", "rail.enter", "global.switcher", "global.cheatsheet", "global.reload", "global.tab"],
   channels: ["rail.move", "channels.open", "channels.threads", "channels.back", "global.channelStep"],
   channelsTimeline: ["channels.timeline"],
-  // The member pane belongs to an open channel: no channel, no `m` hint.
   channelsMembers: ["global.members"],
   channelsTail: ["global.switcher", "global.cheatsheet", "global.reload", "global.tab"],
   switcher: ["switcher.type", "switcher.move", "switcher.open", "switcher.esc"],
@@ -246,10 +209,6 @@ function entry(id) {
   return _byId[String(id || "")] || null
 }
 
-// "keys hint · keys hint · …" for a list of ids. An element may also be
-// { id, hint } to override the hint text of that entry for a situational
-// footer ("Esc back to the composer"). Unknown ids render as "?id" so a
-// typo is visible in the footer instead of silently dropped.
 function hints(ids) {
   var list = Array.isArray(ids) ? ids : []
   var out = []
@@ -264,9 +223,7 @@ function hints(ids) {
   return out.join(" · ")
 }
 
-// Footer text for a state, plus any extra states / ids / { id, hint }
-// overrides appended in order. Empty arguments are skipped.
-function footer(state /*, ...more states, ids or overrides */) {
+function footer(state) {
   var ids = []
   for (var a = 0; a < arguments.length; a++) {
     var item = arguments[a]
@@ -279,7 +236,6 @@ function footer(state /*, ...more states, ids or overrides */) {
   return hints(ids)
 }
 
-// Every footer id that has no entry (harness assertion: must be empty).
 function missingFooterIds() {
   var missing = []
   for (var state in FOOTER) {
@@ -289,7 +245,6 @@ function missingFooterIds() {
   return missing
 }
 
-// Cheatsheet model: [{ id, title, rows: [{ keys, action }] }], zone order.
 function sections() {
   var out = []
   for (var z = 0; z < ZONES.length; z++) {
@@ -297,7 +252,6 @@ function sections() {
     for (var i = 0; i < ENTRIES.length; i++) {
       var e = ENTRIES[i]
       if (e.zone !== ZONES[z].id || e.cheatsheet === false) continue
-      // Footer-only variants share keys+action with a sibling; skip repeats.
       var dup = false
       for (var r = 0; r < rows.length; r++) if (rows[r].keys === e.keys && rows[r].action === e.action) dup = true
       if (!dup) rows.push({ keys: e.keys, action: e.action })

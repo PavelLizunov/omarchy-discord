@@ -7,11 +7,6 @@ import "../Api.js" as Api
 
 import "../Keymap.js" as Keymap
 
-// Ctrl+/ cheatsheet: a modal overlay inside the panel window listing the
-// whole keymap by zone, generated from Keymap.ENTRIES (the same table the
-// footer hints read). Keyboard-only: j/k, arrows, PgUp/PgDn scroll, Esc
-// (or Ctrl+/ and ? again) closes. While shown it owns the keyboard and
-// accepts every key, so nothing reaches the panel underneath.
 FocusScope {
   id: root
 
@@ -54,7 +49,6 @@ FocusScope {
     else if (key === Qt.Key_PageUp) scrollBy(-flick.height * 0.9)
     else if (key === Qt.Key_Home || text === "g") flick.contentY = 0
     else if (key === Qt.Key_End || text === "G") scrollBy(flick.contentHeight)
-    // Everything else is swallowed: the overlay is modal.
     event.accepted = true
   }
 
@@ -75,7 +69,6 @@ FocusScope {
     id: card
     anchors.centerIn: parent
     width: Math.min(Style.space(680), parent.width - Style.gapsOut * 2)
-    // Sized from the list itself (the Flickable has no implicit height).
     height: Math.min(body.implicitHeight + Style.spacing.controlHeight + column.spacing
       + contentTopInset + contentBottomInset, parent.height - Style.gapsOut * 2)
     radius: Style.cornerRadius

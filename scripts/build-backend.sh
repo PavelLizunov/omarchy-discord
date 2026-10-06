@@ -1,12 +1,4 @@
 #!/usr/bin/env bash
-# Install the bundled prebuilt backend when one matches this machine, otherwise
-# build it with Go.
-#
-# Exit codes:
-#   0   the backend is installed at $destination
-#   30  no prebuilt for this architecture and no Go toolchain to build one
-#   31  a backend exists to build (or a prebuilt to install) but it failed
-#   32  the installed backend is missing a shared library (libopus)
 set -euo pipefail
 
 source_root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
@@ -15,9 +7,6 @@ destination="$runtime_dir/omarchy-discord-backend"
 architecture=$(uname -m)
 prebuilt="$source_root/backend/dist/$architecture/omarchy-discord-backend"
 
-# The backend links libopus, so ld.so aborts before main() when the library is
-# missing: the binary cannot report this itself and the installed file has to be
-# probed instead.
 check_shared_libraries() {
   if ldd "$destination" 2>/dev/null | grep -q 'not found'; then
     echo "build-backend.sh: the Discord backend needs libopus and it is not installed" >&2
@@ -26,15 +15,10 @@ check_shared_libraries() {
   fi
 }
 
-# Build outside the plugin directory: Omarchy hot-reloads a plugin whenever any
-# file inside it changes, so build output inside the tree would make the
-# recursive watcher reload the plugin on every write and kill the build.
 cache_root=${XDG_CACHE_HOME:-"$HOME/.cache"}
 target_dir="$cache_root/omarchy-discord/target"
 go_cache="${GOCACHE:-"$cache_root/omarchy-discord/gocache"}"
 
-# `omarchy plugin validate` refuses symlinks anywhere in a plugin folder, so a
-# symlinked prebuilt is a broken checkout rather than something to install.
 if [[ -L $prebuilt ]]; then
   echo "build-backend.sh: $prebuilt is a symlink; the shipped prebuilt must be a real file" >&2
   exit 31

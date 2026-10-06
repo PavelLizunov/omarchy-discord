@@ -6,7 +6,6 @@ import (
 	"github.com/mattcalayo/omarchy-discord/backend/internal/protocol"
 )
 
-// fetchMedia implements fetch_media against the media cache.
 func (m *Manager) fetchMedia(ctx context.Context, req *protocol.Request) (any, *protocol.Error) {
 	var p protocol.FetchMediaParams
 	if e := req.Params(&p); e != nil {
@@ -22,7 +21,6 @@ func (m *Manager) fetchMedia(ctx context.Context, req *protocol.Request) (any, *
 	return res, nil
 }
 
-// setConfig implements set_config.
 func (m *Manager) setConfig(req *protocol.Request) (any, *protocol.Error) {
 	var p protocol.SetConfigParams
 	if e := req.Params(&p); e != nil {

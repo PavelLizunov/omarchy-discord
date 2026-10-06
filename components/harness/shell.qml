@@ -9,11 +9,6 @@ import qs.Ui
 import "components" as Components
 import "components/harness/Fixtures.js" as Fixtures
 
-// Throwaway harness. `components/harness/run.sh` symlinks this file to the
-// root of a scratch config dir next to the shell's Commons/Ui and the repo's
-// components/ + Markdown.js, then starts it with `qs -p` (imports are
-// root-relative for that reason). Not a plugin entry point, so the shell
-// never loads it (manifest entryPoints only).
 ShellRoot {
   id: harness
 
@@ -77,7 +72,6 @@ ShellRoot {
     })
   }
 
-  // Simulated backend latency for history requests.
   Timer {
     id: historyTimer
     interval: 600
@@ -96,11 +90,7 @@ ShellRoot {
     function toggleActive(): void { harness.active = !harness.active }
     function markRead(): void { harness.lastRead = harness.timelineNewest() }
     function focus(): void { timeline.forceActiveFocus() }
-    // Render the window contents to a PNG (works while the window is on a
-    // hidden workspace, unlike grim).
     function shot(path: string): void { harness.shot(path) }
-    // Synthesized key for scripted checks without stealing the seat's focus:
-    // name is j/k/g/G/y/o/Escape/Return/Home/End/PgUp/PgDn/AltH/AltL.
     function key(name: string): string { return harness.pressKey(name) }
   }
 

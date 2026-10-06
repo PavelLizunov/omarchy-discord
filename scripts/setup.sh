@@ -1,13 +1,4 @@
 #!/usr/bin/env bash
-# Install the backend binary and its static user unit. Unprivileged; never
-# starts or enables anything.
-#
-# Exit codes (propagated from build-backend.sh, and read by DaemonManager.qml
-# through scripts/backend-runtime.sh sync):
-#   0   the backend and the unit are installed
-#   30  no prebuilt for this architecture and no Go toolchain to build one
-#   31  the backend failed to build or install
-#   32  the installed backend is missing a shared library (libopus)
 set -euo pipefail
 
 source_root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
@@ -45,14 +36,10 @@ unit_name=omarchy-discord.service
 unit_file="$unit_dir/$unit_name"
 runtime_dir=${OMARCHY_DISCORD_RUNTIME_DIR:-"$HOME/.local/lib/omarchy-discord"}
 backend_binary="$runtime_dir/omarchy-discord-backend"
-# Records the plugin version this runtime was installed from; its mtime is the
-# marker scripts/backend-runtime.sh sync compares the shipped backend against.
 stamp_file="$runtime_dir/installed-version"
 plugin_version=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
   -- "$source_root/manifest.json" 2>/dev/null | head -n 1)
 
-# True when any backend source (or a bundled prebuilt) is newer than the
-# installed binary, so re-running setup picks up upgrades.
 backend_stale() {
   [[ -x $backend_binary ]] || return 0
   local newer
@@ -80,7 +67,6 @@ else
 fi
 
 if (( ! backend_ready )); then
-  # build-backend.sh already printed which library is missing and how to get it.
   if (( build_status == 32 )); then
     exit 32
   fi
@@ -93,9 +79,6 @@ if (( ! backend_ready )); then
   exit 31
 fi
 
-# An already-installed binary skips build-backend.sh and its probe, so re-check
-# here: a backend that cannot load libopus would otherwise be reported as ready
-# and crash-loop under systemd with no message anywhere.
 if ldd "$backend_binary" 2>/dev/null | grep -q 'not found'; then
   echo "setup.sh: the Discord backend needs libopus and it is not installed" >&2
   echo "Install it and re-run: sudo pacman -S opus" >&2
@@ -104,8 +87,6 @@ fi
 
 install -d -m 700 -- "$unit_dir"
 if [[ -n ${OMARCHY_DISCORD_RUNTIME_DIR:-} ]]; then
-  # The repo unit hard-codes the default %h path; point the installed copy at
-  # the custom runtime dir so ExecStart matches where the binary went.
   sed -e "s|^ExecStart=.*|ExecStart=$backend_binary|" \
     -- "$source_root/systemd/$unit_name" > "$unit_file.tmp"
   install -m 644 -- "$unit_file.tmp" "$unit_file"
@@ -121,8 +102,6 @@ if [[ $unit_state == "enabled" || $unit_state == "enabled-runtime" ]]; then
   echo "For on-demand behavior, run: systemctl --user disable $unit_name" >&2
 fi
 
-# Written last, so a failed install never leaves a stamp claiming success. Its
-# mtime is what marks this runtime as current for the shipped backend.
 printf '%s\n' "${plugin_version:-unknown}" > "$stamp_file"
 chmod 600 -- "$stamp_file"
 

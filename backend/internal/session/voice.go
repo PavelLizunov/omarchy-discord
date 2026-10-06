@@ -16,8 +16,6 @@ import (
 	"github.com/mattcalayo/omarchy-discord/backend/internal/voice"
 )
 
-// voiceEngine is the one call the manager drives. Nil means voice is not
-// available in this build/session and every voice command is refused.
 type voiceEngine interface {
 	Join(ctx context.Context, guildID discord.GuildID, channelID discord.ChannelID) error
 	Leave(ctx context.Context) error
@@ -27,10 +25,8 @@ type voiceEngine interface {
 	Close()
 }
 
-// idleVoice is the state of a session that is not in a call.
 var idleVoice = voice.State{Status: voice.StatusIdle}
 
-// wireVoice renders the engine state for protocol.State.
 func wireVoice(v voice.State) protocol.VoiceState {
 	status := string(v.Status)
 	if status == "" {
@@ -46,8 +42,6 @@ func wireVoice(v voice.State) protocol.VoiceState {
 	}
 }
 
-// onVoiceState is the engine's State callback: it records the new state and
-// emits a state_changed with a fresh generation when anything changed.
 func (m *Manager) onVoiceState(v voice.State) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -58,13 +52,10 @@ func (m *Manager) onVoiceState(v voice.State) {
 	m.bump()
 }
 
-// onVoiceSpeaking is the engine's Speaking callback.
 func (m *Manager) onVoiceSpeaking(userID discord.UserID, speaking bool) {
 	m.push(protocol.NewVoiceSpeaking(userID.String(), speaking))
 }
 
-// liveVoice returns the engine, or the refusal every voice command answers
-// when the daemon has no engine (build without audio support, no session).
 func (m *Manager) liveVoice() (voiceEngine, *protocol.Error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -74,7 +65,6 @@ func (m *Manager) liveVoice() (voiceEngine, *protocol.Error) {
 	return m.voice, nil
 }
 
-// voiceJoin implements voice_join.
 func (m *Manager) voiceJoin(ctx context.Context, req *protocol.Request) (any, *protocol.Error) {
 	var p protocol.VoiceJoinParams
 	if e := req.Params(&p); e != nil {
@@ -108,8 +98,6 @@ func (m *Manager) voiceJoin(ctx context.Context, req *protocol.Request) (any, *p
 	if ch.Type != discord.GuildVoice {
 		return nil, protocol.Errorf(protocol.CodeInvalidArgument, "channel %s is not a voice channel", p.ChannelID)
 	}
-	// Discord answers an op 4 for a channel the account cannot connect to
-	// with silence, so without this the join would sit until it times out.
 	if !off.HasPermissions(chID, discord.PermissionViewChannel|discord.PermissionConnect) {
 		return nil, protocol.Errorf(protocol.CodeForbidden, "no permission to join channel %s", p.ChannelID)
 	}
@@ -119,8 +107,6 @@ func (m *Manager) voiceJoin(ctx context.Context, req *protocol.Request) (any, *p
 	return protocol.EmptyResult{}, nil
 }
 
-// voiceLeave implements voice_leave. Leaving when idle is a no-op for the
-// engine, so it is not an error here either.
 func (m *Manager) voiceLeave(ctx context.Context) (any, *protocol.Error) {
 	v, e := m.liveVoice()
 	if e != nil {
@@ -132,8 +118,6 @@ func (m *Manager) voiceLeave(ctx context.Context) (any, *protocol.Error) {
 	return protocol.EmptyResult{}, nil
 }
 
-// voiceSet implements voice_set; absent fields are left unchanged and an
-// empty request is a no-op.
 func (m *Manager) voiceSet(ctx context.Context, req *protocol.Request) (any, *protocol.Error) {
 	var p protocol.VoiceSetParams
 	if e := req.Params(&p); e != nil {
@@ -156,8 +140,6 @@ func (m *Manager) voiceSet(ctx context.Context, req *protocol.Request) (any, *pr
 	return protocol.EmptyResult{}, nil
 }
 
-// voiceUser renders one occupant. The guild member (nick, avatar) is preferred
-// over the user the voice state carries; an uncached user degrades to its id.
 func voiceUser(n *ningen.State, guildID discord.GuildID, vs discord.VoiceState) protocol.User {
 	mem := vs.Member
 	if mem == nil {
@@ -173,10 +155,6 @@ func voiceUser(n *ningen.State, guildID discord.GuildID, vs discord.VoiceState) 
 	return u
 }
 
-// VoiceMembers builds the voice_members payload for one guild from the
-// cabinet's voice states. Only channels this account can see and that hold at
-// least one user appear; channels are ordered by id and occupants by display
-// name, so an unchanged guild always renders the same event.
 func VoiceMembers(n *ningen.State, guildID discord.GuildID) protocol.VoiceMembersEvent {
 	states, err := n.Cabinet.VoiceStates(guildID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
@@ -209,8 +187,6 @@ func VoiceMembers(n *ningen.State, guildID discord.GuildID) protocol.VoiceMember
 	return protocol.NewVoiceMembers(guildID.String(), channels)
 }
 
-// allVoiceMembers renders one voice_members per guild in the cabinet, empty
-// guilds included.
 func allVoiceMembers(n *ningen.State) []protocol.VoiceMembersEvent {
 	guilds, err := n.Cabinet.Guilds()
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
@@ -224,26 +200,19 @@ func allVoiceMembers(n *ningen.State) []protocol.VoiceMembersEvent {
 	return evs
 }
 
-// pushVoiceMembersLocked emits one voice_members per guild — the seed that
-// follows every ready. Guilds with nobody in voice are announced too: a ready
-// after a gateway drop is a full re-seed, and their empty list is what clears
-// occupancy that changed while the updates were being dropped. Caller holds mu.
 func (m *Manager) pushVoiceMembersLocked(n *ningen.State) {
 	for _, ev := range allVoiceMembers(n) {
 		m.push(ev)
 	}
 }
 
-// installVoiceHandlers keeps voice occupancy in sync: one voice_members for
-// the affected guild on every VOICE_STATE_UPDATE. The handler is sync so the
-// cabinet already holds the update it reports.
 func (m *Manager) installVoiceHandlers(n *ningen.State) {
 	addSyncHandler(n, "voice_state_update", func(ev *gateway.VoiceStateUpdateEvent) {
 		m.mu.Lock()
 		live := m.n == n && m.lifecycle == protocol.LifecycleReady
 		m.mu.Unlock()
 		if !live || !ev.GuildID.IsValid() {
-			return // DM and group-DM calls are out of scope
+			return
 		}
 		m.push(VoiceMembers(n.Offline(), ev.GuildID))
 	})

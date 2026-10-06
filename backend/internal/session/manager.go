@@ -1,5 +1,3 @@
-// Package session owns the Discord session: ningen/arikawa lifecycle, the
-// keyring-backed token, and the mapping from cache state to wire objects.
 package session
 
 import (
@@ -29,8 +27,6 @@ import (
 	"github.com/mattcalayo/omarchy-discord/backend/internal/voice"
 )
 
-// ConfigureIdentity sets the dissent-parity identify fingerprint. It must run
-// before any ningen/arikawa state is constructed.
 func ConfigureIdentity() {
 	host, err := os.Hostname()
 	if err != nil || host == "" {
@@ -44,59 +40,36 @@ func ConfigureIdentity() {
 	}
 }
 
-// Keyring is the subset of keyring.Keyring the manager needs.
 type Keyring interface {
 	Lookup(ctx context.Context) (string, error)
 	Store(ctx context.Context, token string) error
 	Clear(ctx context.Context) error
 }
 
-// Manager drives one user session and publishes protocol events.
 type Manager struct {
 	kr     Keyring
 	events chan any
 
-	// opMu serializes every auth operation (login, QR start/finish, logout,
-	// stop): each spans several mu critical sections with blocking work
-	// (REST validation, keyring store, gateway close) in between. mu only
-	// guards the fields below and is never held across that work.
-	opMu sync.Mutex
-	// forwarding is set once Forward runs; Flush is a no-op before that.
+	opMu       sync.Mutex
 	forwarding atomic.Bool
 
-	// runLoop starts the connect loop for a freshly installed session. Tests
-	// replace it to avoid the network.
-	runLoop func(ctx context.Context, n *ningen.State, done chan struct{})
-	// fetchTail / fetchBefore load messages for open_channel / history. Tests
-	// replace them to avoid the network.
-	fetchTail   func(ctx context.Context, n *ningen.State, chID discord.ChannelID, limit uint) ([]discord.Message, error)
-	fetchBefore func(ctx context.Context, n *ningen.State, chID discord.ChannelID, before discord.MessageID, limit uint) ([]discord.Message, error)
-	// fetchChannel resolves an uncached thread for open_channel (one REST
-	// GET); tests replace it.
+	runLoop      func(ctx context.Context, n *ningen.State, done chan struct{})
+	fetchTail    func(ctx context.Context, n *ningen.State, chID discord.ChannelID, limit uint) ([]discord.Message, error)
+	fetchBefore  func(ctx context.Context, n *ningen.State, chID discord.ChannelID, before discord.MessageID, limit uint) ([]discord.Message, error)
 	fetchChannel func(ctx context.Context, n *ningen.State, chID discord.ChannelID) (*discord.Channel, error)
-	// rest holds the write calls; now is the clock for throttles/progress.
-	rest restOps
-	now  func() time.Time
-	// runQR / newState / qrWait are the QR login seams.
-	runQR    qrRunner
-	newState func(token string) *ningen.State
-	qrWait   time.Duration
+	rest         restOps
+	now          func() time.Time
+	runQR        qrRunner
+	newState     func(token string) *ningen.State
+	qrWait       time.Duration
 
-	typers typingThrottle
-	// members tracks displayed users for presence routing; memberDebounce is
-	// the member_list_update coalescing window (tests shorten it).
+	typers         typingThrottle
 	members        memberTracker
 	memberDebounce time.Duration
-	// media is the media cache (nil until Configure; fetch_media then fails).
-	media *media.Cache
-	// stagedDir is where QML stages pasted uploads; files under it are
-	// removed after a successful upload. qrPath is the rendered QR image.
-	stagedDir string
-	qrPath    string
+	media          *media.Cache
+	stagedDir      string
+	qrPath         string
 
-	// newVoice builds the voice engine for a freshly installed session; nil
-	// (tests, a build without audio support) leaves voice unavailable. It
-	// runs under mu, so it must not call back before it returns.
 	newVoice func(n *ningen.State, ev voice.Events) voiceEngine
 
 	mu         sync.Mutex
@@ -107,8 +80,6 @@ type Manager struct {
 	unreadDM   *string
 	generation int64
 	errText    string
-	// voice is the engine of the live session (nil when unavailable) and
-	// voiceState its last reported state.
 	voice      voiceEngine
 	voiceState voice.State
 
@@ -120,7 +91,6 @@ type Manager struct {
 	qr        *qrFlow
 }
 
-// New creates a manager in the `starting` lifecycle.
 func New(kr Keyring) *Manager {
 	m := &Manager{kr: kr, events: make(chan any, 1024), lifecycle: protocol.LifecycleStarting, generation: 1, voiceState: idleVoice}
 	m.runLoop = m.loop
@@ -132,31 +102,20 @@ func New(kr Keyring) *Manager {
 	return m
 }
 
-// Configure sets the runtime directory (staged uploads, QR image) and the
-// media cache. Call before Start.
 func (m *Manager) Configure(runtimeDir string, cache *media.Cache) {
 	m.stagedDir = filepath.Join(runtimeDir, "staged")
 	m.qrPath = qrImagePath(runtimeDir)
 	m.media = cache
 }
 
-// EnableVoice installs the real voice engine constructor; log receives the
-// engine's own diagnostics. Call before Start (tests leave it unset, which
-// keeps voice unavailable).
 func (m *Manager) EnableVoice(log *slog.Logger) {
 	m.newVoice = func(n *ningen.State, ev voice.Events) voiceEngine { return voice.New(n, ev, log) }
 }
 
-// Events yields state_changed / guilds_synced events in the order they were
-// produced. Production consumes it through Forward; tests read it directly.
 func (m *Manager) Events() <-chan any { return m.events }
 
-// flushToken is queued by Flush; Forward closes done when it reaches it,
-// which proves every earlier event has been handed to the sink.
 type flushToken struct{ done chan struct{} }
 
-// Forward hands every event to sink, in order, until the manager's queue is
-// closed (never, in practice). It is the production consumer of Events.
 func (m *Manager) Forward(sink func(any)) {
 	m.forwarding.Store(true)
 	for ev := range m.events {
@@ -168,10 +127,6 @@ func (m *Manager) Forward(sink func(any)) {
 	}
 }
 
-// Flush blocks until every event queued before the call has been passed to
-// Forward's sink (or ctx ends). Commands whose documented contract puts their
-// events before the response call it before returning. Without a running
-// Forward there is nothing to order against and it returns at once.
 func (m *Manager) Flush(ctx context.Context) {
 	if !m.forwarding.Load() {
 		return
@@ -186,7 +141,6 @@ func (m *Manager) Flush(ctx context.Context) {
 	}
 }
 
-// push queues an event; false when the queue is full and it was dropped.
 func (m *Manager) push(ev any) bool {
 	select {
 	case m.events <- ev:
@@ -197,7 +151,6 @@ func (m *Manager) push(ev any) bool {
 	}
 }
 
-// stateLocked builds the wire state. Caller holds mu.
 func (m *Manager) stateLocked() protocol.State {
 	return protocol.State{
 		ProtocolVersion:   protocol.Version,
@@ -213,7 +166,6 @@ func (m *Manager) stateLocked() protocol.State {
 	}
 }
 
-// bump records a state change and queues state_changed. Caller holds mu.
 func (m *Manager) bump() {
 	m.generation++
 	m.push(protocol.NewStateChanged(m.stateLocked()))
@@ -234,7 +186,6 @@ func (m *Manager) setLifecycleLocked(lc, errText string) {
 	m.bump()
 }
 
-// Start resolves the keyring token and connects if one exists.
 func (m *Manager) Start(ctx context.Context) {
 	tok, err := m.kr.Lookup(ctx)
 	m.opMu.Lock()
@@ -254,7 +205,6 @@ func (m *Manager) Start(ctx context.Context) {
 	}
 }
 
-// Stop closes the gateway and waits for the connect loop.
 func (m *Manager) Stop() {
 	if m.qrRunning() {
 		m.CancelQRLogin(context.Background())
@@ -267,8 +217,6 @@ func (m *Manager) Stop() {
 	closeAndWait(n, done, v)
 }
 
-// teardownLocked cancels the loop and detaches the session. Caller holds mu;
-// the returned session and voice engine must be closed outside the lock.
 func (m *Manager) teardownLocked() (*ningen.State, chan struct{}, voiceEngine) {
 	if m.cancel != nil {
 		m.cancel()
@@ -294,10 +242,6 @@ func closeAndWait(n *ningen.State, done chan struct{}, v voiceEngine) {
 	}
 }
 
-// connectLocked installs n as the live session and starts the connect loop.
-// Per-session state (user, presence, counts) is reset so a replaced session
-// never shows the previous account's data; the state_changed is always sent
-// even when the lifecycle was already `connecting`.
 func (m *Manager) connectLocked(n *ningen.State, token string) {
 	m.n, m.token, m.everReady = n, token, false
 	m.user, m.presence, m.mentions, m.unreadDM = nil, "", 0, nil
@@ -316,17 +260,12 @@ func (m *Manager) connectLocked(n *ningen.State, token string) {
 }
 
 func (m *Manager) installHandlers(n *ningen.State) {
-	// Sync handlers run inside ningen's dispatch after its sub-states updated,
-	// so caches are consistent here. Keep them cheap and never block on the
-	// network: structure is read through Offline().
 	addSyncHandler(n, "connected", func(ev *ningen.ConnectedEvent) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		if m.n != n {
 			return
 		}
-		// READY reset the cabinet; put our own member back before the first
-		// permission-dependent read (unread dots below, every list later).
 		if ready, ok := ev.Event.(*gateway.ReadyEvent); ok {
 			seedSelfMembers(n, ready)
 		}
@@ -351,8 +290,6 @@ func (m *Manager) installHandlers(n *ningen.State) {
 			return
 		}
 		if ev.IsLoggedOut() {
-			// The loop observes the fatal close and finishes the reauth
-			// cleanup (token drop, keyring clear) outside this handler.
 			m.setLifecycleLocked(protocol.LifecycleReauthNeeded, fmt.Sprintf("gateway closed session (code %d)", ev.Code))
 			return
 		}
@@ -393,8 +330,6 @@ func (m *Manager) installHandlers(n *ningen.State) {
 	addSyncHandler(n, "guild_delete", func(*gateway.GuildDeleteEvent) { resync() })
 }
 
-// pushStructureLocked bumps the generation (structure changed) and queues a
-// guilds_synced stamped with it. Caller holds mu.
 func (m *Manager) pushStructureLocked(n *ningen.State) {
 	guilds, err := Guilds(n)
 	if err != nil {
@@ -408,8 +343,6 @@ func (m *Manager) pushStructureLocked(n *ningen.State) {
 	m.push(protocol.NewGuildsSynced(m.generation, guilds, dms))
 }
 
-// loop opens the gateway and keeps it open until ctx is cancelled or the
-// session is fatally closed (token invalid).
 func (m *Manager) loop(ctx context.Context, n *ningen.State, done chan struct{}) {
 	defer close(done)
 	const minBackoff, maxBackoff = 2 * time.Second, 60 * time.Second
@@ -448,8 +381,6 @@ func (m *Manager) loop(ctx context.Context, n *ningen.State, done chan struct{})
 	}
 }
 
-// reauth drops the token (memory + keyring) and keeps the cache for read-only
-// structure queries until the next login.
 func (m *Manager) reauth(n *ningen.State, cause error) {
 	m.mu.Lock()
 	if m.n != n {
@@ -458,8 +389,6 @@ func (m *Manager) reauth(n *ningen.State, cause error) {
 	}
 	m.token = ""
 	m.cancel = nil
-	// The session is done: the call goes with it, even though the cache
-	// stays readable.
 	v := m.voice
 	m.voice, m.voiceState = nil, idleVoice
 	m.setLifecycleLocked(protocol.LifecycleReauthNeeded, fmt.Sprintf("session invalidated: %v", cause))
@@ -472,12 +401,8 @@ func (m *Manager) reauth(n *ningen.State, cause error) {
 	}
 }
 
-// Login validates the token with REST /users/@me, stores it, and connects.
-// The whole operation holds opMu so it cannot interleave with a QR flow's
-// completion or another login: the QR guard is checked under the same lock
-// the QR flow holds while installing its session.
 func (m *Manager) Login(ctx context.Context, token string) (protocol.LoginResult, *protocol.Error) {
-	if m.qrRunning() { // fast refusal; re-checked under opMu
+	if m.qrRunning() {
 		return protocol.LoginResult{}, protocol.Errorf(protocol.CodeQRUnavailable, "a QR login is in progress; cancel it first")
 	}
 	m.opMu.Lock()
@@ -493,9 +418,6 @@ func (m *Manager) Login(ctx context.Context, token string) (protocol.LoginResult
 	return m.finishLogin(ctx, n, token, wireUser(*me)), nil
 }
 
-// finishLogin persists the validated token and installs the session. A keyring
-// failure is not fatal — the in-memory session is valid for this process — but
-// is reported in the result so the client can warn the user. Caller holds opMu.
 func (m *Manager) finishLogin(ctx context.Context, n *ningen.State, token string, user protocol.User) protocol.LoginResult {
 	stored := true
 	if err := m.kr.Store(ctx, token); err != nil {
@@ -506,9 +428,6 @@ func (m *Manager) finishLogin(ctx context.Context, n *ningen.State, token string
 	return protocol.LoginResult{User: user, KeyringStored: stored}
 }
 
-// replaceSession closes any live session and installs n. Caller holds opMu so
-// two concurrent logins cannot each tear down and then both install, which
-// would orphan a live gateway connection.
 func (m *Manager) replaceSession(n *ningen.State, token string) {
 	m.mu.Lock()
 	old, done, v := m.teardownLocked()
@@ -520,7 +439,6 @@ func (m *Manager) replaceSession(n *ningen.State, token string) {
 	m.mu.Unlock()
 }
 
-// Logout disconnects, drops the token, and clears the keyring.
 func (m *Manager) Logout(ctx context.Context) *protocol.Error {
 	m.opMu.Lock()
 	defer m.opMu.Unlock()
@@ -540,13 +458,10 @@ func (m *Manager) Logout(ctx context.Context) *protocol.Error {
 	return nil
 }
 
-// Snapshot implements socket.Backend.
 func (m *Manager) Snapshot() []any {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	evs := []any{protocol.NewStateChanged(m.stateLocked())}
-	// A client (re)connecting mid-flow gets the live code again, otherwise
-	// the QR UI would sit empty until the code expires.
 	if m.lifecycle == protocol.LifecycleQRPending && m.qr != nil && m.qr.code != nil {
 		code := *m.qr.code
 		code.ExpiresInMS = max(0, m.qr.deadline.Sub(m.now()).Milliseconds())
@@ -557,9 +472,6 @@ func (m *Manager) Snapshot() []any {
 		guilds, _ := Guilds(off)
 		dms, _ := DMs(off)
 		evs = append(evs, protocol.NewGuildsSynced(m.generation, guilds, dms))
-		// A connecting client has no occupancy at all, so every guild that
-		// has somebody in voice ships with the structure; empty guilds are
-		// what the client starts from and arrive as changes happen.
 		for _, ev := range allVoiceMembers(off) {
 			if len(ev.Channels) > 0 {
 				evs = append(evs, ev)
@@ -569,7 +481,6 @@ func (m *Manager) Snapshot() []any {
 	return evs
 }
 
-// Handle implements socket.Backend.
 func (m *Manager) Handle(ctx context.Context, req *protocol.Request) (any, *protocol.Error) {
 	switch req.Command {
 	case "get_state":
@@ -702,7 +613,6 @@ func (m *Manager) Handle(ctx context.Context, req *protocol.Request) (any, *prot
 	return nil, protocol.Errorf(protocol.CodeUnknownCommand, "command %q is not implemented", req.Command)
 }
 
-// cachedSession returns a session whose cache has seen READY at least once.
 func (m *Manager) cachedSession() (*ningen.State, *protocol.Error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -715,8 +625,6 @@ func (m *Manager) cachedSession() (*ningen.State, *protocol.Error) {
 	return m.n, nil
 }
 
-// presence reports the own status: the live presence when known, else the
-// status carried in READY's user settings (SESSIONS_REPLACE arrives later).
 func presence(n *ningen.State) string {
 	me, _ := n.Cabinet.Me()
 	if me != nil {

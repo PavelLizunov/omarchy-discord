@@ -1,7 +1,3 @@
-// Emoji picker helpers. The catalogue normally comes from the shell's own
-// data file ($OMARCHY_PATH/shell/plugins/emojis/emojis.json, entries
-// {e: emoji, k: "keywords"}); FALLBACK is a compact set in the same shape
-// for when that file is unavailable.
 
 var FALLBACK = [
   { e: "👍", k: "thumbs up +1 yes ok" }, { e: "👎", k: "thumbs down -1 no" },
@@ -36,7 +32,6 @@ var FALLBACK = [
 ]
 
 var FREQUENT_CAP = 16
-// Server emoji shown per guild without / with a filter (see sections()).
 var SERVER_CAP = 48
 var SERVER_CAP_QUERY = 200
 
@@ -53,11 +48,6 @@ function parseCatalog(raw) {
   }
 }
 
-// Keyword match, ranked: the canonical shortcode (first keyword) equal to
-// the query first, then any whole keyword equal to it, then a keyword
-// starting with it, then any substring ("fire" puts 🔥 before 🚒 and
-// ❤️‍🔥). Catalogue order is kept within a rank; an empty query keeps
-// everything. `limit` caps the result (0 = unlimited).
 function rank(item, needle) {
   if (item.e === needle) return 0
   var words = String(item.k || "").toLowerCase().split(" ")
@@ -95,8 +85,6 @@ function filter(catalog, query, limit) {
   return max && out.length > max ? out.slice(0, max) : out
 }
 
-// Frequently used: [{ e, n }] sorted by use count, most recent first on
-// ties, capped. Persisted as a JSON string on the plugin's shell.json entry.
 function parseFrequent(raw) {
   try {
     var data = JSON.parse(String(raw || ""))
@@ -123,16 +111,12 @@ function bumpFrequent(list, emoji) {
     if (!source[i] || source[i].e === value) { if (source[i]) count = (Number(source[i].n) || 0) + 1; continue }
     out.push({ e: source[i].e, n: Number(source[i].n) || 1 })
   }
-  // Most recent first among equals: insert before the first entry with a
-  // lower-or-equal count.
   var at = out.length
   for (var j = 0; j < out.length; j++) if (out[j].n <= count) { at = j; break }
   out.splice(at, 0, { e: value, n: count })
   return out.slice(0, FREQUENT_CAP)
 }
 
-// A reaction's emoji on the wire is unicode or "name:id" (custom); the
-// picker shows custom ones as :name: and sends them back unchanged.
 function customEmoji(emoji) {
   var m = /^([^:]+):(\d+)$/.exec(String(emoji || ""))
   return m ? { name: m[1], id: m[2] } : null
@@ -143,15 +127,12 @@ function displayName(emoji) {
   return custom ? ":" + custom.name + ":" : String(emoji || "")
 }
 
-// Wire form of a catalogue item or custom emoji for react/unreact.
 function wire(item) {
   if (!item) return ""
   if (item.id && item.name) return String(item.name) + ":" + String(item.id)
   return String(item.e || item.emoji || "")
 }
 
-// emoji -> keywords for the catalogue, so the reaction / frequent sections
-// can be filtered by the same names as the grid.
 function keywordIndex(catalog) {
   var map = {}
   var list = Array.isArray(catalog) ? catalog : []
@@ -167,13 +148,6 @@ function matches(cell, needle, keywords) {
   return k.indexOf(needle) >= 0
 }
 
-// Picker model. Sections in display order, empty ones dropped:
-//   reactions — the message's existing reactions ("Toggle": me => unreact)
-//   frequent  — persisted frequently-used list
-//   server    — custom emoji per guild (list_emoji), `currentGuildId` first
-//   all       — the unicode catalogue
-// Each cell: { emoji (wire form), label, custom (id or ""), toggle, me }.
-// `query` filters every section by name / keyword.
 function sections(reactions, frequent, server, catalog, query, limit, currentGuildId) {
   var needle = String(query || "").trim().toLowerCase()
   var keywords = keywordIndex(catalog)
@@ -203,8 +177,6 @@ function sections(reactions, frequent, server, catalog, query, limit, currentGui
   }
   if (cells.length) out.push({ id: "frequent", title: "Frequently used", cells: cells })
 
-  // Server emoji: one section per guild (list_emoji order), the selected
-  // guild hoisted to the front.
   var guilds = Array.isArray(server) ? server.slice() : []
   var current = String(currentGuildId || "")
   if (current) {
@@ -214,9 +186,6 @@ function sections(reactions, frequent, server, catalog, query, limit, currentGui
       break
     }
   }
-  // Every cell is an <img> through the media cache, and the grid is not
-  // virtualized: accounts with a dozen emoji-heavy guilds would otherwise
-  // fetch a thousand images on open. Cap per guild; typing searches deeper.
   var cap = needle ? SERVER_CAP_QUERY : SERVER_CAP
   for (var gi = 0; gi < guilds.length; gi++) {
     var guild = guilds[gi]
@@ -239,7 +208,6 @@ function sections(reactions, frequent, server, catalog, query, limit, currentGui
   return out
 }
 
-// Flat cell list over sections: [{ section, index, cell }].
 function flatten(sections) {
   var out = []
   var list = Array.isArray(sections) ? sections : []
@@ -248,9 +216,6 @@ function flatten(sections) {
   return out
 }
 
-// Grid navigation over the flat list. dx moves through the flat order
-// (wrapping), dy moves a row within the section and crosses into the
-// neighbouring section at its edge, keeping the column when it can.
 function move(sections, flat, from, dx, dy, columns) {
   var count = flat.length
   if (!count) return -1
@@ -265,7 +230,6 @@ function move(sections, flat, from, dx, dy, columns) {
   var lastRow = Math.floor((size - 1) / cols)
   var target = pos.index + dy * cols
   if (target >= 0 && target < size) return base + target
-  // Down onto a short last row: land on its last cell.
   if (dy > 0 && Math.floor(target / cols) === lastRow) return base + size - 1
   var section = pos.section + (dy > 0 ? 1 : -1)
   if (section < 0 || section >= sections.length)

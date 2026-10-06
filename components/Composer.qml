@@ -5,16 +5,6 @@ import "../ui"
 
 import "../Api.js" as Api
 
-// The composer zone: a wrapping multi-line input (grows to maxLines, then
-// scrolls), an optional mode line (reply / edit), and staged attachment
-// chips. State that must survive panel destruction (drafts, staged files)
-// lives in Service; this file keeps only modes and the chip cursor.
-//
-// Keys inside the input: Enter sends, Shift+Enter newlines, Up in an empty
-// input edits your last message, Ctrl+V stages a clipboard image (text
-// pastes fall through), Esc cancels edit/reply mode, then leaves the zone,
-// Alt+h/l move zones, Tab/Shift+Tab cycle (through the chips first).
-// On a chip: Left/Right/Tab move, x/Delete remove, Esc returns to the input.
 FocusScope {
   id: composer
 
@@ -27,7 +17,6 @@ FocusScope {
   property string editingId: ""
   property string replyToId: ""
   property string replyToName: ""
-  // -1: the text input owns the keyboard; >= 0: that chip does.
   property int chipCursor: -1
   property string savedDraft: ""
   property bool loadingText: false
@@ -49,16 +38,9 @@ FocusScope {
   signal leave()
   signal moveZone(string direction)
   signal cycleFocus(int delta)
-  // Ctrl+K / Ctrl+/ typed into the input: the TextArea would otherwise
-  // take them (Ctrl+K deletes to the end of the line), so they are
-  // claimed here and handed to the panel.
   signal switcherRequested()
   signal cheatsheetRequested()
-  // Alt+m: the TextArea would otherwise type an "m".
   signal membersRequested()
-  // Ctrl+Shift+M / D / H: the call controls work from every zone, so the
-  // composer claims them too and hands the action ("mute" / "deafen" /
-  // "leave") to the panel.
   signal voiceRequested(string action)
 
   readonly property color foreground: Color.foreground
@@ -102,8 +84,6 @@ FocusScope {
     replyToName = ""
   }
 
-  // Up in an empty input: load your newest message for editing. The draft
-  // (empty by construction here, but kept for symmetry) comes back on cancel.
   function startEditLast() {
     if (!service || !channelId) return false
     var id = service.lastOwnMessageId(channelId)
@@ -138,9 +118,6 @@ FocusScope {
       })
       return true
     }
-    // Both paths clear the input now, so text typed while the request runs
-    // is never wiped by its completion (which may land after a channel
-    // switch). Failure hands the text back through draftRestored.
     if (chips.length) {
       if (!service.upload(channelId, content, replyToId)) return false
     } else {
@@ -174,7 +151,6 @@ FocusScope {
     })
   }
 
-  // Synthesized-key entry point (harness) mirroring the focus chain.
   function handleKey(event) {
     if (chipCursor >= 0) handleChipKey(event)
     else handleInputKey(event)
@@ -190,7 +166,6 @@ FocusScope {
     if (alt && key === Qt.Key_H) moveZone("left")
     else if (alt && key === Qt.Key_L) moveZone("right")
     else if (alt && key === Qt.Key_M) membersRequested()
-    // Alt+Up/Down (channel stepping) belongs to the panel.
     else if (alt) return
     else if (ctrl && shift && key === Qt.Key_M) voiceRequested("mute")
     else if (ctrl && shift && key === Qt.Key_D) voiceRequested("deafen")
@@ -255,9 +230,6 @@ FocusScope {
   Connections {
     target: composer.service
     ignoreUnknownSignals: true
-    // A failed send hands its text back; anything typed since stays below
-    // it. While editing, the input shows the message being edited, so the
-    // text merges into the stashed draft that comes back when editing ends.
     function onDraftRestored(channelId) {
       if (channelId !== composer.channelId) return
       var restored = composer.service.draftFor(channelId)
@@ -274,7 +246,6 @@ FocusScope {
     font: input.font
   }
 
-  // Keyboard owner while a chip has the cursor (keeps keys out of the input).
   Item {
     id: chipFocus
     width: 0

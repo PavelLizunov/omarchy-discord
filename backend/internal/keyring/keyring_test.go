@@ -76,10 +76,9 @@ func TestClearLoopsAndStops(t *testing.T) {
 	if clears != 3 {
 		t.Fatalf("clears=%d", clears)
 	}
-	// Pathological: clear always succeeds and lookup always finds something.
 	k = Keyring{Run: func(_ context.Context, _ string, args ...string) (string, int, error) { return "tok", 0, nil }}
 	clears = 0
-	if err := k.Clear(context.Background()); err != nil {
-		t.Fatal(err)
+	if err := k.Clear(context.Background()); err == nil {
+		t.Fatal("expected clear limit error")
 	}
 }

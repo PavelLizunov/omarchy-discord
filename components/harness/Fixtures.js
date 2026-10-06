@@ -1,6 +1,3 @@
-// Synthetic messages for the Timeline harness. Covers every MessageRow
-// feature: grouping, day breaks, replies, mentions, spoilers, code blocks,
-// links, attachments, embeds, reactions, system rows, edits.
 
 var USERS = {
   "100": { id: "100", username: "me", display_name: "Matt", avatar_url: "", bot: false },
@@ -55,7 +52,6 @@ function makeMessage(id, authorId, content, ms, extra) {
   return m
 }
 
-// `count` messages ending `endMs` ms ago-ish, ids descending from `lastId`.
 function build(count, lastId, endMs) {
   var out = []
   var ms = endMs
@@ -73,7 +69,6 @@ function build(count, lastId, endMs) {
     if (i % 29 === 14) { extra.system = true; extra.content = "Lin pinned a message to this channel." }
     out.unshift(makeMessage(id, authorId, content, ms, extra))
     id -= 1
-    // Mostly tight spacing (grouping), with occasional gaps and a day break.
     var gap = 40 * 1000
     if (i % 7 === 0) gap = 20 * 60 * 1000
     if (i % 31 === 0) gap = 30 * 60 * 60 * 1000

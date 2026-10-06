@@ -21,8 +21,6 @@ import (
 	"github.com/mattcalayo/omarchy-discord/backend/internal/socket"
 )
 
-// uploadHarness is a ready manager whose send drains every file reader (as
-// the multipart writer would) and records the names it saw.
 func uploadHarness(t *testing.T) (*Manager, *fakeClient, *[]string, func(line string) (any, *protocol.Error)) {
 	t.Helper()
 	m, _ := readyManager(t)
@@ -112,12 +110,12 @@ func TestUploadProgressCadence(t *testing.T) {
 	pr := &progressReader{r: bytes.NewReader(make([]byte, 1000)), total: 1000, now: func() time.Time { return now },
 		report: func(sent, total int64) { got = append(got, [2]int64{sent, total}) }}
 	buf := make([]byte, 100)
-	for i := 0; i < 5; i++ { // 500 bytes within 100 ms: first event only
+	for i := 0; i < 5; i++ {
 		pr.Read(buf)
 		now = now.Add(10 * time.Millisecond)
 	}
 	now = now.Add(100 * time.Millisecond)
-	pr.Read(buf) // 600: interval elapsed
+	pr.Read(buf)
 	for i := 0; i < 4; i++ {
 		pr.Read(buf)
 	}
@@ -206,8 +204,6 @@ func TestUnderStagedDir(t *testing.T) {
 	}
 }
 
-// countingTransport answers every request with 429 and records attempts and
-// the bytes it read from each body.
 type countingTransport struct {
 	mu       sync.Mutex
 	attempts int
@@ -229,9 +225,6 @@ func (c *countingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	}, nil
 }
 
-// TestUploadNoRetryOn429: the live send path makes exactly one attempt for a
-// multipart upload (the file readers cannot be replayed) and reports
-// rate_limited.
 func TestUploadNoRetryOn429(t *testing.T) {
 	m, _, _, call := uploadHarness(t)
 	m.rest = liveREST()

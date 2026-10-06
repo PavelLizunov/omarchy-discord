@@ -15,7 +15,6 @@ import (
 
 var update = flag.Bool("update", false, "rewrite testdata/ready.json from the synthetic builder")
 
-// Snowflakes used by the fixture.
 const (
 	selfID     = 100000000000000001
 	adaID      = 100000000000000002
@@ -34,24 +33,14 @@ const (
 	dmGroup    = 400000000000000002
 )
 
-// readyFixture is the on-disk shape: ReadyEvent's documented fields plus the
-// user-account extras that gateway.ReadyEvent only unmarshals (json:"-").
 type readyFixture struct {
 	gateway.ReadyEvent
-	UserSettings      *gateway.UserSettings      `json:"user_settings"`
-	ReadStates        []gateway.ReadState        `json:"read_state"`
-	UserGuildSettings []gateway.UserGuildSetting `json:"user_guild_settings"`
-	// MergedMembers carries our own member per guild, index-aligned with
-	// Guilds, as the real READY does (guild objects ship no members).
-	MergedMembers [][]gateway.SupplementalMember `json:"merged_members"`
+	UserSettings      *gateway.UserSettings          `json:"user_settings"`
+	ReadStates        []gateway.ReadState            `json:"read_state"`
+	UserGuildSettings []gateway.UserGuildSetting     `json:"user_guild_settings"`
+	MergedMembers     [][]gateway.SupplementalMember `json:"merged_members"`
 }
 
-// buildReady constructs a SYNTHETIC but schema-faithful READY payload using
-// arikawa's own types.
-//
-// TODO(phase-1): replace testdata/ready.json with a scrubbed real capture
-// (arikawa ws.EnableRawEvents dump, ids/tokens anonymized) — the synthetic
-// payload only covers the fields this package reads.
 func buildReady() readyFixture {
 	text := func(id, parent discord.ChannelID, name string, pos int, last discord.MessageID, ow ...discord.Overwrite) discord.Channel {
 		return discord.Channel{ID: id, GuildID: guildOmar, Type: discord.GuildText, Name: name, Position: pos, ParentID: parent, LastMessageID: last, Overwrites: ow}
@@ -102,12 +91,12 @@ func buildReady() readyFixture {
 		},
 	}
 	r.ReadStates = []gateway.ReadState{
-		{ChannelID: chGeneral, LastMessageID: 500000000000000010, MentionCount: 0}, // read
-		{ChannelID: chDev, LastMessageID: 500000000000000019, MentionCount: 2},     // mentioned
-		{ChannelID: chLoose, LastMessageID: 500000000000000039, MentionCount: 0},   // unread
-		{ChannelID: chQuiet, LastMessageID: 500000000000000049, MentionCount: 0},   // unread, but guild muted
-		{ChannelID: dmAda, LastMessageID: 500000000000000069, MentionCount: 1},     // mentioned DM
-		{ChannelID: dmGroup, LastMessageID: 500000000000000060, MentionCount: 0},   // read
+		{ChannelID: chGeneral, LastMessageID: 500000000000000010, MentionCount: 0},
+		{ChannelID: chDev, LastMessageID: 500000000000000019, MentionCount: 2},
+		{ChannelID: chLoose, LastMessageID: 500000000000000039, MentionCount: 0},
+		{ChannelID: chQuiet, LastMessageID: 500000000000000049, MentionCount: 0},
+		{ChannelID: dmAda, LastMessageID: 500000000000000069, MentionCount: 1},
+		{ChannelID: dmGroup, LastMessageID: 500000000000000060, MentionCount: 0},
 	}
 	r.UserGuildSettings = []gateway.UserGuildSetting{
 		{GuildID: guildQuiet, Muted: true},
@@ -116,23 +105,18 @@ func buildReady() readyFixture {
 	return r
 }
 
-// loadOfflineState feeds testdata/ready.json through a real arikawa state and
-// ningen's sub-states without any gateway; REST is disabled via Offline().
 func loadOfflineState(t *testing.T) *ningen.State {
 	t.Helper()
 	n, ready := newUnopenedState(t)
 	dispatch(n, ready)
-	seedSelfMembers(n, ready) // what the ConnectedEvent handler does
+	seedSelfMembers(n, ready)
 	return n.Offline()
 }
 
-// dispatch delivers an event exactly as the gateway would: through the session
-// handler, which runs the state's sync hook and then ningen's sub-states.
 func dispatch(n *ningen.State, ev any) {
 	n.State.Session.Handler.Call(ev)
 }
 
-// newUnopenedState returns a never-opened ningen state and the fixture READY.
 func newUnopenedState(t *testing.T) (*ningen.State, *gateway.ReadyEvent) {
 	t.Helper()
 	path := filepath.Join("testdata", "ready.json")
@@ -169,7 +153,6 @@ func TestGuildsFromFixture(t *testing.T) {
 	if len(gs) != 2 {
 		t.Fatalf("guilds: %+v", gs)
 	}
-	// Folder order puts Quiet first.
 	if gs[0].Name != "Quiet" || gs[0].Position != 0 || gs[1].Name != "Omarchy" || gs[1].Position != 1 {
 		t.Fatalf("order: %+v", gs)
 	}
@@ -250,7 +233,6 @@ func TestDMsFromFixture(t *testing.T) {
 	if len(dms) != 2 {
 		t.Fatalf("%+v", dms)
 	}
-	// Sorted by last_message_id desc: ada's DM is newer than the group.
 	ada, group := dms[0], dms[1]
 	if ada.Type != "dm" || ada.Name != "Ada" || ada.Unread != "mentioned" || ada.MentionCount != 1 || ada.GuildID != nil {
 		t.Errorf("ada: %+v", ada)

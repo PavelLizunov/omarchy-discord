@@ -24,6 +24,31 @@ TestCase {
     preview.client.timeline.focusNewest()
     preview.client.focusZone()
   }
+  function test_ack_requires_visible_active_window() {
+    preview.client.mapped = true
+    preview.client.windowActive = true
+    preview.client.timeline.reachedBottom()
+    wait(600)
+    compare(preview.model.callCount("markChannelRead"), 1)
+    preview.model.reset()
+    preview.client.windowActive = false
+    preview.client.timeline.reachedBottom()
+    wait(600)
+    compare(preview.model.callCount("markChannelRead"), 0)
+    preview.client.windowActive = true
+    preview.client.mapped = false
+    preview.client.timeline.reachedBottom()
+    wait(600)
+    compare(preview.model.callCount("markChannelRead"), 0)
+    preview.client.mapped = true
+    preview.client.timeline.reachedBottom()
+    preview.client.windowActive = false
+    wait(600)
+    compare(preview.model.callCount("markChannelRead"), 0)
+    preview.client.windowActive = true
+    wait(600)
+    compare(preview.model.callCount("markChannelRead"), 1)
+  }
   function test_copy_and_navigation() {
     verify(press(0,"Y"))
     verify(preview.copiedText.length > 0)

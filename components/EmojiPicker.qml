@@ -8,15 +8,6 @@ import "../Api.js" as Api
 import "../Emoji.js" as Emoji
 import "../Keymap.js" as Keymap
 
-// E on a timeline row: a modal emoji picker inside the panel window. The
-// search field filters by name; the grid is navigated with the arrows (or
-// Ctrl+h/j/k/l, since plain letters type into the filter), Enter picks,
-// Esc clears the filter then closes. Sections, in order: the message's own
-// reactions ("Toggle" — picking one you already reacted with removes it),
-// frequently used (persisted by the service), server emoji (list_emoji, one
-// section per guild, the selected guild first; rendered through the media
-// cache), then the unicode catalogue.
-// Emits picked(emoji) in wire form; the caller decides react vs unreact.
 FocusScope {
   id: root
 
@@ -34,8 +25,6 @@ FocusScope {
   signal picked(string emoji)
   signal closeRequested()
 
-  // Empty while hidden: the grid's Repeater would otherwise instantiate every
-  // cell (and request every custom emoji image) the moment list_emoji lands.
   readonly property var sections: shown
     ? Emoji.sections(reactions, frequent, serverEmoji, catalog, query, gridLimit, service ? service.selectedGuildId : "")
     : []
@@ -82,7 +71,6 @@ FocusScope {
     ensureVisible()
   }
 
-  // Keep the cursor cell inside the grid viewport.
   function ensureVisible() {
     if (cursor < 0 || cursor >= flat.length) return
     var pos = flat[cursor]
@@ -218,8 +206,6 @@ FocusScope {
                     id: cellItem
                     required property int index
                     readonly property var cell: sectionColumn.section.cells[index] || ({})
-                    // Sections shrink under a filter while stale delegates
-                    // are still being torn down: guard the lookup.
                     readonly property int flatIndex: {
                       var base = 0
                       for (var s = 0; s < sectionColumn.index; s++) {
@@ -250,7 +236,6 @@ FocusScope {
                       font.family: root.fontFamily
                       font.pixelSize: cellItem.cell.custom ? Style.font.caption : Style.font.heading
                     }
-                    // Reaction count on Toggle cells.
                     Text {
                       visible: !!cellItem.cell.toggle && cellItem.cell.count > 0
                       anchors.right: parent.right

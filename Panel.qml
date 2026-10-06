@@ -4,8 +4,6 @@ import Quickshell.Hyprland
 import qs.Commons as Host
 import "ui"
 
-// Quickshell owns windows and system actions; ClientView is the same Qt Quick
-// consumer rendered by MCP. No backend or desktop access lives in that view.
 Item {
   id: root
   property var shell: null

@@ -4,14 +4,6 @@ import "../ui"
 
 import "../Api.js" as Api
 
-// The call bar: the bottom strip of the channel column while a voice call is
-// anything but idle (Service.voice, mirrored from protocol.State.voice, so it
-// is back the moment the panel is re-summoned mid-call). Channel name, what
-// the call is doing, and the three controls — stacked, because the column is
-// ~230 px wide and "Undeafen" next to two more labels does not fit; the
-// controls are icon-only with the chord in their tooltip. It is a panel focus
-// stop rather than a zone: everything it does has a chord (Ctrl+Shift+M / D /
-// H) that works from anywhere, so there is no cursor to rove.
 Item {
   id: root
 
@@ -95,10 +87,6 @@ Item {
         font.pixelSize: Style.font.bodySmall
       }
 
-      // Mouse-only: the keyboard route is the three chords, which reach these
-      // actions from every zone (and from any app over the voice IpcHandler),
-      // so a fourth roving cursor would buy nothing. Icon-only at this width;
-      // the tooltip carries the name and the chord.
       Row {
         id: controls
         width: parent.width
@@ -132,7 +120,6 @@ Item {
           width: controls.cell
           text: "Leave"
           focusable: true
-          // The one destructive control of the three, in the urgent token.
           foreground: Color.urgent
           fontFamily: root.fontFamily
           tooltipText: "Leave the voice channel (Ctrl+Shift+H)"

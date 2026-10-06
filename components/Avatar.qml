@@ -3,7 +3,6 @@ import "../ui"
 
 import "../Api.js" as Api
 
-// Text identity marker. No remote image request or decoding is performed.
 Item {
   id: root
 

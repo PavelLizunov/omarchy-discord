@@ -19,7 +19,6 @@ import (
 	"github.com/mattcalayo/omarchy-discord/backend/internal/socket"
 )
 
-// fakeClient stands in for the socket connection's open-channel set.
 type fakeClient struct {
 	mu     sync.Mutex
 	open   map[string]bool
@@ -83,7 +82,6 @@ func ts(i int) discord.Timestamp {
 	return discord.Timestamp(time.Date(2026, 8, 20, 14, 0, i, 117_000_000, time.UTC))
 }
 
-// guildMsg builds a default message from ada in #general.
 func guildMsg(i int, content string) discord.Message {
 	return discord.Message{
 		ID: msgBase + discord.MessageID(i), ChannelID: chGeneral, GuildID: guildOmar, Type: discord.DefaultMessage,
@@ -91,8 +89,6 @@ func guildMsg(i int, content string) discord.Message {
 	}
 }
 
-// readyManager returns a manager attached to the fixture session in the ready
-// state with the snapshot events drained.
 func readyManager(t *testing.T) (*Manager, *ningen.State) {
 	t.Helper()
 	m := New(&fakeKeyring{})
@@ -102,10 +98,10 @@ func readyManager(t *testing.T) (*Manager, *ningen.State) {
 	m.installHandlers(n)
 	m.setLifecycleLocked(protocol.LifecycleConnecting, "")
 	m.mu.Unlock()
-	nextEvent(t, m) // connecting
+	nextEvent(t, m)
 	dispatch(n, ready)
-	nextEvent(t, m) // ready
-	nextEvent(t, m) // guilds_synced
+	nextEvent(t, m)
+	nextEvent(t, m)
 	drainVoiceSeed(t, m)
 	return m, n
 }
@@ -119,9 +115,6 @@ func noEvent(t *testing.T, m *Manager) {
 	}
 }
 
-// routed returns the next routed event, skipping read_state/state events
-// (ningen's read.UpdateEvent fires on its own goroutine, so their order
-// relative to message events is undefined).
 func routed(t *testing.T, m *Manager) socket.Routed {
 	t.Helper()
 	for {
@@ -139,7 +132,6 @@ func routed(t *testing.T, m *Manager) socket.Routed {
 
 func TestWireMessageMapping(t *testing.T) {
 	n := loadOfflineState(t)
-	// Put the guild member with a nick into the cache so nick > display name.
 	n.Cabinet.MemberSet(guildOmar, &discord.Member{User: discord.User{ID: adaID, Username: "ada", DisplayName: "Ada"}, Nick: "ada-nick"}, false)
 
 	original := guildMsg(1, "first  line\nsecond")
@@ -194,13 +186,11 @@ func TestWireMessageMapping(t *testing.T) {
 		t.Errorf("reactions: %+v", w.Reactions)
 	}
 
-	// Unknown reply target: id kept, name/preview empty.
 	msg.Reference.MessageID = 600000000000000099
 	msg.ReferencedMessage = nil
 	if r := WireMessage(n, &msg).ReplyTo; r == nil || r.MessageID != "600000000000000099" || r.Preview != "" || r.AuthorDisplayName != "" {
 		t.Errorf("unknown reply: %+v", r)
 	}
-	// Inline referenced message wins over the cache.
 	inline := guildMsg(3, "")
 	inline.Attachments = []discord.Attachment{{Filename: "a.txt"}, {Filename: "b.txt"}}
 	msg.ReferencedMessage = &inline
@@ -208,7 +198,6 @@ func TestWireMessageMapping(t *testing.T) {
 		t.Errorf("inline reply preview: %+v", r)
 	}
 
-	// Plain message: empty arrays, not null; no mention.
 	plain := guildMsg(4, "hello")
 	b, _ = json.Marshal(WireMessage(n, &plain))
 	for _, key := range []string{`"attachments":[]`, `"embeds":[]`, `"reactions":[]`, `"reply_to":null`, `"edited_timestamp":null`, `"mentions_self":false`, `"nonce":""`} {
@@ -216,7 +205,6 @@ func TestWireMessageMapping(t *testing.T) {
 			t.Errorf("missing %s in %s", key, b)
 		}
 	}
-	// DM: guild_id null, display name is the global one.
 	dm := discord.Message{ID: msgBase + 5, ChannelID: dmAda, Author: discord.User{ID: adaID, Username: "ada", DisplayName: "Ada"}, Content: "hi", Timestamp: ts(5)}
 	if w := WireMessage(n, &dm); w.GuildID != nil || w.Author.DisplayName != "Ada" {
 		t.Errorf("dm: %+v", w)
@@ -274,8 +262,6 @@ func TestSystemMessages(t *testing.T) {
 	}
 }
 
-// fillCache dispatches count messages into a channel through the gateway
-// path so they land in the cabinet exactly as live traffic would.
 func fillCache(m *Manager, n *ningen.State, chID discord.ChannelID, guildID discord.GuildID, from, count int) {
 	for i := from; i < from+count; i++ {
 		msg := guildMsg(i, fmt.Sprintf("m%d", i))
@@ -284,8 +270,6 @@ func fillCache(m *Manager, n *ningen.State, chID discord.ChannelID, guildID disc
 	}
 }
 
-// drainRouted discards the routed events produced by fillCache plus any
-// read_state_changed / state_changed they trigger.
 func drain(m *Manager) {
 	for {
 		select {
@@ -305,7 +289,6 @@ func TestOpenChannelHistoryAndClose(t *testing.T) {
 	}
 	m.fetchBefore = func(ctx context.Context, n *ningen.State, chID discord.ChannelID, before discord.MessageID, limit uint) ([]discord.Message, error) {
 		restBefore++
-		// Pretend the server holds 10 older messages below the oldest cached one.
 		var out []discord.Message
 		for i := 1; i <= 10 && len(out) < int(limit); i++ {
 			id := before - discord.MessageID(i)
@@ -318,7 +301,7 @@ func TestOpenChannelHistoryAndClose(t *testing.T) {
 		}
 		return out, nil
 	}
-	fillCache(m, n, chGeneral, guildOmar, 20, 60) // ids base+20 … base+79
+	fillCache(m, n, chGeneral, guildOmar, 20, 60)
 	drain(m)
 
 	client := newFakeClient()
@@ -340,12 +323,10 @@ func TestOpenChannelHistoryAndClose(t *testing.T) {
 	if !client.HasOpen("300000000000000002") || restTail != 1 {
 		t.Fatalf("open bookkeeping: open=%v tail=%d", client.HasOpen("300000000000000002"), restTail)
 	}
-	// Idempotent reopen.
 	if _, e := call(open); e != nil {
 		t.Fatal(e)
 	}
 
-	// history page 1: the cache holds 10 older messages, fewer than a page, so REST is used.
 	res, e = call(`{"v":1,"id":2,"command":"history","channel_id":"300000000000000002","before_id":"` + r.Messages[0].ID + `","limit":10}`)
 	if e != nil {
 		t.Fatal(e)
@@ -357,7 +338,6 @@ func TestOpenChannelHistoryAndClose(t *testing.T) {
 	if h.Messages[9].ID != (msgBase+29).String() || h.Messages[0].ID != (msgBase+20).String() {
 		t.Fatalf("history page bounds: %s … %s", h.Messages[0].ID, h.Messages[9].ID)
 	}
-	// page 2: nothing older is cached → REST, which returns 10 < 50 → start of history.
 	res, e = call(`{"v":1,"id":3,"command":"history","channel_id":"300000000000000002","before_id":"` + h.Messages[0].ID + `"}`)
 	if e != nil {
 		t.Fatal(e)
@@ -369,16 +349,13 @@ func TestOpenChannelHistoryAndClose(t *testing.T) {
 	if h.Messages[0].GuildID == nil {
 		t.Fatalf("guild_id must be filled on REST pages")
 	}
-	// REST pages must not enter the cache.
 	if cached, _ := n.Cabinet.Messages(chGeneral); len(cached) != 60 {
 		t.Fatalf("cache polluted: %d", len(cached))
 	}
-	// limit clamping: 0 → 50, 500 → 100 (served by REST stub which caps at 10 anyway).
 	if _, e := call(`{"v":1,"id":4,"command":"history","channel_id":"300000000000000002","before_id":"1","limit":500}`); e != nil {
 		t.Fatal(e)
 	}
 
-	// Error paths.
 	for _, c := range []struct{ line, code string }{
 		{`{"v":1,"id":5,"command":"history","channel_id":"300000000000000003","before_id":"1"}`, protocol.CodeChannelNotOpen},
 		{`{"v":1,"id":5,"command":"history","channel_id":"300000000000000002"}`, protocol.CodeInvalidArgument},
@@ -400,7 +377,6 @@ func TestOpenChannelHistoryAndClose(t *testing.T) {
 	if _, e := call(`{"v":1,"id":9,"command":"history","channel_id":"300000000000000002","before_id":"1"}`); e == nil || e.Code != protocol.CodeChannelNotOpen {
 		t.Fatalf("history after close: %v", e)
 	}
-	// Without a socket client (no connection context) close is channel_not_open.
 	if _, e := m.Handle(context.Background(), req(t, `{"v":1,"id":9,"command":"close_channel","channel_id":"300000000000000002"}`)); e == nil || e.Code != protocol.CodeChannelNotOpen {
 		t.Fatalf("close without client: %v", e)
 	}
@@ -416,7 +392,6 @@ func TestOpenChannelVirginDMRefused(t *testing.T) {
 	if e == nil || e.Code != protocol.CodeEmptyDMRefused {
 		t.Fatalf("virgin dm: %v", e)
 	}
-	// A group DM with no history is fine (not the spam heuristic's target).
 	res, e := m.Handle(ctx, req(t, `{"v":1,"id":2,"command":"open_channel","channel_id":"400000000000000002"}`))
 	if e != nil || len(res.(protocol.OpenChannelResult).Messages) != 0 || res.(protocol.OpenChannelResult).HasMore {
 		t.Fatalf("group dm: %v %+v", e, res)
@@ -435,7 +410,6 @@ func TestOpenChannelVirginDMRefused(t *testing.T) {
 func TestMessageEventsRouted(t *testing.T) {
 	m, n := readyManager(t)
 
-	// Message in a muted guild: routed to the channel only, no notify.
 	quiet := guildMsg(1, "hello")
 	quiet.ChannelID, quiet.GuildID = chQuiet, guildQuiet
 	dispatch(n, &gateway.MessageCreateEvent{Message: quiet})
@@ -444,9 +418,8 @@ func TestMessageEventsRouted(t *testing.T) {
 	if !ok || r.ChannelID != "300000000000000008" || r.All || ev.Notify || ev.ChannelName != "chat" || ev.Message.Content != "hello" || ev.GuildID == nil {
 		t.Fatalf("muted guild message: %+v %+v", r, ev)
 	}
-	drain(m) // read_state_changed for the new message
+	drain(m)
 
-	// Message in a guild set to "all messages": notifies without a mention.
 	msg := guildMsg(1, "hello")
 	dispatch(n, &gateway.MessageCreateEvent{Message: msg})
 	r = routed(t, m)
@@ -456,7 +429,6 @@ func TestMessageEventsRouted(t *testing.T) {
 	}
 	drain(m)
 
-	// Mentioning message: notify → All.
 	msg = guildMsg(2, "<@100000000000000001> ping")
 	msg.Mentions = []discord.GuildUser{{User: discord.User{ID: selfID}}}
 	dispatch(n, &gateway.MessageCreateEvent{Message: msg})
@@ -467,7 +439,6 @@ func TestMessageEventsRouted(t *testing.T) {
 	}
 	drain(m)
 
-	// DM from ada: notifies with the DM's name.
 	dm := discord.Message{ID: msgBase + 3, ChannelID: dmAda, Author: discord.User{ID: adaID, Username: "ada", DisplayName: "Ada"}, Content: "yo", Timestamp: ts(3)}
 	dispatch(n, &gateway.MessageCreateEvent{Message: dm})
 	r = routed(t, m)
@@ -477,7 +448,6 @@ func TestMessageEventsRouted(t *testing.T) {
 	}
 	drain(m)
 
-	// Own message: never notifies, nonce echoed.
 	own := guildMsg(4, "mine")
 	own.Author = discord.User{ID: selfID, Username: "tester"}
 	own.Nonce = "n-1"
@@ -489,7 +459,6 @@ func TestMessageEventsRouted(t *testing.T) {
 	}
 	drain(m)
 
-	// Reaction add → message_update with the reaction folded in from the cache.
 	dispatch(n, &gateway.MessageReactionAddEvent{UserID: selfID, ChannelID: chGeneral, MessageID: msgBase + 1, Emoji: discord.Emoji{Name: "🔥"}, GuildID: guildOmar})
 	r = routed(t, m)
 	up, ok := r.Event.(protocol.MessageUpdateEvent)
@@ -501,22 +470,17 @@ func TestMessageEventsRouted(t *testing.T) {
 	if len(up.Message.Reactions) != 0 {
 		t.Fatalf("reaction remove all: %+v", up)
 	}
-	// Reaction on an uncached message is dropped.
 	dispatch(n, &gateway.MessageReactionAddEvent{UserID: adaID, ChannelID: chGeneral, MessageID: msgBase + 99, Emoji: discord.Emoji{Name: "x"}})
 	noEvent(t, m)
 
-	// Edit → message_update from the merged cache copy (author survives a
-	// partial update).
 	dispatch(n, &gateway.MessageUpdateEvent{Message: discord.Message{ID: msgBase + 1, ChannelID: chGeneral, GuildID: guildOmar, Content: "hello!", EditedTimestamp: ts(8)}})
 	up = routed(t, m).Event.(protocol.MessageUpdateEvent)
 	if up.Message.Content != "hello!" || up.Message.Author.Username != "ada" || up.Message.EditedTimestamp == nil {
 		t.Fatalf("edit: %+v", up.Message)
 	}
-	// Partial update of an uncached message carries nothing renderable.
 	dispatch(n, &gateway.MessageUpdateEvent{Message: discord.Message{ID: msgBase + 98, ChannelID: chGeneral, Embeds: []discord.Embed{{Title: "t"}}}})
 	noEvent(t, m)
 
-	// Delete and bulk delete.
 	dispatch(n, &gateway.MessageDeleteEvent{ID: msgBase + 1, ChannelID: chGeneral, GuildID: guildOmar})
 	del := routed(t, m).Event.(protocol.MessageDeleteEvent)
 	if del.MessageID != (msgBase+1).String() || del.ChannelID != "300000000000000002" || del.GuildID == nil {
@@ -529,22 +493,18 @@ func TestMessageEventsRouted(t *testing.T) {
 		}
 	}
 
-	// Typing in a DM resolves the recipient name.
 	dispatch(n, &gateway.TypingStartEvent{ChannelID: dmAda, UserID: adaID, Timestamp: discord.UnixTimestamp(1755698602)})
 	r = routed(t, m)
 	typ := r.Event.(protocol.TypingStartEvent)
 	if r.ChannelID != "400000000000000001" || typ.DisplayName != "Ada" || typ.UserID != "100000000000000002" || typ.Timestamp != "2025-08-20T14:03:22.000Z" {
 		t.Fatalf("typing: %+v", typ)
 	}
-	// Typing in a guild with the member on the event.
 	dispatch(n, &gateway.TypingStartEvent{ChannelID: chGeneral, GuildID: guildOmar, UserID: linID, Timestamp: 1, Member: &discord.Member{User: discord.User{ID: linID, Username: "lin"}, Nick: "L"}})
 	if typ := routed(t, m).Event.(protocol.TypingStartEvent); typ.DisplayName != "L" {
 		t.Fatalf("guild typing: %+v", typ)
 	}
 }
 
-// nextUnrouted returns the next non-routed event: ningen fires read.UpdateEvent
-// on its own goroutine, so its order relative to message_create is undefined.
 func nextUnrouted(t *testing.T, m *Manager) any {
 	t.Helper()
 	for {
@@ -555,8 +515,6 @@ func nextUnrouted(t *testing.T, m *Manager) any {
 	}
 }
 
-// noUnrouted asserts no state/read-state event arrives; the routed
-// message_create may still be in flight (see nextUnrouted).
 func noUnrouted(t *testing.T, m *Manager) {
 	t.Helper()
 	select {
@@ -570,16 +528,14 @@ func noUnrouted(t *testing.T, m *Manager) {
 
 func TestReadStateChangedFunnel(t *testing.T) {
 	m, n := readyManager(t)
-	// A new message in #general (read, 0 mentions) → unread, total unchanged (3).
 	dispatch(n, &gateway.MessageCreateEvent{Message: guildMsg(1, "x")})
 	ev := nextUnrouted(t, m)
 	rs, ok := ev.(protocol.ReadStateChangedEvent)
 	if !ok || rs.ChannelID != "300000000000000002" || !rs.Unread || rs.MentionCount != 0 || rs.TotalMentionCount != 3 || rs.GuildID == nil {
 		t.Fatalf("read_state_changed: %#v", ev)
 	}
-	noUnrouted(t, m) // total unchanged → no state_changed
+	noUnrouted(t, m)
 
-	// A mention bumps the total and emits state_changed after the read event.
 	msg := guildMsg(2, "<@100000000000000001>")
 	msg.Mentions = []discord.GuildUser{{User: discord.User{ID: selfID}}}
 	dispatch(n, &gateway.MessageCreateEvent{Message: msg})
@@ -591,9 +547,6 @@ func TestReadStateChangedFunnel(t *testing.T) {
 		t.Fatalf("state after mention: %+v", st)
 	}
 
-	// ack: error paths, then a real MarkRead (the message is cached and not
-	// ours → ningen would POST the ack; the REST call fails offline, which is
-	// fine) and its read_state_changed.
 	call := func(line string) *protocol.Error {
 		_, e := m.Handle(context.Background(), req(t, line))
 		return e
@@ -619,12 +572,10 @@ func TestReadStateChangedFunnel(t *testing.T) {
 		t.Fatalf("state after ack: %+v", st)
 	}
 
-	// Before ready (fresh session) ack is not_logged_in / gateway_unavailable.
 	m2 := New(&fakeKeyring{})
 	if _, e := m2.Handle(context.Background(), req(t, `{"v":1,"id":1,"command":"ack","channel_id":"300000000000000002","message_id":"600000000000000002"}`)); e == nil || e.Code != protocol.CodeNotLoggedIn {
 		t.Fatalf("ack logged out: %v", e)
 	}
-	// A synthetic read.UpdateEvent (another device acked) is funneled 1:1.
 	dispatch(n, &read.UpdateEvent{ReadState: gateway.ReadState{ChannelID: chDev, LastMessageID: 500000000000000020, MentionCount: 0}, GuildID: guildOmar, Unread: false})
 	rs = nextEvent(t, m).(protocol.ReadStateChangedEvent)
 	if rs.ChannelID != "300000000000000003" || rs.Unread || *rs.LastReadMessageID != "500000000000000020" {
@@ -632,9 +583,6 @@ func TestReadStateChangedFunnel(t *testing.T) {
 	}
 }
 
-// TestOpenChannelRegistersBeforeFetch: the open is registered before the tail
-// fetch so a message arriving mid-fetch is routed to the connection; a failed
-// open rolls the registration back, but never closes an already-open channel.
 func TestOpenChannelRegistersBeforeFetch(t *testing.T) {
 	m, n := readyManager(t)
 	fillCache(m, n, chGeneral, guildOmar, 0, 5)
@@ -646,7 +594,6 @@ func TestOpenChannelRegistersBeforeFetch(t *testing.T) {
 	var openDuringFetch bool
 	m.fetchTail = func(ctx context.Context, n *ningen.State, chID discord.ChannelID, limit uint) ([]discord.Message, error) {
 		openDuringFetch = client.HasOpen(id)
-		// A message lands while the REST round trip is in flight.
 		dispatch(n, &gateway.MessageCreateEvent{Message: guildMsg(10, "mid-fetch")})
 		return n.Cabinet.Messages(chID)
 	}
@@ -661,14 +608,12 @@ func TestOpenChannelRegistersBeforeFetch(t *testing.T) {
 	if r.ChannelID != id || r.Event.(protocol.MessageCreateEvent).Message.Content != "mid-fetch" {
 		t.Fatalf("mid-fetch message not routed: %+v", r)
 	}
-	// The same message is also in the tail (cache was filled by the event); the client dedupes by id.
 	msgs := res.(protocol.OpenChannelResult).Messages
 	if msgs[len(msgs)-1].ID != (msgBase + 10).String() {
 		t.Fatalf("tail should end with the mid-fetch message, got %s", msgs[len(msgs)-1].ID)
 	}
 	drain(m)
 
-	// A failed reopen of an open channel leaves it open.
 	m.fetchTail = func(context.Context, *ningen.State, discord.ChannelID, uint) ([]discord.Message, error) {
 		return nil, errors.New("dial tcp: network unreachable")
 	}
@@ -678,7 +623,6 @@ func TestOpenChannelRegistersBeforeFetch(t *testing.T) {
 	if !client.HasOpen(id) {
 		t.Fatal("failed reopen must not close an open channel")
 	}
-	// A failed first open is rolled back: REST error and virgin-DM refusal.
 	if _, e := m.Handle(ctx, req(t, `{"v":1,"id":3,"command":"open_channel","channel_id":"300000000000000003"}`)); e == nil || e.Code != protocol.CodeDiscordError {
 		t.Fatalf("rest failure: %v", e)
 	}
@@ -696,15 +640,12 @@ func TestOpenChannelRegistersBeforeFetch(t *testing.T) {
 	}
 }
 
-// TestOpenChannelTailCapped: the cache-aware fetch may hand back more than
-// openTail (arikawa returns a "tiny" channel's whole store); the tail is
-// capped to the newest openTail and has_more reflects the cap.
 func TestOpenChannelTailCapped(t *testing.T) {
 	m, n := readyManager(t)
 	fillCache(m, n, chGeneral, guildOmar, 0, 70)
 	drain(m)
 	m.fetchTail = func(ctx context.Context, n *ningen.State, chID discord.ChannelID, limit uint) ([]discord.Message, error) {
-		return n.Cabinet.Messages(chID) // all 70, newest first
+		return n.Cabinet.Messages(chID)
 	}
 	ctx := socket.WithClient(context.Background(), newFakeClient())
 	res, e := m.Handle(ctx, req(t, `{"v":1,"id":1,"command":"open_channel","channel_id":"300000000000000002"}`))
@@ -718,7 +659,6 @@ func TestOpenChannelTailCapped(t *testing.T) {
 	if r.Messages[0].ID != (msgBase+20).String() || r.Messages[openTail-1].ID != (msgBase+69).String() {
 		t.Fatalf("must keep the newest 50: %s … %s", r.Messages[0].ID, r.Messages[openTail-1].ID)
 	}
-	// A short tail reports has_more=false.
 	m.fetchTail = func(ctx context.Context, n *ningen.State, chID discord.ChannelID, limit uint) ([]discord.Message, error) {
 		all, _ := n.Cabinet.Messages(chID)
 		return all[:3], nil
@@ -732,9 +672,6 @@ func TestOpenChannelTailCapped(t *testing.T) {
 	}
 }
 
-// TestReadPath401MovesToReauth: a 401 from the history REST calls behind
-// open_channel / history is handled like a write 401 — reauth_needed,
-// keyring cleared, the command fails not_logged_in.
 func TestReadPath401MovesToReauth(t *testing.T) {
 	for _, cmd := range []string{"open_channel", "history"} {
 		m, n := readyManager(t)

@@ -11,12 +11,8 @@ import (
 	"github.com/mattcalayo/omarchy-discord/backend/internal/protocol"
 )
 
-// quickSwitchDefault is the default result cap for quick_switch.
 const quickSwitchDefault = 20
 
-// openable reports whether a channel type can be opened as a timeline: text,
-// announcement, threads, DMs, group DMs. Voice, stage, categories, and forums
-// are excluded.
 func openable(t discord.ChannelType) bool {
 	switch t {
 	case discord.GuildText, discord.GuildAnnouncement,
@@ -35,20 +31,12 @@ func archived(ch *discord.Channel) bool {
 	return ch.ThreadMetadata != nil && ch.ThreadMetadata.Archived
 }
 
-// candidate is one switcher entry before scoring.
 type candidate struct {
 	ch        discord.Channel
 	guildName string
-	name      string // display name (DMs: recipient names)
+	name      string
 }
 
-// switchCandidates lists every openable channel: visible guild channels and
-// unarchived threads (via ningen's permission-filtered Channels) and private
-// channels. Threads additionally require View Channel on the parent, since the
-// permission check on a thread itself sees no overwrites. n should be
-// Offline(): the filter needs our own member per guild, which READY seeds
-// (seedSelfMembers), so a miss must hide the guild rather than REST-fetch on
-// every keystroke.
 func switchCandidates(n *ningen.State) []candidate {
 	var out []candidate
 	if gs, err := n.Cabinet.Guilds(); err == nil {
@@ -81,8 +69,6 @@ func switchCandidates(n *ningen.State) []candidate {
 	return out
 }
 
-// dmName mirrors wireChannel's DM naming: the set name or the joined
-// recipient display names.
 func dmName(ch discord.Channel) string {
 	if ch.Name != "" {
 		return ch.Name
@@ -94,11 +80,6 @@ func dmName(ch discord.Channel) string {
 	return strings.Join(names, ", ")
 }
 
-// fuzzyScore scores query as a subsequence of text (both lowercased). 0 means
-// no match. Each matched rune scores 2, consecutive matches +3, a match at a
-// word start +2 (and the gap before it is free), a match at the very start
-// +3; otherwise every skipped rune between matches costs 1, capped at 3.
-// Deterministic and greedy (first occurrence wins).
 func fuzzyScore(query, text string) float64 {
 	q := []rune(strings.ToLower(strings.TrimSpace(query)))
 	t := []rune(strings.ToLower(text))
@@ -128,7 +109,6 @@ func fuzzyScore(query, text string) float64 {
 	if qi < len(q) {
 		return 0
 	}
-	// Prefer shorter texts for equal matches so "dev" beats "devops-chat".
 	return score - float64(len(t)-len(q))*0.01
 }
 
@@ -136,7 +116,6 @@ func isWordBoundary(r rune) bool {
 	return r == '-' || r == '_' || r == ' ' || r == '.' || r == '/' || unicode.IsPunct(r)
 }
 
-// unreadTier orders mentioned (2) > unread (1) > read (0).
 func unreadTier(u ningen.UnreadIndication) int {
 	switch u {
 	case ningen.ChannelMentioned:
@@ -147,8 +126,6 @@ func unreadTier(u ningen.UnreadIndication) int {
 	return 0
 }
 
-// lastPreview is the newest cached message of a channel collapsed to one
-// line, "" when nothing is cached.
 func lastPreview(n *ningen.State, chID discord.ChannelID) string {
 	msgs, err := n.Cabinet.Messages(chID)
 	if err != nil || len(msgs) == 0 {
@@ -157,11 +134,6 @@ func lastPreview(n *ningen.State, chID discord.ChannelID) string {
 	return preview(&msgs[0])
 }
 
-// QuickSwitch ranks openable channels for the switcher. With a query, only
-// fuzzy matches on the channel name (or, at half weight, the guild name) are
-// returned; unread/mentioned entries come first, then by score, then by
-// recency. With an empty query the unread set comes first, then everything
-// else by recency. Cache-only: callers pass Offline().
 func QuickSwitch(n *ningen.State, query string, limit int) []protocol.QuickSwitchEntry {
 	if limit <= 0 {
 		limit = quickSwitchDefault
@@ -221,7 +193,6 @@ func QuickSwitch(n *ningen.State, query string, limit int) []protocol.QuickSwitc
 	return out
 }
 
-// quickSwitch implements the quick_switch command.
 func (m *Manager) quickSwitch(req *protocol.Request) (any, *protocol.Error) {
 	var p protocol.QuickSwitchParams
 	if e := req.Params(&p); e != nil {

@@ -1,5 +1,3 @@
-// Package protocol implements the wire contract in docs/BACKEND_PROTOCOL.md:
-// line-delimited JSON requests, responses, and events, protocol version 1.
 package protocol
 
 import (
@@ -10,16 +8,12 @@ import (
 	"github.com/mattcalayo/omarchy-discord/backend/internal/redact"
 )
 
-// Version is the only protocol version this backend speaks.
 const Version = 1
 
-// BackendVersion is the semver of the binary, reported in hello and state.
 const BackendVersion = "0.1.0"
 
-// Engine is reported by hello.
 const Engine = "arikawa"
 
-// Error codes. Stable and machine-readable; see the protocol doc table.
 const (
 	CodeInvalidRequest     = "invalid_request"
 	CodeUnsupportedVersion = "unsupported_version"
@@ -43,7 +37,6 @@ const (
 	CodeInternalError      = "internal_error"
 )
 
-// Error is the failure payload of a response.
 type Error struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
@@ -51,13 +44,10 @@ type Error struct {
 
 func (e *Error) Error() string { return e.Code + ": " + e.Message }
 
-// Errorf builds an Error with a redacted, formatted message.
 func Errorf(code, format string, args ...any) *Error {
 	return &Error{Code: code, Message: redact.Redact(fmt.Sprintf(format, args...))}
 }
 
-// Request is a decoded request line. Params stay raw and are decoded per
-// command with Request.Params.
 type Request struct {
 	V       int    `json:"v"`
 	ID      int64  `json:"id"`
@@ -66,7 +56,6 @@ type Request struct {
 	raw []byte
 }
 
-// Params decodes the flattened request parameters into dst.
 func (r *Request) Params(dst any) *Error {
 	if err := json.Unmarshal(r.raw, dst); err != nil {
 		return Errorf(CodeInvalidArgument, "bad parameters for %s: %v", r.Command, err)
@@ -74,13 +63,6 @@ func (r *Request) Params(dst any) *Error {
 	return nil
 }
 
-// Raw returns the original request line (without the trailing newline).
-func (r *Request) Raw() []byte { return r.raw }
-
-// DecodeRequest parses one request line. A parse failure yields an
-// invalid_request error with no request (the id is unknowable); a parseable
-// line with a bad version or missing command returns the request alongside the
-// error so the caller can echo its id.
 func DecodeRequest(line []byte) (*Request, *Error) {
 	var req Request
 	if err := json.Unmarshal(line, &req); err != nil {
@@ -96,7 +78,6 @@ func DecodeRequest(line []byte) (*Request, *Error) {
 	return &req, nil
 }
 
-// Response is the reply to one request. Result and Err are mutually exclusive.
 type Response struct {
 	Type   string `json:"type"`
 	V      int    `json:"v"`
@@ -106,17 +87,14 @@ type Response struct {
 	Err    *Error `json:"error,omitempty"`
 }
 
-// OKResponse builds a success response.
 func OKResponse(id int64, result any) Response {
 	return Response{Type: "response", V: Version, ID: id, OK: true, Result: result}
 }
 
-// ErrResponse builds a failure response.
 func ErrResponse(id int64, e *Error) Response {
 	return Response{Type: "response", V: Version, ID: id, OK: false, Err: e}
 }
 
-// EventHeader is embedded (first) in every event payload struct.
 type EventHeader struct {
 	Type  string `json:"type"`
 	V     int    `json:"v"`
@@ -127,10 +105,6 @@ func header(name string) EventHeader {
 	return EventHeader{Type: "event", V: Version, Event: name}
 }
 
-// Encode serializes one wire object as a single JSON line including the
-// trailing newline. Redaction happens at the text sources (Errorf, the state
-// error field, logs), not here: running regexes over a serialized line can
-// match across fields and produce invalid JSON.
 func Encode(v any) ([]byte, error) {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -139,8 +113,6 @@ func Encode(v any) ([]byte, error) {
 	return append(b, '\n'), nil
 }
 
-// MustEncode encodes v; if serialization fails it encodes a serialization_error
-// response with the given id instead (which cannot fail).
 func MustEncode(id int64, v any) []byte {
 	b, err := Encode(v)
 	if err == nil {

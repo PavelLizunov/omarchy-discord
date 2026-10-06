@@ -8,20 +8,6 @@ import qs.Ui
 import "components" as Components
 import "components/harness/Fixtures.js" as Fixtures
 
-// Offscreen contract harness for selectable message text, the Ctrl+C copy and
-// the hovered-link copy chip. `components/harness/run-selection.sh` builds a
-// scratch config root of symlinks and runs this with QT_QPA_PLATFORM=offscreen;
-// every pointer event is synthesized by QtTest inside this window, so nothing
-// is ever injected into the Wayland session.
-//
-// What it pins down:
-//   * a fenced code block with a 200-character URL wraps inside the column
-//     instead of running off the right edge (Markdown.js blockCodeStyle);
-//   * the body TextEdit never takes activeFocus, so the roving cursor and the
-//     zone keys survive a drag-selection;
-//   * one selection at a time, Ctrl+C copies it with real newlines, Y still
-//     copies the whole message, Esc peels the selection before the zone;
-//   * hovering a link offers the copy chip, and the chip copies the URL.
 ShellRoot {
   id: harness
 
@@ -44,8 +30,6 @@ ShellRoot {
     fontSize: Style.font.body
   })
 
-  // Five short rows so every delegate is laid out at once and no scrolling is
-  // needed to reach one with the mouse.
   property var messages: {
     var t = Date.parse("2026-08-20T10:00:00.000Z")
     return [
@@ -81,8 +65,6 @@ ShellRoot {
     return event.accepted
   }
 
-  // Depth-first walk over children (and a Flickable's contentItem) for the
-  // first object the predicate accepts.
   function find(item, pred) {
     if (!item) return null
     if (pred(item)) return item
@@ -119,7 +101,6 @@ ShellRoot {
 
   function bodyOf(row) { return find(row, isBody) }
 
-  // First point inside `item` that reports a link, scanning its laid-out box.
   function linkPoint(item) {
     for (var y = 2; y < item.height; y += 4)
       for (var x = 2; x < item.width; x += 4)
@@ -217,20 +198,17 @@ ShellRoot {
       harness.check("Ctrl+C copied the selection", harness.clipboard(), String(selected))
       harness.check("and reported it through copied()", harness.copies - before, 1)
 
-      // Y still copies the whole message, not the selection.
       Quickshell.clipboardText = ""
       timeline.cursorMessageId = "5"
       harness.press("Y")
       harness.check("Y still copies the whole cursor message", harness.clipboard(), "last")
       timeline.cursorMessageId = "1"
 
-      // A selection in another row drops the first one.
       var other = harness.rowFor(4)
       harness.bodyOf(other).selectAll()
       harness.check("the new row owns the selection", timeline.selectionOwner === other, true)
       harness.check("the old row lost its selection", row.hasSelection, false)
 
-      // Qt hands rich text back with U+2028 / U+2029 separators, never "\n".
       var raw = String(other.selection)
       harness.check("the raw selection carries Qt separators",
         raw.indexOf(String.fromCharCode(8232)) >= 0 || raw.indexOf(String.fromCharCode(8233)) >= 0, true)
@@ -238,7 +216,6 @@ ShellRoot {
       harness.press("Ctrl_C", Qt.ControlModifier)
       harness.check("the clipboard gets real newlines", harness.clipboard(), "first line\nsecond line\nthird line")
 
-      // Ctrl+C with nothing selected falls through to the panel.
       timeline.clearSelection()
       harness.check("Ctrl+C without a selection is not consumed",
         harness.press("Ctrl_C", Qt.ControlModifier), false)
@@ -294,12 +271,9 @@ ShellRoot {
       harness.check("and reports it through linkCopied()", harness.linkCopies - before, 1)
       harness.check("copying a link moves the cursor to its row", timeline.cursorMessageId, "3")
 
-      // The chip covers the text it is offered for, so hoveredLink goes empty
-      // the moment it appears: the offer must not clear synchronously.
       mouseMove(body, 1, Math.round(body.height) - 1)
       harness.check("the offer survives the pointer leaving the link", row.hoverLink, harness.longUrl)
 
-      // L copies the cursor row's first link, without the chip.
       timeline.clearSelection()
       Quickshell.clipboardText = ""
       before = harness.linkCopies
@@ -323,7 +297,6 @@ ShellRoot {
     }
   }
 
-  // Let the window map and every delegate lay out before asserting.
   Timer {
     interval: 500
     running: true

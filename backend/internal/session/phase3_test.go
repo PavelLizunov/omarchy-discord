@@ -30,8 +30,6 @@ func thread(id, parent discord.ChannelID, name string, last discord.MessageID, a
 	}
 }
 
-// channelUpdate returns the next channel_update event, skipping unrelated
-// async events.
 func channelUpdate(t *testing.T, m *Manager) protocol.ChannelUpdateEvent {
 	t.Helper()
 	for {
@@ -45,8 +43,6 @@ func channelUpdate(t *testing.T, m *Manager) protocol.ChannelUpdateEvent {
 	}
 }
 
-// addThreads injects the test threads through ThreadCreate events and drains
-// the channel_update events they produce.
 func addThreads(t *testing.T, m *Manager, n *ningen.State) {
 	t.Helper()
 	for _, th := range []discord.Channel{
@@ -103,7 +99,6 @@ func TestQuickSwitch(t *testing.T) {
 		return out
 	}
 
-	// Exact-ish query: only general matches "gen" (the category is excluded).
 	r := call(`{"v":1,"id":1,"command":"quick_switch","query":"gen"}`)
 	if got := names(r); len(got) != 1 || got[0] != "general" {
 		t.Fatalf("gen: %v", got)
@@ -113,8 +108,6 @@ func TestQuickSwitch(t *testing.T) {
 		t.Fatalf("gen entry: %+v", e)
 	}
 
-	// Unread first: "e" matches dev (mentioned), loose (unread), then read
-	// channels by score; the archived thread and voice never appear.
 	r = call(`{"v":1,"id":2,"command":"quick_switch","query":"e"}`)
 	got := names(r)
 	if len(got) < 4 || got[0] != "dev" || got[1] != "loose" {
@@ -128,23 +121,17 @@ func TestQuickSwitch(t *testing.T) {
 	if len(names(call(`{"v":1,"id":3,"command":"quick_switch","query":"voice"}`))) != 0 {
 		t.Fatal("voice channels must be excluded")
 	}
-	// Threads are candidates.
 	if got := names(call(`{"v":1,"id":4,"command":"quick_switch","query":"release"}`)); len(got) != 1 || got[0] != "release-planning" {
 		t.Fatalf("thread: %v", got)
 	}
-	// Guild name is a secondary key at half weight.
 	r = call(`{"v":1,"id":5,"command":"quick_switch","query":"quiet"}`)
 	if got := names(r); len(got) != 1 || got[0] != "chat" || r.Entries[0].GuildName == nil || *r.Entries[0].GuildName != "Quiet" {
 		t.Fatalf("guild name: %v", got)
 	}
-	// DMs match by recipient name and carry a null guild name.
 	r = call(`{"v":1,"id":6,"command":"quick_switch","query":"ada"}`)
 	if got := names(r); len(got) != 2 || got[0] != "Ada" || got[1] != "Ada, lin" || r.Entries[0].GuildName != nil || r.Entries[0].LastMessagePreview != "" {
 		t.Fatalf("dm: %v %+v", got, r.Entries)
 	}
-	// Empty query: mentioned (Ada's DM, dev), then unread (general — the
-	// cached message made it unread — chat, loose), then the rest, each
-	// tier by last message desc; score 0 throughout.
 	r = call(`{"v":1,"id":7,"command":"quick_switch","query":""}`)
 	got = names(r)
 	want := []string{"Ada", "dev", "general", "chat", "loose", "Ada, lin", "devthread", "release-planning"}
@@ -156,11 +143,9 @@ func TestQuickSwitch(t *testing.T) {
 			t.Fatalf("empty query score: %+v", e)
 		}
 	}
-	// Limit.
 	if got := names(call(`{"v":1,"id":8,"command":"quick_switch","query":"","limit":2}`)); fmt.Sprint(got) != fmt.Sprint(want[:2]) {
 		t.Fatalf("limit: %v", got)
 	}
-	// No session → not_logged_in.
 	if _, e := New(&fakeKeyring{}).Handle(context.Background(), req(t, `{"v":1,"id":9,"command":"quick_switch","query":"x"}`)); e == nil || e.Code != protocol.CodeNotLoggedIn {
 		t.Fatalf("not logged in: %v", e)
 	}
@@ -194,13 +179,11 @@ func TestListThreadsOpenAndEvents(t *testing.T) {
 		t.Fatalf("invalid: %v", e)
 	}
 
-	// open_channel on a cached thread.
 	res, e = m.Handle(ctx, req(t, `{"v":1,"id":5,"command":"open_channel","channel_id":"310000000000000001"}`))
 	if e != nil || res.(protocol.OpenChannelResult).Channel.Type != "thread" || !client.HasOpen("310000000000000001") {
 		t.Fatalf("open thread: %v %+v", e, res)
 	}
 
-	// Uncached thread: one REST lookup, then cached.
 	var fetches int
 	m.fetchChannel = func(ctx context.Context, n *ningen.State, chID discord.ChannelID) (*discord.Channel, error) {
 		fetches++
@@ -230,7 +213,6 @@ func TestListThreadsOpenAndEvents(t *testing.T) {
 		t.Fatalf("fetches %d", fetches)
 	}
 
-	// Thread update / delete events.
 	upd := thread(thRelease, chGeneral, "release-planning-v2", 500000000000000017, false)
 	dispatch(n, &gateway.ThreadUpdateEvent{Channel: upd})
 	if ev := channelUpdate(t, m); ev.Change != protocol.ChannelChangeUpdate || ev.Channel.Name != "release-planning-v2" {
@@ -244,14 +226,12 @@ func TestListThreadsOpenAndEvents(t *testing.T) {
 	if ths := res.(protocol.ListThreadsResult).Threads; len(ths) != 1 || ths[0].Name != "late" {
 		t.Fatalf("after delete (only the REST-fetched thread remains): %+v", ths)
 	}
-	// Plain channel events too.
 	dispatch(n, &gateway.ChannelCreateEvent{Channel: discord.Channel{ID: 300000000000000099, GuildID: guildOmar, Type: discord.GuildText, Name: "new"}})
 	if ev := channelUpdate(t, m); ev.Change != protocol.ChannelChangeCreate || ev.Channel.Name != "new" {
 		t.Fatalf("channel create: %+v", ev)
 	}
 }
 
-// Synthetic GUILD_MEMBER_LIST_UPDATE payloads for #general's "everyone" list.
 func listItem(u discord.User, nick string, status discord.Status, acts ...discord.Activity) gateway.GuildMemberListOpItem {
 	var it gateway.GuildMemberListOpItem
 	it.Member = &struct {
@@ -277,7 +257,6 @@ func listUpdate(ops ...gateway.GuildMemberListOp) *gateway.GuildMemberListUpdate
 	}
 }
 
-// memberList returns the next member_list_update routed event.
 func memberList(t *testing.T, m *Manager) (socket.Routed, protocol.MemberListUpdateEvent) {
 	t.Helper()
 	for {
@@ -300,7 +279,6 @@ func TestMemberListOps(t *testing.T) {
 	client := newFakeClient()
 	ctx := socket.WithClient(context.Background(), client)
 
-	// Subscribe before any list exists: ok, subscribed, nothing emitted yet.
 	if _, e := m.Handle(ctx, req(t, `{"v":1,"id":1,"command":"subscribe_members","channel_id":"300000000000000002"}`)); e != nil {
 		t.Fatal(e)
 	}
@@ -311,7 +289,6 @@ func TestMemberListOps(t *testing.T) {
 		t.Fatalf("member list not requested: %+v", r)
 	}
 	noEvent(t, m)
-	// Secret channel: no view permission.
 	if _, e := m.Handle(ctx, req(t, `{"v":1,"id":2,"command":"subscribe_members","channel_id":"300000000000000005"}`)); e == nil || e.Code != protocol.CodeForbidden {
 		t.Fatalf("secret: %v", e)
 	}
@@ -319,7 +296,6 @@ func TestMemberListOps(t *testing.T) {
 		t.Fatalf("unknown: %v", e)
 	}
 
-	// SYNC: full first chunk.
 	self := discord.User{ID: selfID, Username: "tester", DisplayName: "Tester"}
 	dispatch(n, listUpdate(gateway.GuildMemberListOp{Op: "SYNC", Range: [2]int{0, 99}, Items: []gateway.GuildMemberListOpItem{
 		groupItem("online", 2),
@@ -352,26 +328,22 @@ func TestMemberListOps(t *testing.T) {
 		t.Fatalf("lin: %+v", l)
 	}
 
-	// INSERT bob at index 3 (after self, before the offline group).
 	dispatch(n, listUpdate(gateway.GuildMemberListOp{Op: "INSERT", Index: 3, Item: listItem(bob, "", discord.IdleStatus)}))
 	_, ev = memberList(t, m)
 	if len(ev.Members) != 4 || ev.Members[2].User.Username != "bob" || ev.Members[2].GroupID != "online" || ev.Members[2].Status != "idle" {
 		t.Fatalf("insert: %+v", ev.Members)
 	}
-	// UPDATE ada → idle with a custom status.
 	dispatch(n, listUpdate(gateway.GuildMemberListOp{Op: "UPDATE", Index: 1, Item: listItem(ada, "ada-nick", discord.IdleStatus,
 		discord.Activity{Type: discord.CustomActivity, State: "sleepy", Emoji: &discord.Emoji{Name: "🌙"}})}))
 	_, ev = memberList(t, m)
 	if ev.Members[0].Status != "idle" || ev.Members[0].Activity != "🌙 sleepy" {
 		t.Fatalf("update: %+v", ev.Members[0])
 	}
-	// DELETE bob.
 	dispatch(n, listUpdate(gateway.GuildMemberListOp{Op: "DELETE", Index: 3}))
 	_, ev = memberList(t, m)
 	if len(ev.Members) != 3 || ev.Members[2].User.Username != "lin" {
 		t.Fatalf("delete: %+v", ev.Members)
 	}
-	// Debounce: two ops in a burst produce one event.
 	dispatch(n, listUpdate(gateway.GuildMemberListOp{Op: "UPDATE", Index: 1, Item: listItem(ada, "", discord.OnlineStatus)}))
 	dispatch(n, listUpdate(gateway.GuildMemberListOp{Op: "UPDATE", Index: 1, Item: listItem(ada, "", discord.DoNotDisturbStatus)}))
 	_, ev = memberList(t, m)
@@ -379,21 +351,17 @@ func TestMemberListOps(t *testing.T) {
 		t.Fatalf("burst: %+v", ev.Members[0])
 	}
 	noEvent(t, m)
-	// INVALIDATE empties the range; groups survive.
 	dispatch(n, listUpdate(gateway.GuildMemberListOp{Op: "INVALIDATE", Range: [2]int{0, 99}}))
 	_, ev = memberList(t, m)
 	if len(ev.Members) != 0 || len(ev.Groups) != 2 {
 		t.Fatalf("invalidate: %+v", ev)
 	}
 
-	// A list for another list id (secret channel) is never emitted for
-	// #general, and #secret has no subscriber request.
 	other := listUpdate(gateway.GuildMemberListOp{Op: "SYNC", Range: [2]int{0, 99}, Items: []gateway.GuildMemberListOpItem{groupItem("online", 1), listItem(ada, "", discord.OnlineStatus)}})
 	other.ID = "deadbeef"
 	dispatch(n, other)
 	noEvent(t, m)
 
-	// Re-subscribing (another client) re-emits ningen's kept list at once.
 	dispatch(n, listUpdate(gateway.GuildMemberListOp{Op: "SYNC", Range: [2]int{0, 99}, Items: []gateway.GuildMemberListOpItem{groupItem("online", 1), listItem(ada, "", discord.OnlineStatus)}}))
 	memberList(t, m)
 	c2 := newFakeClient()
@@ -403,7 +371,6 @@ func TestMemberListOps(t *testing.T) {
 	if _, ev = memberList(t, m); len(ev.Members) != 1 {
 		t.Fatalf("resubscribe: %+v", ev)
 	}
-	// Unsubscribe is idempotent.
 	for i := 0; i < 2; i++ {
 		if _, e := m.Handle(ctx, req(t, `{"v":1,"id":5,"command":"unsubscribe_members","channel_id":"300000000000000002"}`)); e != nil {
 			t.Fatal(e)
@@ -420,19 +387,14 @@ func TestDMMemberListAndPresenceRouting(t *testing.T) {
 	client := newFakeClient()
 	ctx := socket.WithClient(context.Background(), client)
 
-	// Ada is online globally (friend presence, guild 0). She is a DM
-	// recipient, so the event is routed to her DMs (open-set keys) — the
-	// socket layer drops it when nobody has them open.
 	dispatch(n, &gateway.PresenceUpdateEvent{Presence: discord.Presence{User: discord.User{ID: adaID}, Status: discord.IdleStatus,
 		Activities: []discord.Activity{{Type: discord.ListeningActivity, Name: "Spotify"}}}})
 	if r := routed(t, m); len(r.Open) != 2 || len(r.Members) != 0 || r.Event.(protocol.PresenceUpdateEvent).Activity != "Listening to Spotify" {
 		t.Fatalf("friend presence: %+v", r)
 	}
-	// A user in no DM and no list produces nothing.
 	dispatch(n, &gateway.PresenceUpdateEvent{Presence: discord.Presence{User: discord.User{ID: bobID}, Status: discord.IdleStatus}})
 	noEvent(t, m)
 
-	// Group DM: synthesized from recipients + presence store, no gateway.
 	if _, e := m.Handle(ctx, req(t, `{"v":1,"id":1,"command":"subscribe_members","channel_id":"400000000000000002"}`)); e != nil {
 		t.Fatal(e)
 	}
@@ -453,8 +415,6 @@ func TestDMMemberListAndPresenceRouting(t *testing.T) {
 		t.Fatal("DM subscribe must not request a member list")
 	}
 
-	// Presence for ada now routes to her DMs (open-set keys) and the group
-	// list (member-sub key); nothing for an unknown user.
 	dispatch(n, &gateway.PresenceUpdateEvent{Presence: discord.Presence{User: discord.User{ID: adaID}, GuildID: guildOmar, Status: discord.DoNotDisturbStatus}})
 	r = routed(t, m)
 	pev, ok := r.Event.(protocol.PresenceUpdateEvent)
@@ -470,8 +430,6 @@ func TestDMMemberListAndPresenceRouting(t *testing.T) {
 	dispatch(n, &gateway.PresenceUpdateEvent{Presence: discord.Presence{User: discord.User{ID: 999}, GuildID: guildOmar, Status: discord.OnlineStatus}})
 	noEvent(t, m)
 
-	// Guild list membership extends routing: subscribe #general, sync bob
-	// in; bob's presence then routes to #general only.
 	if _, e := m.Handle(ctx, req(t, `{"v":1,"id":2,"command":"subscribe_members","channel_id":"300000000000000002"}`)); e != nil {
 		t.Fatal(e)
 	}
@@ -506,7 +464,6 @@ func TestListEmoji(t *testing.T) {
 		em[1].Name != "partyblob" || !em[1].Animated || em[1].URL != "https://cdn.discordapp.com/emojis/800000000000000002.gif" {
 		t.Fatalf("emoji: %+v", em)
 	}
-	// Gaining the role makes the restricted emoji usable.
 	n.Cabinet.MemberSet(guildOmar, &discord.Member{User: discord.User{ID: selfID, Username: "tester"}, RoleIDs: []discord.RoleID{role}}, true)
 	res, _ = m.Handle(context.Background(), req(t, `{"v":1,"id":2,"command":"list_emoji"}`))
 	if em := res.(protocol.ListEmojiResult).Guilds[0].Emoji; len(em) != 3 || em[2].Name != "vip" {

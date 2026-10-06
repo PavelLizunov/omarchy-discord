@@ -1,11 +1,7 @@
 import QtQuick
 import Quickshell.Io
 
-import "Api.js" as Api
 
-// Owns the short-lived runtime commands around the backend. The backend itself
-// is a static systemd user unit started through scripts/backend-runtime.sh
-// (the only place QML touches systemctl); it is never a child of the shell.
 Item {
   id: root
 
@@ -31,30 +27,16 @@ Item {
   signal setupSucceeded()
   signal setupFailed(string reason)
 
-  function safeError(value) {
-    return Api.redact(String(value || ""))
-  }
-
   function runtimeScript(action) {
     return ["/usr/bin/bash", pluginDir + "/scripts/backend-runtime.sh", action]
   }
 
   function checkRequirements() {
-    // pluginDir arrives after the child Processes construct, so commands are
-    // assigned here rather than bound declaratively.
     if (!pluginDir || runtimeCheck.running) return
     runtimeCheck.command = runtimeScript("check")
     runtimeCheck.running = true
   }
 
-  // Omarchy runs no install hooks when it clones or updates a plugin, so the
-  // enabled service installs its own runtime. `sync` covers both the first load
-  // and every later plugin version: it compares the shipped backend against the
-  // stamp scripts/setup.sh wrote into the runtime directory, runs setup.sh only
-  // when they differ, and restarts a running backend when the binary changed.
-  // Its fast path is a handful of stats, so running it once per Service load —
-  // and the shell recreates the Service on any write inside the plugin dir —
-  // costs nothing.
   function syncRuntimeIfNeeded() {
     if (automaticSetupAttempted || setupBusy || !pluginDir || !runtimeChecked) return
     automaticSetupAttempted = true
@@ -116,8 +98,6 @@ Item {
     id: setupCommand
     stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { waitForEnd: true }
-    // 0: already current, 10: installed or updated, 30/31/32: failures.
-    // See backend-runtime.sh.
     onExited: function(exitCode) {
       root.setupBusy = false
       if (exitCode === 0 || exitCode === 10) {

@@ -14,24 +14,18 @@ import (
 const (
 	sampleRate   = 48000
 	channels     = 2
-	frameSamples = 960                     // per channel: 20 ms at 48 kHz
-	frameLen     = frameSamples * channels // int16 values per frame
+	frameSamples = 960
+	frameLen     = frameSamples * channels
 	frameBytes   = frameLen * 2
 	bitrate      = 64000
-	holdFrames   = 15 // ~300 ms of gate hold
+	holdFrames   = 15
 	maxOpusBytes = 1400
 )
 
-// gateRMS is the capture gate threshold on the int16 scale (≈ -36 dBFS; a
-// USB webcam mic idles at RMS 80–330 in a quiet room, speech runs well over
-// 1000). ponytail: fixed threshold, no adaptive noise floor — tune here if
-// mics with a low default gain get cut.
 var gateRMS = 500.0
 
-// audioWatchInterval is how often watch polls the streams for a lost server.
 var audioWatchInterval = time.Second
 
-// audio is one call's Pulse client with its record and playback streams.
 type audio struct {
 	client *pulse.Client
 	rec    *pulse.RecordStream
@@ -39,8 +33,8 @@ type audio struct {
 	tx     *capture
 	rx     *receiver
 
-	done       chan struct{} // closed by close; stops watch
-	serverLost func() bool   // either stream marked closed by a lost server
+	done       chan struct{}
+	serverLost func() bool
 }
 
 func openAudio(log *slog.Logger, speaking func(snowflake.ID, bool)) (*audio, error) {
@@ -75,11 +69,9 @@ func openAudio(log *slog.Logger, speaking func(snowflake.ID, bool)) (*audio, err
 	return a, nil
 }
 
-// close stops both streams and the client. A lost Pulse server marks the
-// streams closed already; Close is then a no-op.
 func (a *audio) close() {
 	close(a.done)
-	if a.client != nil { // nil in the offline tests
+	if a.client != nil {
 		a.rec.Stop()
 		a.rec.Close()
 		a.play.Stop()
@@ -89,9 +81,6 @@ func (a *audio) close() {
 	a.rx.Close()
 }
 
-// watch surfaces a lost Pulse server (pipewire restart) during a call: the
-// streams flip to closed and simply stop calling back, so nothing else
-// would notice. lost is called at most once, then watch returns.
 func (a *audio) watch(every time.Duration, lost func()) {
 	t := time.NewTicker(every)
 	defer t.Stop()
@@ -108,16 +97,13 @@ func (a *audio) watch(every time.Duration, lost func()) {
 	}
 }
 
-// capture turns 20 ms PCM fragments from Pulse into Opus frames for disgo's
-// AudioSender. Pulse's reader goroutine is the capture goroutine: it gates,
-// encodes and drops a frame into frames; ProvideOpusFrame pulls one per tick.
 type capture struct {
 	log    *slog.Logger
 	enc    *opus.Encoder
 	muted  atomic.Bool
-	frames chan []byte // nil element: gated (silence) frame
+	frames chan []byte
 
-	buf  []int16 // accumulating frame
+	buf  []int16
 	n    int
 	hold int
 }
@@ -133,9 +119,6 @@ func newCapture(log *slog.Logger) (*capture, error) {
 	return &capture{log: log, enc: enc, frames: make(chan []byte, 4), buf: make([]int16, frameLen)}, nil
 }
 
-// write is the pulse.Int16Writer callback. Muted drops the PCM, a partly
-// filled frame included, so nothing captured before or during the mute is
-// completed and sent after it.
 func (c *capture) write(p []int16) (int, error) {
 	total := len(p)
 	if c.muted.Load() {
@@ -154,10 +137,6 @@ func (c *capture) write(p []int16) (int, error) {
 	return total, nil
 }
 
-// setMuted flips the flag and drops the frames already encoded: what was
-// said before the flip must not leave after it. Draining before the store
-// makes the unmute airtight (a frame mid-encode at mute time lands after
-// the mute's drain and is caught by the unmute's).
 func (c *capture) setMuted(m bool) {
 	for {
 		select {
@@ -169,7 +148,6 @@ func (c *capture) setMuted(m bool) {
 	}
 }
 
-// frame gates and encodes one 20 ms frame.
 func (c *capture) frame(pcm []int16) {
 	loud := rms(pcm) >= gateRMS
 	if loud {
@@ -189,9 +167,6 @@ func (c *capture) frame(pcm []int16) {
 		}
 		out = data[:n]
 	}
-	// Sender behind (or not pulling at all while alone in the channel):
-	// drop the oldest, so the queue is always the last ≤80 ms and the gate's
-	// nil frames flush it once speech stops. Nothing stale can go out later.
 	for {
 		select {
 		case c.frames <- out:
@@ -205,8 +180,6 @@ func (c *capture) frame(pcm []int16) {
 	}
 }
 
-// ProvideOpusFrame implements disgo's OpusFrameProvider. nil, nil means
-// silence: disgo sends the silence burst and Speaking itself.
 func (c *capture) ProvideOpusFrame() ([]byte, error) {
 	if c.muted.Load() {
 		return nil, nil
@@ -219,7 +192,6 @@ func (c *capture) ProvideOpusFrame() ([]byte, error) {
 	}
 }
 
-// Close implements OpusFrameProvider; the streams are owned by audio.
 func (c *capture) Close() {}
 
 func rms(pcm []int16) float64 {

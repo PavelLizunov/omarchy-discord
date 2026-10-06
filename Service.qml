@@ -8,9 +8,6 @@ import "Api.js" as Api
 import "Markdown.js" as Markdown
 import "Emoji.js" as Emoji
 
-// Shared state for the bar widget and the lazy full panel. The Go backend is
-// the source of truth; this is a mirror fed by its socket events. Runs while
-// the plugin is enabled and survives panel destruction between summons.
 Item {
   id: root
 
@@ -32,7 +29,6 @@ Item {
   readonly property alias daemon: daemonManager
   readonly property alias backend: backendClient
 
-  // --- settings (self-served from shell.json; see CONVENTIONS §2) ---
   readonly property var defaultSettingValues: ({
     stayConnected: "On",
     notifications: "Mentions and DMs",
@@ -47,21 +43,16 @@ Item {
   readonly property string notificationMode: settings.notifications
   readonly property bool showMentionCount: settings.showMentionCount !== "Off"
   readonly property string middleClickAction: settings.middleClick
-  // The panel window is always mapped and Hyprland places it; the host's
-  // open/close then focus and hide it instead of mapping and unmapping.
   readonly property bool persistentWindow: settings.window === "Persistent"
   readonly property bool imagePreviews: false
   readonly property bool textOnly: true
   readonly property int mediaCacheMB: settings.mediaCacheMB
   readonly property int idleDisconnectMinutes: 15
 
-  // --- mirrored backend state ---
   property var backendState: null
   readonly property string lifecycle: backendState ? String(backendState.lifecycle || "") : ""
   readonly property bool connected: backendClient.connected
   readonly property bool ready: connected && lifecycle === "ready"
-  // A transient gateway reconnect surfaces as `connecting`; keep the browser
-  // up for a short grace (BACKEND_PROTOCOL state notes) before tearing down.
   property bool reconnectGraceActive: false
   readonly property bool showStructure: connected && (lifecycle === "ready"
     || (lifecycle === "connecting" && reconnectGraceActive))
@@ -75,166 +66,76 @@ Item {
   readonly property string statusText: Api.lifecycleLabel(lifecycle, connected)
   property var guilds: []
   property var dms: []
-  // guildId -> [channel]; replaced wholesale for reactivity.
   property var channelsByGuild: ({})
   property var channelsLoading: ({})
-  // parentId -> [thread channel] from list_threads (newest activity first);
-  // replaced wholesale. Filled on first expand, refreshed when a
-  // channel_update names a thread of a loaded parent.
   property var threadsByParent: ({})
   property var threadsLoading: ({})
-  // Per-key request sequences (guildId / parentId -> int, mutated in place;
-  // nothing binds to them): a response that is not the newest for its key is
-  // dropped so overlapping refreshes cannot restore stale structure.
   property var channelsSeq: ({})
   property var threadsSeq: ({})
-  // channel_update bursts (THREAD_LIST_SYNC: one create per active thread,
-  // hundreds on a busy guild) are coalesced: guild ids / thread parents
-  // touched since the last flush, mutated in place (nothing binds to them).
   property var dirtyGuilds: ({})
   property var dirtyThreadParents: ({})
   property bool structureBusy: false
   property bool loginBusy: false
-  // Highest `generation` seen on state / guilds_synced; stale ones are dropped.
   property double lastGeneration: -1
 
   property string lastError: ""
   property string statusMessage: ""
-  // Persistent, non-fatal note (e.g. keyring unavailable); cleared on logout.
   property string notice: ""
   signal operationFailed(string reason)
 
-  // Monitor name hosting the open full panel ("" when closed); set by Panel.qml.
   property string panelScreenName: ""
-  // The panel window has keyboard focus (Panel.qml publishes Window.active);
-  // gates notification suppression for the current channel.
   property bool panelActive: false
 
-  // --- media cache mirror (backend fetch_media / media_ready) ---
-  // "url|size" -> local path. Replaced wholesale: every avatar / image /
-  // emoji binding reads it through mediaPath().
   property var mediaPaths: ({})
-  // "url|size" -> { url, size } for every key a consumer has asked for and
-  // that is not resolved yet. mediaPath() only records the miss here (in
-  // place; nothing binds to it) and schedules flushMediaRequests() for the
-  // next event-loop turn, so no socket write ever runs inside a binding.
   property var mediaWanted: ({})
-  // "url|size" -> true while a fetch_media is outstanding; mutated in place
-  // (nothing binds to it).
   property var mediaPending: ({})
-  // "url|size" -> true after a failed fetch; cleared per connection so a
-  // binding never loops on a dead URL.
   property var mediaFailed: ({})
-  // "url|size" -> true once an evicted path has been dropped and re-fetched
-  // (one retry per key per connection, so a broken file never loops).
   property var mediaRetried: ({})
   readonly property int avatarSize: 64
   readonly property int emojiSize: 32
-  // Secondary text colour for every surface (Api.secondaryColor: the theme's
-  // muted when it reads against the background, else foreground at 60 %).
   readonly property color secondaryColor: Api.secondaryColor(Color.muted, Color.foreground, Color.background)
 
-  // --- notifications ---
-  // notify-send argv builder; a harness substitutes a recorder. Only the
-  // args after the binary are ours (see notificationArgs()).
   property var notifyCommand: function(args) { return ["notify-send"].concat(args) }
   readonly property int notifyWindowMs: 3000
-  // channelId -> last notify-send time (in place; nothing binds to it).
   property var notifyLastAt: ({})
-  // channelId -> { message, channel_name, isDm, count } held back by the
-  // per-channel rate limit; flushed as one "+N more" notification.
   property var notifyHeld: ({})
 
-  // --- QR login (start_qr_login / qr_* events) ---
-  // null, or { stage: "code"|"scanned"|"approved"|"cancelled", url,
-  // fingerprint, imagePath, expiresAt, revision, user, reason, error }.
-  // `revision` bumps per qr_code so the panel reloads the rewritten PNG.
   property var qr: null
   property bool qrBusy: false
   property int qrRevision: 0
-  // The backend replays the current qr_code on every connect while a flow
-  // runs; if it has not arrived qrReplayMs after a reconnect landed us in
-  // qr_pending with no code, the panel offers Cancel / Try again instead of
-  // waiting forever.
   readonly property int qrReplayMs: 3000
   property bool qrMissing: false
 
-  // --- panel view state (the panel is destroyed on hide; this restores it) ---
   property string selectedGuildId: ""
   property string currentChannelId: ""
-  // Last-visited channel per guild, most recent first: [{ g: guildId,
-  // c: channelId }] with "dms" as the DM pseudo-guild. Persisted as a JSON
-  // string on the shell.json entry (lastChannelKey), capped by
-  // Api.LAST_CHANNEL_CAP. Entering a guild reopens its entry.
   property var lastChannels: []
   readonly property string lastChannelKey: "lastChannels"
-  // The guild the user just entered whose channel list has not landed yet.
-  // The single slot IS the stale guard: a newer entry invalidates the older
-  // one, the same discipline as channelsSeq but with only one live intent.
   property string pendingGuildEntry: ""
 
-  // --- message store ---
-  // Channel ids this client has opened (per socket connection: re-sent to the
-  // backend on every reconnect). Replaced wholesale.
   property var openChannels: []
-  // channelId -> { channel, messages (ascending), hasMore, loading, oldestId,
-  // unreadMarkerId, opened }. `opened` flips once an open_channel response
-  // has landed (message_create may race ahead of it, so a non-empty
-  // `messages` does not mean the channel was opened before). The map is
-  // replaced wholesale on every change; the `messages` array is always a new
-  // array whose elements are the same object references for unchanged rows
-  // (Timeline diffs by id and keeps delegates).
   property var channelData: ({})
-  // Live traffic in the open channel is kept to a rolling window: once the
-  // array passes the cap it is trimmed from the top (to cap - windowSlack,
-  // so the trim is not repeated on every arrival) and the dropped rows
-  // become pageable history again. Never trimmed while the panel's
-  // timeline is scrolled up (`timelinePinned`, maintained by Panel.qml).
   readonly property int messageWindowCap: 500
   readonly property int messageWindowSlack: 100
   property bool timelinePinned: true
-  // channelId -> { unread, mention_count, last_read_message_id } from
-  // read_state_changed events (never from snapshots: the structure mirror is
-  // the display truth; this map is what ack/unread-marker logic consults).
   property var readState: ({})
-  // channelId -> [{ user_id, display_name, at }] with 10 s expiry.
   property var typers: ({})
-  // userId -> display_name, accumulated from message authors seen.
   property var knownUsers: ({})
   readonly property string selfId: user ? String(user.id || "") : ""
 
-  // --- composer state (survives panel destruction) ---
-  // channelId -> draft text. Mutated in place: nothing binds to it.
   property var drafts: ({})
-  // channelId -> [{ path, filename, size, sent, total, uploading }] staged
-  // attachments (files under $XDG_RUNTIME_DIR/omarchy-discord/staged/).
-  // Replaced wholesale on change (chips bind to it).
   property var staged: ({})
-  // Optimistic rows: request id -> pending row id, nonce -> pending row id.
-  // Own echoes are matched on the nonces *we* were handed back (other
-  // people's messages carry nonces too, BACKEND_PROTOCOL `message`).
   property var pendingByNonce: ({})
-  // upload request id -> channelId, for routing upload_progress to chips.
   property var uploadChannels: ({})
-  // channelId -> last typing command time (client-side throttle; the
-  // backend throttles again to one Discord call per 10 s).
   property var lastTypingAt: ({})
   readonly property int typingThrottleMs: 8000
   property int pendingSeq: 0
-  // Both clipboard steps go through this so a harness can substitute a
-  // script: args are appended to wl-paste's argv.
   property var clipboardCommand: function(args) { return ["wl-paste"].concat(args) }
   readonly property string stagedDir: {
     var runtime = String(Quickshell.env("XDG_RUNTIME_DIR") || "")
     return runtime ? runtime + "/omarchy-discord/staged" : ""
   }
-  // A failed send put its text back into the draft; the composer reloads it.
   signal draftRestored(string channelId)
-  // A guild entry resolved to a channel (see resolveGuildEntry). The channel
-  // list may only have landed just now, by which point the panel has already
-  // parked its cursor on the first row, so it needs telling where to move it.
   signal guildEntered(string guildId, string channelId)
-  // Any plain-unread channel anywhere (bar dot when there are no mentions).
   readonly property bool anyUnread: {
     for (var g = 0; g < guilds.length; g++)
       if (String(guilds[g].unread || "read") !== "read") return true
@@ -242,7 +143,6 @@ Item {
       if (String(dms[d].unread || "read") !== "read") return true
     return false
   }
-  // id -> name over every channel in the structure mirror (mention resolver).
   readonly property var channelNames: {
     var map = ({})
     for (var gid in channelsByGuild) {
@@ -253,11 +153,6 @@ Item {
     for (var d = 0; d < dms.length; d++) map[String(dms[d].id || "")] = String(dms[d].name || "")
     return map
   }
-  // Markdown.js render context: theme tokens + resolvers (harness Fixtures.ctx).
-  // Also carries the media resolvers MessageRow uses (avatars, attachment
-  // previews, emoji), so rows never touch the service directly. Reading
-  // `mediaPaths` here makes the ctx (and every row's html) refresh when a
-  // media_ready lands.
   readonly property var markdownCtx: ({
     users: knownUsers,
     channels: channelNames,
@@ -267,7 +162,6 @@ Item {
     mentionBg: Util.alpha(Color.accent, 0.18),
     linkColor: Color.accent,
     codeBg: Util.alpha(Color.foreground, 0.08),
-    // The spoiler cover is both ink and background: it must be opaque.
     spoilerColor: Api.blend(secondaryColor, Color.background, secondaryColor.a),
     mutedColor: secondaryColor,
     monoFamily: Style.font.family,
@@ -280,59 +174,28 @@ Item {
     emojiPath: function(id, animated) { return root.emojiPath(id, animated) }
   })
 
-  // --- reactions / emoji picker ---
-  // Frequently used: [{ e, n }] persisted as a JSON string on the shell.json
-  // entry (frequentEmojiKey), capped by Emoji.FREQUENT_CAP.
   property var frequentEmoji: []
   readonly property string frequentEmojiKey: "frequentEmoji"
-  // Unicode catalogue [{ e, k }], loaded lazily from the shell's data file.
   property var emojiCatalog: []
   property bool emojiCatalogRequested: false
-  // list_emoji result: [{ guild_id, guild_name, emoji: [{ id, name, animated, url }] }]
-  // in guild display order; the picker puts the selected guild first.
   property var serverEmoji: []
   property bool serverEmojiBusy: false
 
-  // --- member list (subscribe_members) ---
-  // The pane toggle lives here so a re-summoned panel comes back with it.
   property bool membersWanted: false
-  // Channel the pane wants a list for ("" = none): what the UI shows.
   property string membersChannelId: ""
-  // Channel actually subscribed on the current gateway session ("" = none).
-  // Subscriptions die with the socket AND with the gateway session (a
-  // re-identify lands as connecting -> ready with the socket intact), so
-  // this is cleared on both and syncMembers re-sends subscribe_members
-  // whenever it differs from membersChannelId.
   property string membersSubscribedId: ""
-  // Last member_list_update for membersChannelId (FULL replacement each
-  // time; presence_update patches rows in a copy).
   property var memberList: null
-  // No list within membersTimeoutMs of subscribing.
   property bool membersTimedOut: false
   readonly property int membersTimeoutMs: 15000
   property int quickSwitchSeq: 0
 
-  // --- voice ---
-  // The call, mirrored from protocol.State.voice (always present): it rides
-  // state_changed and Snapshot(), so a reloaded Service re-learns a live
-  // call and its hang-up control.
   property var voice: emptyVoice()
   readonly property bool inCall: String(voice.status || "idle") !== "idle"
-  // guildId -> [{ channel_id, users: [user] }] from voice_members; replaced
-  // wholesale for reactivity. The users carry id/username/display_name/
-  // avatar_url, so an occupant row needs no lookup.
   property var voiceMembers: ({})
-  // userId -> true while that user is speaking (voice_speaking); replaced
-  // wholesale, cleared whenever the call leaves `connected`.
   property var speaking: ({})
 
-  // --- UI visibility refcount ---
   property var visibleSurfaces: ({})
   readonly property bool uiVisible: Object.keys(visibleSurfaces).length > 0
-  // The panel window is mapped (Panel.qml publishes it). The panel item is
-  // kept loaded, so its delegates keep resolving avatars and attachments long
-  // after the window is gone; media only goes over the wire while something
-  // can show it.
   property bool panelMapped: false
   readonly property bool mediaAllowed: false
   onMediaAllowedChanged: if (mediaAllowed) flushMediaRequests()
@@ -358,14 +221,11 @@ Item {
       if (oldKey !== name && visibleSurfaces[oldKey]) next[oldKey] = true
     if (value) next[name] = true
     visibleSurfaces = next
-    // Opening and closing both count: the idle-disconnect window
-    // (idleDisconnectMinutes) runs from the last surface closing.
     noteActivity()
     if (value) ensureBackend()
     if (name === "full-panel") syncMembers()
   }
 
-  // --- settings plumbing ---
   function defaults() {
     var fallback = Api.shallowCopy(defaultSettingValues)
     var source = manifest && manifest.barWidget && manifest.barWidget.defaults
@@ -400,8 +260,6 @@ Item {
     var entry = Api.shallowCopy(configuredEntry() || {})
     var next = normalizedSettings(Api.assign(Api.shallowCopy(entry), values || {}))
     applySettings(next)
-    // updateEntryInline replaces the entry wholesale, so carry unknown
-    // (shell-managed) keys forward instead of dropping them.
     if (shell && typeof shell.updateEntryInline === "function")
       shell.updateEntryInline(pluginId, Api.assign(entry, next))
   }
@@ -433,15 +291,8 @@ Item {
     if (JSON.stringify(visits) !== JSON.stringify(lastChannels)) lastChannels = visits
   }
 
-  // Small opaque state on the same shell.json entry (spotify pattern):
-  // merged over the current entry so settings are carried forward.
   function persistOpaque(key, value) {
     var current = configuredEntry()
-    // Nothing to merge over: shell.json is mid-rewrite, or failed to parse and
-    // the shell fell back to the builtin config where we are not listed (see
-    // stopBackendIfDisabled). Writing now would replace every setting on the
-    // entry with just this key. The state here is best-effort — a skipped
-    // write costs one remembered channel, a clobbered entry costs the lot.
     if (!current) return
     var entry = Api.shallowCopy(current)
     entry[key] = value
@@ -449,7 +300,6 @@ Item {
       shell.updateEntryInline(pluginId, entry)
   }
 
-  // --- backend lifecycle ---
   function ensureBackend() {
     if (!daemonManager.runtimeAvailable || daemonManager.running) return
     daemonManager.start()
@@ -464,10 +314,6 @@ Item {
     daemonManager.stop()
   }
 
-  // See the pluginRegistry Connections below: only a genuine disable gets
-  // here. A misread (a shell.json that momentarily fails to parse falls back
-  // to the builtin config, where we are not listed) is self-healing —
-  // keepAliveTimer brings the unit back while this service is still alive.
   function stopBackendIfDisabled() {
     if (!pluginRegistry || typeof pluginRegistry.isEnabled !== "function") return
     if (shell && shell.pluginReloading) return
@@ -475,7 +321,6 @@ Item {
     stopBackend()
   }
 
-  // --- commands ---
   function send(name, fields, callback) {
     return backendClient.sendCommand(name, fields, function(ok, result, error) {
       if (!ok) fail(error)
@@ -483,8 +328,6 @@ Item {
     })
   }
 
-  // The token is forwarded straight to the socket and never stored on this
-  // object. Callers must clear their own copy after invoking this.
   function login(token) {
     var value = String(token || "").trim()
     token = ""
@@ -505,7 +348,6 @@ Item {
         return
       }
       succeed("Logged in")
-      // Non-fatal: the session works, it just will not survive a restart.
       notice = result && result.keyring_stored === false
         ? "Logged in, but the token could not be saved to the keyring; you'll need to log in again after a restart"
         : ""
@@ -562,10 +404,6 @@ Item {
     return channelsLoading[String(guildId || "")] === true
   }
 
-  // Entering a guild (rail Enter/l/→, a guild tile click, Tab into the
-  // channel column) opens the channel it was last left on. The list may still
-  // be loading, so the intent is parked and retried from every list_channels
-  // response and from onDmsChanged.
   function enterGuild(guildId) {
     pendingGuildEntry = String(guildId || "")
     resolveGuildEntry()
@@ -574,13 +412,9 @@ Item {
   function resolveGuildEntry() {
     var id = pendingGuildEntry
     if (!id) return
-    // The user navigated away, or closed the panel before the list landed:
-    // drop the intent rather than opening a channel nobody asked for.
     if (id !== selectedGuildId || !visibleSurfaces["full-panel"]) { pendingGuildEntry = ""; return }
     var rows = id === "dms" ? (Array.isArray(dms) ? dms : []) : channelsFor(id)
     var loading = id === "dms" ? structureBusy : isLoadingChannels(id)
-    // Stay parked while the list is still on its way; anything else (an
-    // empty guild, a failed list_channels) is as resolved as it will get.
     if (!rows.length && loading) return
     pendingGuildEntry = ""
     var target = Api.guildEntryChannel(rows, Api.lastChannelFor(lastChannels, id), id !== "dms")
@@ -596,8 +430,6 @@ Item {
     var loading = Api.shallowCopy(channelsLoading)
     loading[id] = true
     channelsLoading = loading
-    // Overlapping refreshes (a forced reload over an in-flight one) must not
-    // restore the older list: only the newest request for this guild counts.
     var seq = (Number(channelsSeq[id]) || 0) + 1
     channelsSeq[id] = seq
     send("list_channels", { guild_id: id }, function(ok, result) {
@@ -610,16 +442,10 @@ Item {
         next[id] = result.channels
         root.channelsByGuild = next
       }
-      // Also on failure: a parked guild entry that is never unparked would
-      // fire later against whatever guild the user has moved on to.
       root.resolveGuildEntry()
     })
   }
 
-  // --- threads ---
-  // Active threads of a parent: the list_threads mirror when it has
-  // answered, else the thread rows list_channels already carries (same
-  // objects, sorted newest first). Reading both maps keeps bindings live.
   function threadsFor(parentId, guildId) {
     var pid = String(parentId || "")
     var known = threadsByParent[pid]
@@ -632,8 +458,6 @@ Item {
     if (!pid || !ready) return
     if (!force && (threadsByParent[pid] !== undefined || threadsLoading[pid])) return
     threadsLoading[pid] = true
-    // Same stale-response guard as list_channels / quick_switch: a thread
-    // burst can issue several refreshes for one parent.
     var seq = (Number(threadsSeq[pid]) || 0) + 1
     threadsSeq[pid] = seq
     send("list_threads", { channel_id: pid }, function(ok, result) {
@@ -646,10 +470,6 @@ Item {
     })
   }
 
-  // channel_update: a thread create/update/delete touches its parent's
-  // thread list and the guild's channel list (thread counts); everything is
-  // coalesced through structureFlushTimer so a THREAD_LIST_SYNC burst costs
-  // one list_channels per guild and one list_threads per loaded parent.
   function noteChannelUpdate(channel) {
     var guildId = String(channel.guild_id || "")
     if (!guildId) {
@@ -675,17 +495,11 @@ Item {
     for (var pid in parents) listThreads(pid, true)
   }
 
-  // --- member list ---
   function setMembersWanted(value) {
     membersWanted = !!value
     syncMembers()
   }
 
-  // Subscribe to the current channel while the pane is wanted and the full
-  // panel is up; unsubscribe otherwise. Idempotent; called on every input
-  // change (channel, toggle, panel visibility, connection, gateway session).
-  // The wanted channel and the subscribed one are tracked apart so a
-  // re-subscribe after a re-identify does not blank a list we still have.
   function syncMembers() {
     var want = membersWanted && visibleSurfaces["full-panel"] && currentChannelId ? currentChannelId : ""
     if (want !== membersChannelId) {
@@ -707,8 +521,6 @@ Item {
       root.membersSubscribedId = ""
       if (root.membersChannelId === id) root.membersTimedOut = true
     })
-    // A resubscribe keeps any rows we still have on screen; the timer only
-    // flips membersTimedOut while there is no list at all.
     membersTimer.restart()
   }
 
@@ -721,7 +533,6 @@ Item {
     membersTimer.stop()
   }
 
-  // presence_update carries no channel: patch every visible row of the user.
   function applyPresenceUpdate(message) {
     if (!memberList) return
     var userId = String(message.user_id || "")
@@ -738,13 +549,10 @@ Item {
     if (next) memberList = Api.assign(Api.shallowCopy(memberList), { members: next })
   }
 
-  // --- voice ---
   function emptyVoice() {
     return { status: "idle", guildId: "", channelId: "", muted: false, deafened: false, error: "" }
   }
 
-  // protocol.State.voice -> the shape the UI binds to. Always present on the
-  // wire; a missing object is read as idle rather than left stale.
   function readVoice(raw) {
     var v = raw && typeof raw === "object" ? raw : ({})
     return { status: String(v.status || "idle"),
@@ -756,15 +564,8 @@ Item {
 
   function applyVoiceState(raw) {
     var next = readVoice(raw)
-    // Speaking is only meaningful inside a connected call; the backend
-    // clears every tracked user on leave, but a status change is the
-    // authority the UI can always trust.
     if (next.status !== "connected") speaking = ({})
     voice = next
-    // The call bar names the channel through `channelNames`, which only
-    // knows guilds whose channel list is loaded. A reload mid-call with
-    // another guild selected loads nothing for the call's guild, so the bar
-    // would read "Voice" until the user visited it; ask for the list here.
     if (next.guildId && channelsByGuild[next.guildId] === undefined) loadChannels(next.guildId)
   }
 
@@ -785,7 +586,6 @@ Item {
     speaking = next
   }
 
-  // Occupants of one voice channel (avatar + name per user, no lookup).
   function voiceUsers(guildId, channelId) {
     return Api.voiceOccupants(voiceMembers[String(guildId || "")], channelId)
   }
@@ -804,7 +604,6 @@ Item {
     return true
   }
 
-  // muted / deafened are optional: only the keys present are sent.
   function voiceSet(options) {
     if (!ready || !inCall) return false
     var opts = options || ({})
@@ -820,7 +619,6 @@ Item {
 
   function toggleDeafen() { return voiceSet({ deafened: !voice.deafened }) }
 
-  // --- server emoji (list_emoji) ---
   function loadServerEmoji() {
     if (!ready || serverEmojiBusy) return
     serverEmojiBusy = true
@@ -830,7 +628,6 @@ Item {
     })
   }
 
-  // --- message store ---
   function channelEntry(channelId) {
     var entry = channelData[String(channelId || "")]
     return entry ? entry : null
@@ -872,15 +669,9 @@ Item {
     if (next) knownUsers = next
   }
 
-  // Select the view and open the channel (panel Enter, bar middle-click,
-  // quick switcher). `guildId` is optional; it is resolved from the
-  // open_channel response otherwise.
   function showChannel(channelId, guildId) {
     var id = String(channelId || "")
     if (!id) return
-    // One channel open at a time this phase: the sidebar only needs
-    // read_state_changed (global), so the previous one is closed to keep the
-    // backend's per-connection stream small.
     var previous = currentChannelId
     currentChannelId = id
     if (guildId !== undefined && guildId !== null && String(guildId) !== "")
@@ -902,8 +693,6 @@ Item {
     send("open_channel", { channel_id: id }, function(ok, result) {
       if (!root.isOpen(id)) return
       if (!ok) {
-        // Not open on the backend: forget it here too, or every later write
-        // would fail with channel_not_open instead of this error.
         root.forgetChannel(id)
         return
       }
@@ -912,12 +701,6 @@ Item {
       root.noteAuthors(rows)
       var entry = root.channelEntry(id) || ({})
       var loaded = entry.messages || []
-      // A re-open (reconnect) re-sends the tail. When it overlaps the loaded
-      // window, merge it in so paged history survives and live rows are not
-      // duplicated, keeping the paging state already established. When the
-      // whole tail is newer than anything loaded (long disconnect) the gap
-      // between them could never be filled, so the old window is dropped and
-      // the tail adopted with the response's own paging state.
       var reopened = !!entry.opened
       var adoptTail = reopened && loaded.length && rows.length
         && Api.compareIds(rows[0].id, loaded[loaded.length - 1].id) > 0
@@ -933,35 +716,20 @@ Item {
       })
       if (channel && root.currentChannelId === id) {
         var guildId = channel.guild_id ? String(channel.guild_id) : "dms"
-        // A parked guild entry means the user has already navigated to another
-        // server whose channel list has not landed yet. Reverting the
-        // selection to this response's guild would also make resolveGuildEntry
-        // fail its identity guard and silently drop that entry.
         if (root.selectedGuildId !== guildId && !root.pendingGuildEntry)
           root.selectedGuildId = guildId
-        // The one place a visit is recorded: the response's guild_id is
-        // authoritative, while showChannel's argument is "" for a summon
-        // whose channel structure is not loaded (guildIdForChannel misses),
-        // which would file the channel under whatever guild the sidebar
-        // happened to show. A channel that fails to open is never recorded.
         root.noteChannelVisit(guildId, id)
         if (guildId !== "dms") root.loadChannels(guildId)
       }
     })
   }
 
-  // Unread marker for a channel being opened: the last read_state_changed
-  // seen for it, else the read marker the backend put on the channel object.
   function readMarker(channelId, channel) {
     var state = readState[channelId]
     if (state && state.last_read_message_id) return String(state.last_read_message_id)
     return channel && channel.last_read_message_id ? String(channel.last_read_message_id) : ""
   }
 
-  // Merge a fresh newest-page over the loaded window: rows already loaded
-  // keep their object identity (Timeline diffing) unless the wire content
-  // changed (an edit or reaction made while disconnected), unknown rows are
-  // added, result stays ascending by id.
   function mergeTail(loaded, tail) {
     if (!loaded.length) return tail.slice()
     if (!tail.length) return loaded.slice()
@@ -990,7 +758,6 @@ Item {
     if (connected) backendClient.sendCommand("close_channel", { channel_id: id }, null)
   }
 
-  // Drop a channel from the open set and the store (no backend call).
   function forgetChannel(id) {
     openChannels = openChannels.filter(function(open) { return open !== id })
     setChannelEntry(id, null)
@@ -1043,14 +810,12 @@ Item {
     return true
   }
 
-  // Ack the newest loaded message of the channel (Discord acks own messages too).
   function markChannelRead(channelId) {
     var rows = messagesFor(channelId)
     if (!rows.length) return false
     return ack(channelId, rows[rows.length - 1].id)
   }
 
-  // --- composer: drafts, optimistic send, edit/delete/react, typing, upload ---
   function draftFor(channelId) {
     var text = drafts[String(channelId || "")]
     return text === undefined ? "" : String(text)
@@ -1067,7 +832,6 @@ Item {
     return !!(message && message.author && selfId && String(message.author.id || "") === selfId)
   }
 
-  // Newest own, non-pending message in the loaded window ("" when none).
   function lastOwnMessageId(channelId) {
     var rows = messagesFor(channelId)
     for (var i = rows.length - 1; i >= 0; i--)
@@ -1145,9 +909,6 @@ Item {
     if (changed) pendingByNonce = next
   }
 
-  // Optimistic send: the row shows immediately as pending; the gateway echo
-  // (same nonce) replaces it. Failure removes the row and hands the text
-  // back to the composer through the draft.
   function sendMessage(channelId, content, replyTo) {
     var id = String(channelId || "")
     var text = String(content || "")
@@ -1167,8 +928,6 @@ Item {
       }
       var messageId = result && result.message_id ? String(result.message_id) : ""
       var nonce = result && result.nonce ? String(result.nonce) : ""
-      // The echo may have beaten the response: then the real row is already
-      // in the window and the pending one just goes away.
       if (messageId && root.findMessage(id, messageId)) { root.removeRow(id, rowId); return }
       if (!nonce || !root.findMessage(id, rowId)) { root.removeRow(id, rowId); return }
       var next = Api.shallowCopy(root.pendingByNonce)
@@ -1205,7 +964,6 @@ Item {
     return true
   }
 
-  // True when the loaded message carries our reaction with this emoji.
   function hasOwnReaction(channelId, messageId, emoji) {
     var message = findMessage(channelId, messageId)
     var list = message && Array.isArray(message.reactions) ? message.reactions : []
@@ -1215,8 +973,6 @@ Item {
     return false
   }
 
-  // Picker / chip click: add the reaction, or remove ours when it is
-  // already there. Adding also bumps the frequently-used list.
   function toggleReaction(channelId, messageId, emoji) {
     var value = String(emoji || "")
     if (!value) return false
@@ -1231,9 +987,6 @@ Item {
     persistOpaque(frequentEmojiKey, JSON.stringify(frequentEmoji))
   }
 
-  // Remember where each guild was last left. The identity check is
-  // load-bearing: a reconnect's reopenChannels() and the panel's `r` reload
-  // both re-open the current channel, and neither should rewrite shell.json.
   function noteChannelVisit(guildId, channelId) {
     var next = Api.bumpLastChannel(lastChannels, guildId, channelId)
     if (next === lastChannels) return
@@ -1241,8 +994,6 @@ Item {
     persistOpaque(lastChannelKey, JSON.stringify(lastChannels))
   }
 
-  // The unicode catalogue is the shell's own (omarchy.emojis data file),
-  // read once on first use; Emoji.FALLBACK covers a missing file.
   function ensureEmojiCatalog() {
     if (emojiCatalogRequested) return
     emojiCatalogRequested = true
@@ -1251,9 +1002,6 @@ Item {
     emojiFile.path = base + "/shell/plugins/emojis/emojis.json"
   }
 
-  // quick_switch: the backend ranks (unread first, then recents for an
-  // empty query). Only the newest request's result reaches the callback;
-  // errors go to the switcher, never the panel footer.
   function quickSwitch(query, callback) {
     var seq = ++quickSwitchSeq
     var done = function(entries, error) { if (typeof callback === "function") callback(entries, error) }
@@ -1266,7 +1014,6 @@ Item {
     return true
   }
 
-  // The switcher overlay is created on first use (Loader), then kept.
   function switcher() {
     switcherLoader.active = true
     var item = switcherLoader.item
@@ -1288,8 +1035,6 @@ Item {
     return item ? item.close() : "closed"
   }
 
-  // Own typing indicator, throttled per channel; silent on failure (a
-  // typing error is never worth a footer line).
   function typing(channelId) {
     var id = String(channelId || "")
     if (!id || !ready || !isOpen(id)) return false
@@ -1320,7 +1065,6 @@ Item {
       size: Math.max(0, Number(size) || 0), sent: 0, total: 0, uploading: false }]))
   }
 
-  // Remove a chip and its file on disk.
   function unstage(channelId, path) {
     var file = String(path || "")
     var kept = stagedFor(channelId).filter(function(item) { return item.path !== file })
@@ -1336,13 +1080,6 @@ Item {
     }))
   }
 
-  // Send text + the staged files. The composer clears its input on submit
-  // (like sendMessage); the chips show upload_progress (routed by this
-  // request's id). Success clears them and removes the staged files, failure
-  // leaves them in place, puts the text back into the draft (draftRestored,
-  // as a failed send does) and the error in the footer. The draft is only
-  // cleared when it still holds the text that was sent, so anything typed
-  // during the upload survives.
   function upload(channelId, content, replyTo, callback) {
     var id = String(channelId || "")
     var files = stagedFor(id)
@@ -1359,11 +1096,11 @@ Item {
       delete remaining[String(requestId)]
       root.uploadChannels = remaining
       if (ok) {
-        root.setStaged(id, [])
+        root.setStaged(id, root.stagedFor(id).filter(function(item) { return paths.indexOf(item.path) < 0 }))
         if (text && root.draftFor(id) === text) root.setDraft(id, "")
         Quickshell.execDetached(["rm", "-f"].concat(paths))
       } else {
-        root.patchStaged(id, { uploading: false })
+        root.patchStaged(id, { uploading: false }, function(item) { return paths.indexOf(item.path) >= 0 })
         if (text) {
           root.setDraft(id, text)
           root.draftRestored(id)
@@ -1388,9 +1125,6 @@ Item {
       function(item) { return item.filename === filename })
   }
 
-  // Ctrl+V pipeline. Lists clipboard types; an image/* type is written to
-  // the staging dir and becomes a chip, anything else leaves the paste to
-  // the text input. `callback(staged)` runs once the decision is made.
   function stageClipboardImage(channelId, callback) {
     var id = String(channelId || "")
     var done = function(staged) { if (typeof callback === "function") callback(staged) }
@@ -1451,8 +1185,6 @@ Item {
     var channelId = String(message.channel_id || "")
     var row = message.message
     if (!row || !row.id) return
-    // notify:true also arrives for channels we do not have open; the store
-    // only holds open channels, the notification decision runs for every one.
     maybeNotify(message)
     var entry = channelEntry(channelId)
     if (!entry || !isOpen(channelId)) return
@@ -1462,7 +1194,6 @@ Item {
     for (var i = rows.length - 1; i >= 0; i--)
       if (String(rows[i].id || "") === id) return
     noteAuthors([row])
-    // Own echo of an optimistic send: re-key the pending row in place.
     var nonce = String(row.nonce || "")
     var pendingId = nonce ? pendingByNonce[nonce] : undefined
     if (pendingId && isOwn(row)) {
@@ -1526,12 +1257,6 @@ Item {
     typerTimer.running = true
   }
 
-  // Read state: patch the channel mirror in place and reduce the guild row
-  // from its loaded channel list. When the guild's channels are not loaded the
-  // guild row only moves by this event's delta against the last read state
-  // seen for that channel (unknown previous => treated as 0). Either way the
-  // next guilds_synced / list_* replaces it with the backend's truth; the bar
-  // badge itself is total_mention_count, never this reduction.
   function applyReadState(message) {
     var channelId = String(message.channel_id || "")
     if (!channelId) return
@@ -1561,7 +1286,6 @@ Item {
     var guildUnread = marker
     var guildMentions = mentions
     var guildIndex = indexOfId(guilds, guildId)
-    // An expanded thread list mirrors its rows too.
     for (var pid in threadsByParent) {
       var threads = threadsByParent[pid]
       var tIndex = Array.isArray(threads) ? indexOfId(threads, channelId) : -1
@@ -1615,23 +1339,14 @@ Item {
     return next
   }
 
-  // --- media cache ---
   function mediaKey(url, size) {
     return String(url) + "|" + (Math.max(0, Number(size) || 0))
   }
 
-  // Local path for a CDN URL at `size` (0 = original), or "" while it is
-  // being fetched. A miss only records the want (requestMedia); the
-  // fetch_media goes out on the next event-loop turn. Safe to call from
-  // bindings: the only reactive read is mediaPaths and nothing is written
-  // synchronously.
   function mediaPath(url, size) {
     return ""
   }
 
-  // Ask for a url+size without reading anything: records the want and
-  // defers the fetch_media to the next event-loop turn (Qt.callLater
-  // coalesces), so callers inside bindings never write to the socket.
   function requestMedia(url, size) {
     if (textOnly) return
     var u = String(url || "")
@@ -1642,10 +1357,6 @@ Item {
     Qt.callLater(flushMediaRequests)
   }
 
-  // Issue fetch_media for every wanted key that is neither in flight nor
-  // known to fail. Runs deferred after requestMedia(), on every connect
-  // (in-flight fetches die with the socket) and when a surface comes back
-  // (the wants queued while none was up).
   function flushMediaRequests() {
     if (textOnly) return
     if (!connected || !mediaAllowed) return
@@ -1664,7 +1375,6 @@ Item {
     backendClient.sendCommand("fetch_media", fields, function(ok, result, error) {
       if (!ok) { root.mediaFailed[key] = true; delete root.mediaPending[key]; return }
       if (result && result.cached && result.path) root.resolveMedia(key, String(result.path))
-      // else: media_ready will follow
     })
   }
 
@@ -1677,9 +1387,6 @@ Item {
     mediaPaths = next
   }
 
-  // An Image failed to load a cached path (the backend's LRU evicted it):
-  // forget the path so the bindings ask again, once per key per connection.
-  // Returns true when a re-fetch was triggered.
   function mediaError(path) {
     var file = String(path || "")
     if (!file) return false
@@ -1700,9 +1407,6 @@ Item {
     return true
   }
 
-  // media_ready is keyed by url only; two sizes of one url share the event.
-  // With a single size outstanding the path is adopted directly, otherwise
-  // each size is re-requested (a completed one is now a cache hit).
   function applyMediaReady(message) {
     if (textOnly) return
     var url = String(message.url || "")
@@ -1723,9 +1427,6 @@ Item {
     return "https://cdn.discordapp.com/emojis/" + String(id) + ".png"
   }
 
-  // Custom emoji path for Markdown.js / reaction chips. Animated emoji are
-  // fetched as PNG too: Qt rich text cannot animate an <img>, and one cache
-  // entry per emoji is cheaper than two.
   function emojiPath(id, animated) {
     var value = String(id || "")
     if (!/^\d+$/.test(value)) return ""
@@ -1737,9 +1438,6 @@ Item {
     backendClient.sendCommand("set_config", { media_cache_mb: mediaCacheMB }, null)
   }
 
-  // --- notifications ---
-  // Why a message_create event does NOT raise a notification ("" = notify).
-  // Exposed for the harness; maybeNotify() is the caller.
   function notifySkipReason(message) {
     if (!message || !message.notify) return "not-notify"
     var row = message.message
@@ -1762,9 +1460,6 @@ Item {
     var last = Number(notifyLastAt[channelId]) || 0
     var isDm = message.guild_id === null || message.guild_id === undefined || String(message.guild_id) === ""
     if (now - last < notifyWindowMs) {
-      // Inside the per-channel window: hold it, one flush per window. The
-      // flush is due when the window ends, never later: a running timer is
-      // left alone so continuous traffic cannot postpone it.
       var held = notifyHeld[channelId]
       notifyHeld[channelId] = { message: message.message, channel_name: String(message.channel_name || ""),
         isDm: isDm, count: held ? held.count + 1 : 1 }
@@ -1780,8 +1475,6 @@ Item {
     notifyFlushTimer.restart()
   }
 
-  // Fire every held notification whose window has ended; re-arm for the
-  // earliest one still inside its window.
   function flushNotifications() {
     var now = Date.now()
     var nextDue = -1
@@ -1799,16 +1492,12 @@ Item {
     if (nextDue >= 0) scheduleNotifyFlush(nextDue)
   }
 
-  // argv after "notify-send". Nothing but the preview text, the channel /
-  // author names, and a cached avatar path ever goes here.
   function notificationArgs(row, channelName, isDm, count) {
     var author = row.author || {}
     var name = String(author.display_name || author.username || "Someone")
     var channel = String(channelName || "")
     var summary = isDm && (!channel || channel === name) ? name
       : name + " in " + (isDm ? channel : "#" + channel)
-    // Preview text is user content by design; redact anyway so a pasted
-    // token never lands in a notification daemon's history.
     var body = Api.redact(Markdown.plainText(row.content, markdownCtx))
     if (body.length > 200) body = body.slice(0, 199) + "…"
     if (Array.isArray(row.attachments) && row.attachments.length) body += (body ? " " : "") + "📎"
@@ -1816,7 +1505,6 @@ Item {
     var args = ["--app-name=Omarchy Discord", "--urgency=normal"]
     var avatar = author.avatar_url ? mediaPath(String(author.avatar_url), avatarSize) : ""
     if (avatar) args.push("--icon=" + avatar)
-    // The shell renders the body as styled text; the summary is plain.
     args.push("--", summary.replace(/[<>]/g, ""), Markdown.escapeHtml(body))
     return args
   }
@@ -1826,7 +1514,6 @@ Item {
     if (Array.isArray(argv) && argv.length) Quickshell.execDetached(argv)
   }
 
-  // --- QR login ---
   function startQrLogin() {
     if (!connected) { fail("The Discord backend is not connected yet"); return false }
     if (qrBusy || lifecycle === "qr_pending") return false
@@ -1836,7 +1523,6 @@ Item {
     backendClient.sendCommand("start_qr_login", null, function(ok, result, error) {
       root.qrBusy = false
       if (!ok) root.fail(error || "QR login is unavailable right now")
-      // Defensive: should the response beat the events, wait for them.
       else root.watchQrReplay()
     })
     return true
@@ -1850,17 +1536,12 @@ Item {
     return true
   }
 
-  // Cancel the flow the backend still reports and start a fresh one (the
-  // panel's Try again when the code never came back after a reconnect).
   function restartQrLogin() {
     if (lifecycle !== "qr_pending") return startQrLogin()
     qrMissing = false
     return cancelQrLogin(function() { root.startQrLogin() })
   }
 
-  // In qr_pending with no code in hand (reconnected mid-flow, or a response
-  // that beat its events): the backend replays qr_code on connect, so wait
-  // qrReplayMs for it before flagging the code as missing.
   function watchQrReplay() {
     if (lifecycle === "qr_pending" && qr === null && !qrBusy) {
       if (!qrReplayTimer.running) qrReplayTimer.restart()
@@ -1870,7 +1551,6 @@ Item {
     }
   }
 
-  // Forget a finished QR attempt (back to the login choices).
   function dismissQr() {
     qr = null
   }
@@ -1901,9 +1581,6 @@ Item {
     }
   }
 
-  // --- event handling ---
-  // Returns false (and ignores the payload) when `generation` is older than
-  // the newest one seen. Messages without a generation always pass.
   function acceptGeneration(generation) {
     if (generation === undefined || generation === null) return true
     var value = Number(generation)
@@ -1919,7 +1596,6 @@ Item {
     var previous = backendState
     var was = previous ? String(previous.lifecycle || "") : ""
     var now = String(next.lifecycle || "")
-    // Arm the grace before the lifecycle flips so showStructure never blips.
     if (now === "connecting" && was === "ready") {
       reconnectGraceActive = true
       reconnectGraceTimer.restart()
@@ -1930,20 +1606,12 @@ Item {
     backendState = next
     applyVoiceState(next.voice)
     if (next.error) lastError = Api.redact(String(next.error))
-    // A session coming up (QR approved, token login) ends the QR view.
     if (qr && (now === "connecting" || now === "ready")) qr = null
     watchQrReplay()
     if (now === "ready" && was !== "ready") {
       refreshStructure()
       loadServerEmoji()
-      // Open channels are per socket connection: re-open after every
-      // (re)connect. A gateway resume on the same connection re-sends the tail,
-      // which mergeTail() absorbs.
       reopenChannels()
-      // Member subscriptions are per gateway session, not per socket: a
-      // Discord re-identify (connecting -> ready with the socket intact)
-      // drops them silently, so forget what we thought we had subscribed
-      // and let syncMembers() re-send subscribe_members.
       membersSubscribedId = ""
       syncMembers()
     }
@@ -1964,8 +1632,6 @@ Item {
         if (!acceptGeneration(message.generation)) break
         if (Array.isArray(message.guilds)) guilds = message.guilds
         if (Array.isArray(message.dms)) dms = message.dms
-        // Drop channel lists for guilds that went away and reload the rest in
-        // place, so an open channel list survives the resync.
         var present = ({})
         for (var g = 0; g < guilds.length; g++) present[String(guilds[g].id || "")] = true
         var kept = ({})
@@ -2027,12 +1693,7 @@ Item {
     }
   }
 
-  // Forget loaded messages (session gone). The open set is kept so the
-  // channels are re-opened when a session comes back.
   function clearMessages() {
-    // Both teardown paths (logout, session lost) funnel through here, so this
-    // is where a parked guild entry is discarded — it must not fire minutes
-    // later against a reconnected session.
     pendingGuildEntry = ""
     channelData = ({})
     readState = ({})
@@ -2045,10 +1706,6 @@ Item {
 
   function togglePanel() {
     if (!shell || typeof shell.toggle !== "function") return "unavailable"
-    // Persistent mode: the host counts the window as open from shell start
-    // (it never hides it), so a SUPER+W-closed window would toggle to "hide"
-    // forever. Decide by the window itself: mapped and focused → hide it,
-    // anything else → map/focus it.
     var open = persistentWindow ? (panelMapped && panelActive)
       : (typeof shell.isPluginOpen === "function" && shell.isPluginOpen(pluginId))
     if (open) {
@@ -2062,12 +1719,8 @@ Item {
   function openPanel(payload) {
     if (!shell || typeof shell.summon !== "function") return "unavailable"
     var encoded = JSON.stringify(payload || ({}))
-    // A persistent window is never remapped: the panel's open() focuses it
-    // where Hyprland put it, so the hide/summon dance would only hide it.
     if (!persistentWindow && typeof shell.isPluginOpen === "function" && shell.isPluginOpen(pluginId)
         && typeof shell.hide === "function") {
-      // Remap onto the current workspace: split hide and summon across
-      // event-loop turns so Wayland finishes unmapping first.
       shell.hide(pluginId)
       Qt.callLater(function() { if (root.shell) root.shell.summon(root.pluginId, encoded) })
       return "opened"
@@ -2086,12 +1739,9 @@ Item {
   onPluginDirChanged: daemonManager.pluginDir = pluginDir
   onMediaCacheMBChanged: sendConfig()
   onCurrentChannelIdChanged: syncMembers()
-  // The DM list arrives through list_dms, not list_channels, so the "dms"
-  // pseudo-guild needs its own retry for a parked entry.
   onDmsChanged: resolveGuildEntry()
 
   Component.onCompleted: {
-    // Deferred so shell/manifest injection lands before any startup work.
     settingsSync.start()
   }
 
@@ -2112,7 +1762,6 @@ Item {
     onTriggered: root.qrMissing = root.lifecycle === "qr_pending" && root.qr === null && !root.qrBusy
   }
 
-  // Coalesces channel_update bursts (see noteChannelUpdate).
   Timer {
     id: structureFlushTimer
     interval: 300
@@ -2150,8 +1799,6 @@ Item {
     onTriggered: root.statusMessage = ""
   }
 
-  // Keep the backend up while the plugin is enabled (default), re-checking
-  // the unit whenever the socket is down.
   Timer {
     id: keepAliveTimer
     interval: 5000
@@ -2179,21 +1826,9 @@ Item {
   Connections {
     target: root.shell
     ignoreUnknownSignals: true
-    function onShellConfigChanged() { root.syncSettings() }
+    function onBarConfigChanged() { root.syncSettings() }
   }
 
-  // Turning the plugin off must not leave the daemon holding a live Discord
-  // session. Destruction cannot be used for this: the shell tears every
-  // plugin service down through the same call for a hot reload (any write
-  // under ~/.config/omarchy/plugins) as for a disable. The registry can tell
-  // them apart while we are still alive — a disable arrives as
-  // `pluginsChanged` outside a plugin reload (`shell.pluginReloading` false)
-  // with the registry already reporting us disabled, and the shell destroys
-  // us right after. A hot reload never gets here (pluginReloading is true and
-  // we stay enabled), so the daemon survives frontend restarts. Deleting the
-  // plugin directory comes through the same inotify reload path and is
-  // indistinguishable from a hot reload: scripts/remove-runtime.sh remains
-  // the documented cleanup for that.
   Connections {
     target: root.pluginRegistry
     ignoreUnknownSignals: true
@@ -2215,8 +1850,6 @@ Item {
     function onEventReceived(name, message) { root.handleEvent(name, message) }
     function onConfigurationFailed(reason) { root.fail(reason) }
     function onConnectedChanged() {
-      // In-flight fetches died with the socket; flushMediaRequests re-issues
-      // every wanted key on connect.
       root.mediaPending = ({})
       root.mediaFailed = ({})
       root.mediaRetried = ({})
@@ -2231,8 +1864,6 @@ Item {
         root.notifyHeld = ({})
       }
       if (!backendClient.connected) {
-        // Member subscriptions die with the socket; syncMembers re-subscribes
-        // once the session is ready again.
         root.membersSubscribedId = ""
         root.membersChannelId = ""
         root.memberList = null
@@ -2242,8 +1873,6 @@ Item {
         root.dirtyThreadParents = ({})
         root.threadsLoading = ({})
         root.backendState = null
-        // The call lives in the daemon, but with no socket we cannot know
-        // anything about it; the next state_changed / Snapshot re-learns it.
         root.voice = root.emptyVoice()
         root.voiceMembers = ({})
         root.speaking = ({})
@@ -2270,8 +1899,6 @@ Item {
     }
   }
 
-  // omarchy-shell quickshell.discord.voice mute — call controls from any
-  // app (Hyprland binds), so hanging up never needs the panel.
   IpcHandler {
     target: root.pluginId + ".voice"
 
@@ -2280,8 +1907,6 @@ Item {
     function leave(): string { return root.voiceLeave() ? "ok" : "no call" }
   }
 
-  // omarchy-shell quickshell.discord.switcher toggle — works from any app;
-  // the overlay is created on first use and lives here (always loaded).
   IpcHandler {
     target: root.pluginId + ".switcher"
 
@@ -2313,8 +1938,6 @@ Item {
     onLoadFailed: root.emojiCatalog = Emoji.FALLBACK
   }
 
-  // Clipboard pipeline processes (stageClipboardImage). Output is tiny
-  // (mime list / byte count), so collecting it is fine.
   Process {
     id: clipboardList
     property var onDone: null
@@ -2347,8 +1970,6 @@ Item {
         if (typeof cb === "function") cb(false, 0)
         return
       }
-      // Size read back separately so the write and the measurement stay
-      // two plain commands.
       sizeProbe.onDone = cb
       sizeProbe.command = ["stat", "-c", "%s", clipboardSave.target]
       sizeProbe.running = true

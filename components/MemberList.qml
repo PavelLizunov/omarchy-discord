@@ -5,13 +5,6 @@ import "../ui"
 
 import "../Api.js" as Api
 
-// Member pane (the fourth focus zone, only while shown): the groups of a
-// member_list_update as headers ("Online — 1,204") with the served member
-// rows beneath (avatar through the media cache, display name, status dot,
-// activity line). The model is Service.memberList, replaced wholesale by
-// every update; presence_update patches arrive as a new list too. Keys:
-// j/k move over member rows, g/G ends, Y copies "@username", Esc leaves;
-// Alt+h/l bubble to the panel as zone moves.
 FocusScope {
   id: root
 
@@ -31,8 +24,6 @@ FocusScope {
   property string cursorId: ""
   readonly property int cursor: indexOfId(rows, cursorId)
   readonly property color foreground: Color.popups.text
-  // The pane paints its own popup surface (below): guard the secondary text
-  // against that pair, not the panel background.
   readonly property color muted: Api.secondaryColor(Color.muted, Color.popups.text, Color.popups.background)
   readonly property string fontFamily: Style.font.family
   readonly property int avatarSize: Style.space(24)
@@ -54,16 +45,6 @@ FocusScope {
     }
   }
 
-  function statusLabel(status) {
-    switch (String(status || "")) {
-      case "online": return "Online"
-      case "idle": return "Idle"
-      case "dnd": return "Do not disturb"
-      default: return "Offline"
-    }
-  }
-
-  // Step from `from` by `delta` (wrapping) to the next member row.
   function findMember(from, delta) {
     var count = rows.length
     if (!count) return -1
@@ -218,8 +199,6 @@ FocusScope {
               foreground: root.foreground
               fontFamily: root.fontFamily
 
-              // Status dot over the avatar's corner, ringed in the pane
-              // colour so it reads on any avatar.
               Rectangle {
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom

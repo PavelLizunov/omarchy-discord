@@ -7,11 +7,6 @@ import (
 	"github.com/mattcalayo/omarchy-discord/backend/internal/protocol"
 )
 
-// Emojis lists the custom emoji of every guild, in guild display order,
-// filtered to what the account can use there: available, and (when the emoji
-// is role-restricted and our membership is cached) one of our roles. Nitro
-// cross-guild gating is not modelled; Discord's 400 on react surfaces it.
-// Guilds with no usable emoji are omitted.
 func Emojis(n *ningen.State) ([]protocol.GuildEmoji, error) {
 	gs, err := orderedGuilds(n)
 	if err != nil {
@@ -48,8 +43,6 @@ func Emojis(n *ningen.State) ([]protocol.GuildEmoji, error) {
 	return out, nil
 }
 
-// roleAllowed reports whether an emoji restricted to want is usable with the
-// cached role set have (nil have = membership unknown = allowed).
 func roleAllowed(want []discord.RoleID, have map[discord.RoleID]bool) bool {
 	if len(want) == 0 || have == nil {
 		return true
@@ -62,7 +55,6 @@ func roleAllowed(want []discord.RoleID, have map[discord.RoleID]bool) bool {
 	return false
 }
 
-// listEmoji implements the list_emoji command.
 func (m *Manager) listEmoji() (any, *protocol.Error) {
 	n, e := m.cachedSession()
 	if e != nil {

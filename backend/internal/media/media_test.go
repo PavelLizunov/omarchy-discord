@@ -20,7 +20,6 @@ import (
 	"github.com/mattcalayo/omarchy-discord/backend/internal/protocol"
 )
 
-// recorder collects the media_ready events a cache emits.
 type recorder struct {
 	ch chan protocol.MediaReadyEvent
 
@@ -49,7 +48,6 @@ func (r *recorder) count() int {
 	return len(r.seen)
 }
 
-// wait returns the next event, failing the test if none arrives.
 func (r *recorder) wait(t *testing.T) protocol.MediaReadyEvent {
 	t.Helper()
 	select {
@@ -61,7 +59,6 @@ func (r *recorder) wait(t *testing.T) protocol.MediaReadyEvent {
 	}
 }
 
-// none asserts that no further event arrives shortly.
 func (r *recorder) none(t *testing.T) {
 	t.Helper()
 	select {
@@ -71,7 +68,6 @@ func (r *recorder) none(t *testing.T) {
 	}
 }
 
-// newCache builds a cache pointed at srv (nil for allowlist-only tests).
 func newCache(t *testing.T, srv *httptest.Server, o Options) (*Cache, *recorder) {
 	t.Helper()
 	rec := newRecorder()
@@ -96,7 +92,6 @@ func newCache(t *testing.T, srv *httptest.Server, o Options) (*Cache, *recorder)
 	return c, rec
 }
 
-// dirNames lists the cache directory.
 func dirNames(t *testing.T, dir string) []string {
 	t.Helper()
 	ents, err := os.ReadDir(dir)
@@ -321,7 +316,6 @@ func TestSizeHint(t *testing.T) {
 		t.Fatalf("queried avatar queries = %q, want [foo=1]", got)
 	}
 
-	// The size is part of the cache key: 64 is a hit, 128 is a fresh miss.
 	if res, perr := c.Fetch(ctx, avatar, 64); perr != nil || !res.Cached || res.Path != ev64.Path {
 		t.Fatalf("re-fetch size 64 = %+v (%v), want hit on %q", res, perr, ev64.Path)
 	}
@@ -390,7 +384,7 @@ func TestLRUEviction(t *testing.T) {
 	defer srv.Close()
 
 	c, rec := newCache(t, srv, Options{})
-	c.setCapBytes(2560) // 2.5 KiB: three 1 KiB files do not fit.
+	c.setCapBytes(2560)
 	ctx := context.Background()
 
 	fetch := func(path string) protocol.MediaReadyEvent {

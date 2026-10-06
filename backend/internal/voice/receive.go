@@ -16,18 +16,15 @@ import (
 )
 
 const (
-	queueCap        = 6 // frames per user; ponytail: fixed depth, no drift compensation
-	primeFrames     = 2 // buffered before a user's stream starts playing
-	maxPLC          = 5 // consecutive concealed frames before a stream is considered ended
-	silenceToStop   = 5 // silence frames (F8 FF FE) that end "speaking"
+	queueCap        = 6
+	primeFrames     = 2
+	maxPLC          = 5
+	silenceToStop   = 5
 	speakingTimeout = 250 * time.Millisecond
 )
 
 var silenceFrame = []byte{0xF8, 0xFF, 0xFE}
 
-// receiver is disgo's OpusFrameReceiver and the playback mixer: per-user
-// decoder + jitter queue, int32 sum saturated to int16, one Pulse stream.
-// Pulse's playback goroutine is the playback goroutine (read).
 type receiver struct {
 	log      *slog.Logger
 	speaking func(snowflake.ID, bool)
@@ -38,14 +35,14 @@ type receiver struct {
 	users   map[snowflake.ID]*user
 	mix     []int32
 	frame   []int16
-	pending []int16 // unread tail of frame
+	pending []int16
 }
 
 type user struct {
 	dec      *opus.Decoder
 	pcm      []int16
-	q        []frame // sorted by RTP sequence
-	next     uint16  // sequence expected next, valid while primed
+	q        []frame
+	next     uint16
 	primed   bool
 	plc      int
 	speaking bool
@@ -68,10 +65,9 @@ func newReceiver(log *slog.Logger, speaking func(snowflake.ID, bool)) *receiver 
 	}
 }
 
-// ReceiveOpusFrame runs on disgo's receiver goroutine.
 func (r *receiver) ReceiveOpusFrame(userID snowflake.ID, p *dvoice.Packet) error {
 	if userID == 0 || len(p.Opus) == 0 {
-		return nil // SSRC not yet announced by a Speaking op
+		return nil
 	}
 	silent := bytes.Equal(p.Opus, silenceFrame)
 	var emit *bool
@@ -101,7 +97,7 @@ func (r *receiver) ReceiveOpusFrame(userID snowflake.ID, p *dvoice.Packet) error
 	}
 	u.timer.Reset(speakingTimeout)
 	if !r.deafened.Load() {
-		u.push(frame{seq: p.Sequence, opus: bytes.Clone(p.Opus)}) // disgo reuses its read buffer
+		u.push(frame{seq: p.Sequence, opus: bytes.Clone(p.Opus)})
 	}
 	r.mu.Unlock()
 	if emit != nil {
@@ -124,7 +120,6 @@ func (r *receiver) userLocked(id snowflake.ID) (*user, error) {
 	return u, nil
 }
 
-// timeout clears speaking after 250 ms without packets.
 func (r *receiver) timeout(id snowflake.ID) {
 	r.mu.Lock()
 	u := r.users[id]
@@ -138,7 +133,6 @@ func (r *receiver) timeout(id snowflake.ID) {
 	}
 }
 
-// CleanupUser drops a participant who left the channel.
 func (r *receiver) CleanupUser(id snowflake.ID) {
 	r.mu.Lock()
 	u := r.users[id]
@@ -154,8 +148,6 @@ func (r *receiver) CleanupUser(id snowflake.ID) {
 	}
 }
 
-// Close clears speaking for every tracked user (mandatory on leave and
-// disconnect) and stops mixing. Idempotent.
 func (r *receiver) Close() {
 	r.mu.Lock()
 	if r.closed {
@@ -177,7 +169,6 @@ func (r *receiver) Close() {
 	}
 }
 
-// read is the pulse.Int16Reader callback: always fills out.
 func (r *receiver) read(out []int16) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -194,7 +185,6 @@ func (r *receiver) read(out []int16) (int, error) {
 	return filled, nil
 }
 
-// mixLocked renders one 20 ms frame from every user into r.frame.
 func (r *receiver) mixLocked() {
 	clear(r.mix)
 	for _, u := range r.users {
@@ -220,17 +210,15 @@ func saturate(s int32) int16 {
 	return int16(s)
 }
 
-// push inserts by sequence, dropping late and duplicate frames; a full queue
-// drops its oldest frame to keep latency bounded.
 func (u *user) push(f frame) {
 	if u.primed && int16(f.seq-u.next) < 0 {
-		return // late
+		return
 	}
 	i := len(u.q)
 	for i > 0 {
 		d := int16(f.seq - u.q[i-1].seq)
 		if d == 0 {
-			return // duplicate
+			return
 		}
 		if d > 0 {
 			break
@@ -248,8 +236,6 @@ func (u *user) push(f frame) {
 	}
 }
 
-// take returns the next frame to render: (frame, false) to decode,
-// (nil, true) for packet-loss concealment, (nil, false) for nothing.
 func (u *user) take() (f *frame, plc bool) {
 	if !u.primed {
 		if len(u.q) < primeFrames {
@@ -259,7 +245,7 @@ func (u *user) take() (f *frame, plc bool) {
 	}
 	if len(u.q) == 0 {
 		if u.plc >= maxPLC {
-			u.primed = false // stream ended; re-prime on the next burst
+			u.primed = false
 			return nil, false
 		}
 		u.plc++
@@ -272,7 +258,7 @@ func (u *user) take() (f *frame, plc bool) {
 			u.next++
 			return nil, true
 		}
-		u.next = u.q[0].seq // too far ahead: jump
+		u.next = u.q[0].seq
 	}
 	f = &u.q[0]
 	u.q = u.q[1:]
@@ -281,7 +267,6 @@ func (u *user) take() (f *frame, plc bool) {
 	return f, false
 }
 
-// pop decodes the next frame (or PLC) into u.pcm; false means silence.
 func (u *user) pop(log *slog.Logger) bool {
 	f, plc := u.take()
 	switch {
@@ -302,9 +287,6 @@ func (u *user) pop(log *slog.Logger) bool {
 	return true
 }
 
-// rxDriver replaces disgo's AudioReceiver, which busy-loops while the DAVE
-// session is not ready (the whole time we are alone in the channel) and
-// nil-derefs when closed before its goroutine starts.
 type rxDriver struct {
 	log    *slog.Logger
 	rx     dvoice.OpusFrameReceiver
@@ -339,7 +321,7 @@ func (d *rxDriver) loop(ctx context.Context) {
 		}
 		if err != nil {
 			d.log.Debug("voice: read packet", "err", err)
-			pause() // never spin on a dead socket or a decrypt failure
+			pause()
 			continue
 		}
 		if err := d.rx.ReceiveOpusFrame(d.conn.UserIDBySSRC(p.SSRC), p); err != nil {
@@ -350,7 +332,6 @@ func (d *rxDriver) loop(ctx context.Context) {
 
 func (d *rxDriver) CleanupUser(id snowflake.ID) { d.rx.CleanupUser(id) }
 
-// Close stops the loop; the OpusFrameReceiver is closed by its owner.
 func (d *rxDriver) Close() {
 	d.mu.Lock()
 	cancel := d.cancel

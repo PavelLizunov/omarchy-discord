@@ -23,8 +23,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// fakeGateway is an in-process remote-auth gateway. After the handshake it
-// runs scenario with the client's public key.
 type fakeGateway struct {
 	t          *testing.T
 	srv        *httptest.Server
@@ -56,7 +54,6 @@ func newFakeGateway(t *testing.T, hello map[string]any, scenario func(c *websock
 
 func (g *fakeGateway) url() string { return "ws" + strings.TrimPrefix(g.srv.URL, "http") }
 
-// readOp reads messages until one that isn't a heartbeat, which it counts and acks.
 func (g *fakeGateway) readOp(c *websocket.Conn, want string) map[string]string {
 	for {
 		var m map[string]string
@@ -132,7 +129,6 @@ func (g *fakeGateway) handle(c *websocket.Conn) {
 	}
 }
 
-// drainFor reads (and acks) heartbeats for d.
 func (g *fakeGateway) drainFor(c *websocket.Conn, d time.Duration) {
 	_ = c.SetReadDeadline(time.Now().Add(d))
 	defer c.SetReadDeadline(time.Time{})
@@ -150,7 +146,6 @@ func (g *fakeGateway) drainFor(c *websocket.Conn, d time.Duration) {
 
 func closeNormal(c *websocket.Conn) {
 	_ = c.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second))
-	// Keep the connection open briefly so the client reads the close frame.
 	_, _, _ = c.ReadMessage()
 }
 
@@ -180,7 +175,7 @@ func TestRunHappyPath(t *testing.T) {
 	const ticket, token = "ODUy.ticket.value", "mfa.the-secret-token"
 	var g *fakeGateway
 	g = newFakeGateway(t, fastHello, func(c *websocket.Conn, pub *rsa.PublicKey) {
-		g.drainFor(c, 80*time.Millisecond) // let a few heartbeats through
+		g.drainFor(c, 80*time.Millisecond)
 		_ = c.WriteJSON(map[string]string{"op": "pending_ticket", "encrypted_user_payload": encryptFor(t, pub, "852892297661906993:0:0:dolfies")})
 		_ = c.WriteJSON(map[string]string{"op": "pending_login", "ticket": ticket})
 		closeNormal(c)
@@ -249,7 +244,7 @@ func TestRunDeclined(t *testing.T) {
 
 func TestRunExpiredByTimeout(t *testing.T) {
 	g := newFakeGateway(t, map[string]any{"heartbeat_interval": 20, "timeout_ms": 150}, func(c *websocket.Conn, _ *rsa.PublicKey) {
-		_, _, _ = c.ReadMessage() // sit idle until the client closes
+		_, _, _ = c.ReadMessage()
 		for {
 			if _, _, err := c.ReadMessage(); err != nil {
 				return
@@ -294,7 +289,6 @@ func TestRunContextCancel(t *testing.T) {
 		_, err := Run(ctx, rec, Options{GatewayURL: g.url(), Exchange: noExchange(t)})
 		done <- err
 	}()
-	// Wait for the QR to be issued, then cancel.
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		rec.mu.Lock()
@@ -322,7 +316,6 @@ func TestRunContextCancel(t *testing.T) {
 }
 
 func TestRunBadFingerprintRejected(t *testing.T) {
-	// A gateway that lies about the fingerprint must be rejected.
 	up := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := up.Upgrade(w, r, nil)
@@ -388,7 +381,6 @@ func TestQRPNG(t *testing.T) {
 	}
 }
 
-// Guard against accidental JSON field drift.
 func TestGatewayMsgFields(t *testing.T) {
 	var m gatewayMsg
 	if err := json.Unmarshal([]byte(`{"op":"hello","heartbeat_interval":41250,"timeout_ms":142637}`), &m); err != nil {
@@ -399,20 +391,14 @@ func TestGatewayMsgFields(t *testing.T) {
 	}
 }
 
-// readerGoroutines counts live goroutines parked in the gateway reader.
 func readerGoroutines() int {
 	buf := make([]byte, 1<<20)
 	n := runtime.Stack(buf, true)
 	return strings.Count(string(buf[:n]), "remoteauth.(*flow).run.func1")
 }
 
-// TestReaderGoroutineExitsWithoutCancel: when Run ends on its own (expiry
-// here) with a message still buffered and a never-cancelled context, the
-// reader goroutine must still exit once the socket is closed.
 func TestReaderGoroutineExitsWithoutCancel(t *testing.T) {
 	g := newFakeGateway(t, map[string]any{"heartbeat_interval": 20, "timeout_ms": 150}, func(c *websocket.Conn, _ *rsa.PublicKey) {
-		// Flood unknown ops so the reader always has a message in hand when
-		// the expiry fires.
 		for {
 			if err := c.WriteJSON(map[string]string{"op": "noise"}); err != nil {
 				return

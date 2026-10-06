@@ -1,6 +1,3 @@
-// Package socket serves the line-delimited JSON protocol over a private unix
-// socket. Each connection has exactly one writer goroutine; responses and
-// broadcast events are queued to it, never written directly.
 package socket
 
 import (
@@ -18,68 +15,36 @@ import (
 	"github.com/mattcalayo/omarchy-discord/backend/internal/redact"
 )
 
-// Backend answers commands and provides the connect-time snapshot.
 type Backend interface {
-	// Snapshot returns the events pushed to a client on connect, in order
-	// (state_changed, then qr_code while qr_pending, then guilds_synced
-	// when ready).
 	Snapshot() []any
-	// Handle answers one decoded request. hello and ping never reach it.
 	Handle(ctx context.Context, req *protocol.Request) (result any, err *protocol.Error)
 }
 
-// ClientCloser is implemented by a Backend that keeps per-connection state
-// (member subscriptions) and needs it released when a connection ends. The
-// server calls ClientClosed exactly once per connection, after it has been
-// removed from the broadcast set.
 type ClientCloser interface {
 	ClientClosed(c Client)
 }
 
-// Client is the per-connection view handed to Backend.Handle through its
-// context: the set of channels this client has opened with open_channel.
-// Routed events (see Routed) are only delivered to clients that have the
-// channel open; the set dies with the connection.
 type Client interface {
 	OpenChannel(id string)
-	// CloseChannel reports whether the channel was open.
 	CloseChannel(id string) bool
 	HasOpen(id string) bool
-	// SubscribeMembers / UnsubscribeMembers / HasMemberSub track the
-	// channels whose member list this client wants (subscribe_members); the
-	// set dies with the connection like the open set.
 	SubscribeMembers(id string)
-	// UnsubscribeMembers reports whether the channel was subscribed.
 	UnsubscribeMembers(id string) bool
 	HasMemberSub(id string) bool
-	// Push queues an event to this client only (per-request progress such
-	// as upload_progress); it shares the connection's writer with broadcasts.
 	Push(ev any)
 }
 
 type clientKey struct{}
 
-// WithClient attaches a Client to ctx (the server does this per connection;
-// tests use it to drive Backend.Handle directly).
 func WithClient(ctx context.Context, c Client) context.Context {
 	return context.WithValue(ctx, clientKey{}, c)
 }
 
-// ClientFromContext returns the Client attached by WithClient, or nil.
 func ClientFromContext(ctx context.Context) Client {
 	c, _ := ctx.Value(clientKey{}).(Client)
 	return c
 }
 
-// Routed wraps an event that is delivered only to clients with ChannelID
-// open. When All is set it is also delivered to every other client (a
-// message_create that should notify). Routed itself never hits the wire —
-// only Event is encoded.
-//
-// Open lists further channels any of which being open also qualifies, and
-// Members lists channels any of which being member-subscribed qualifies
-// (member_list_update, presence_update). A client receives a matching event
-// exactly once.
 type Routed struct {
 	ChannelID string
 	All       bool
@@ -88,8 +53,6 @@ type Routed struct {
 	Event     any
 }
 
-// matches reports whether a client with the given open and member sets gets
-// the event.
 func (r Routed) matches(open, members map[string]struct{}) bool {
 	if r.All {
 		return true
@@ -110,7 +73,6 @@ func (r Routed) matches(open, members map[string]struct{}) bool {
 	return false
 }
 
-// DefaultPath computes $XDG_RUNTIME_DIR/omarchy-discord/backend.sock.
 func DefaultPath() string {
 	dir := os.Getenv("XDG_RUNTIME_DIR")
 	if dir == "" {
@@ -119,14 +81,11 @@ func DefaultPath() string {
 	return filepath.Join(dir, "omarchy-discord", "backend.sock")
 }
 
-// maxLine bounds a single request line (1 MiB).
 const maxLine = 1 << 20
 
-// queueDepth is the per-connection outbound queue; a client that falls this far
-// behind is disconnected rather than allowed to block the fan-out.
 const queueDepth = 512
+const maxInflight = 64
 
-// Server owns the listener and the connection set.
 type Server struct {
 	path    string
 	backend Backend
@@ -136,13 +95,10 @@ type Server struct {
 	ln    net.Listener
 }
 
-// New creates a server for the given socket path.
 func New(path string, b Backend) *Server {
 	return &Server{path: path, backend: b, conns: map[*conn]struct{}{}}
 }
 
-// Listen prepares the socket: parent dir 0700, stale file unlinked, bind,
-// chmod 0600.
 func (s *Server) Listen() error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return fmt.Errorf("socket: create runtime dir: %w", err)
@@ -162,11 +118,8 @@ func (s *Server) Listen() error {
 	return nil
 }
 
-// Path returns the socket path.
 func (s *Server) Path() string { return s.path }
 
-// Serve accepts connections until ctx is cancelled, then closes every
-// connection and removes the socket file.
 func (s *Server) Serve(ctx context.Context) error {
 	if s.ln == nil {
 		return errors.New("socket: Serve before Listen")
@@ -201,9 +154,6 @@ func (s *Server) Serve(ctx context.Context) error {
 	return nil
 }
 
-// Broadcast queues an event to every connected client, preserving order
-// relative to other broadcasts and to connect-time snapshots. A Routed event
-// goes only to clients with its channel open (plus everyone when All is set).
 func (s *Server) Broadcast(ev any) {
 	r, routed := ev.(Routed)
 	if routed {
@@ -227,41 +177,30 @@ type conn struct {
 	once sync.Once
 	srv  *Server
 
-	// open and members are guarded by srv.mu so Broadcast's filter and
-	// open/close_channel / (un)subscribe_members never race.
 	open    map[string]struct{}
 	members map[string]struct{}
 
-	// lanes serializes open_channel/close_channel per channel id, in the order
-	// the requests were read. Without it a close could commit before a
-	// concurrent open's registration and leave the channel open.
 	lanesMu sync.Mutex
 	lanes   map[string]*ticket
 }
 
-// ticket is one place in a per-channel FIFO: run after prev, release next.
 type ticket struct {
 	id   string
 	prev *ticket
 	done chan struct{}
 }
 
-// channelParams is the subset of open_channel/close_channel parameters the
-// socket layer needs to pick a lane.
 type channelParams struct {
 	ChannelID string `json:"channel_id"`
 }
 
-// enqueue takes a place in the lane for req's channel. It is called on the
-// reader goroutine so lane order equals arrival order; nil when the request
-// is not a channel-state command.
 func (c *conn) enqueue(req *protocol.Request) *ticket {
 	if req.Command != "open_channel" && req.Command != "close_channel" {
 		return nil
 	}
 	var p channelParams
 	if req.Params(&p) != nil || p.ChannelID == "" {
-		return nil // the handler reports invalid_argument
+		return nil
 	}
 	c.lanesMu.Lock()
 	defer c.lanesMu.Unlock()
@@ -270,8 +209,6 @@ func (c *conn) enqueue(req *protocol.Request) *ticket {
 	return t
 }
 
-// wait blocks until every earlier ticket in the lane has released, or the
-// connection is gone.
 func (t *ticket) wait(c *conn) {
 	if t == nil || t.prev == nil {
 		return
@@ -282,7 +219,6 @@ func (t *ticket) wait(c *conn) {
 	}
 }
 
-// release lets the next ticket run and drops the lane when it is the last.
 func (t *ticket) release(c *conn) {
 	if t == nil {
 		return
@@ -343,17 +279,14 @@ func (s *Server) handle(ctx context.Context, nc net.Conn) {
 	c := &conn{nc: nc, out: make(chan []byte, queueDepth), done: make(chan struct{}), srv: s, open: map[string]struct{}{}, members: map[string]struct{}{}, lanes: map[string]*ticket{}}
 	defer c.close()
 	go c.writer()
-	ctx = WithClient(ctx, c)
+	ctx, cancel := context.WithCancel(WithClient(ctx, c))
+	var requests sync.WaitGroup
+	inflight := make(chan struct{}, maxInflight)
+	defer cancel()
 
-	// Register and enqueue the snapshot while holding the same lock Broadcast
-	// takes, so no event can interleave the snapshot's lines or reach this
-	// client before them. (Events already queued upstream may still arrive after
-	// the snapshot; clients resolve that with the generation stamp.)
 	s.mu.Lock()
 	s.conns[c] = struct{}{}
 	func() {
-		// A panic building the snapshot must not escape into Serve's
-		// accept loop; this client simply gets no snapshot.
 		defer panics.Recover("socket: snapshot")
 		for _, ev := range s.backend.Snapshot() {
 			c.send(protocol.MustEncode(0, ev))
@@ -361,6 +294,9 @@ func (s *Server) handle(ctx context.Context, nc net.Conn) {
 	}()
 	s.mu.Unlock()
 	defer func() {
+		c.close()
+		cancel()
+		requests.Wait()
 		s.mu.Lock()
 		delete(s.conns, c)
 		s.mu.Unlock()
@@ -379,8 +315,6 @@ func (s *Server) handle(ctx context.Context, nc net.Conn) {
 		}
 		req, perr := protocol.DecodeRequest(line)
 		if perr != nil {
-			// Echo the id whenever the line parsed; only an unparseable line
-			// gets id 0.
 			var id int64
 			if req != nil {
 				id = req.ID
@@ -388,10 +322,24 @@ func (s *Server) handle(ctx context.Context, nc net.Conn) {
 			c.send(protocol.MustEncode(id, protocol.ErrResponse(id, perr)))
 			continue
 		}
-		// Each request is answered on its own goroutine so a slow command never
-		// blocks ping; the writer serializes the output. Channel-state commands
-		// additionally queue per channel, in arrival order.
-		go c.dispatch(ctx, req, c.enqueue(req))
+		if req.Command == "hello" || req.Command == "ping" {
+			c.dispatch(ctx, req, nil)
+			continue
+		}
+		select {
+		case inflight <- struct{}{}:
+		default:
+			c.send(protocol.MustEncode(req.ID, protocol.ErrResponse(req.ID,
+				protocol.Errorf(protocol.CodeRateLimited, "too many in-flight requests"))))
+			continue
+		}
+		t := c.enqueue(req)
+		requests.Add(1)
+		go func() {
+			defer requests.Done()
+			defer func() { <-inflight }()
+			c.dispatch(ctx, req, t)
+		}()
 	}
 	if err := sc.Err(); err != nil && ctx.Err() == nil {
 		redact.Logf("socket: read: %v", err)
@@ -403,6 +351,13 @@ func (c *conn) dispatch(ctx context.Context, req *protocol.Request, t *ticket) {
 		t.wait(c)
 		defer t.release(c)
 	}
+	select {
+	case <-c.done:
+		return
+	case <-ctx.Done():
+		return
+	default:
+	}
 	result, perr := c.answer(ctx, req)
 	if perr != nil {
 		c.send(protocol.MustEncode(req.ID, protocol.ErrResponse(req.ID, perr)))
@@ -411,13 +366,8 @@ func (c *conn) dispatch(ctx context.Context, req *protocol.Request, t *ticket) {
 	c.send(protocol.MustEncode(req.ID, protocol.OKResponse(req.ID, result)))
 }
 
-// answer runs one command. A panic in the backend (or in a library it calls)
-// fails that one request with internal_error instead of killing the process;
-// the redacted detail goes to the journal, never to the client.
 func (c *conn) answer(ctx context.Context, req *protocol.Request) (result any, perr *protocol.Error) {
 	defer func() {
-		// recover() only reports a panic to the function deferred directly by
-		// the panicking frame, so it cannot be delegated to a helper.
 		if r := recover(); r != nil {
 			panics.Log("socket: command "+req.Command, r)
 			result, perr = nil, protocol.Errorf(protocol.CodeInternalError, "internal error handling %s", req.Command)
@@ -432,7 +382,6 @@ func (c *conn) answer(ctx context.Context, req *protocol.Request) (result any, p
 	return c.srv.backend.Handle(ctx, req)
 }
 
-// send queues a line; a client whose queue is full is dropped.
 func (c *conn) send(line []byte) {
 	select {
 	case c.out <- line:

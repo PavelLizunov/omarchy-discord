@@ -14,12 +14,6 @@ var update = flag.Bool("update", false, "rewrite golden fixtures")
 
 func str(s string) *string { return &s }
 
-// goldens lists every response/event shape the backend emits in Phase 0. Each
-// value is encoded with the real encoder and compared byte-for-byte with
-// testdata/<name>.json, then decoded back into a fresh value of the same type
-// and compared with the original.
-// typedResponse mirrors Response with a concrete result type so a fixture can
-// be decoded back into static types.
 type typedResponse[T any] struct {
 	Type   string `json:"type"`
 	V      int    `json:"v"`
@@ -32,7 +26,7 @@ type typedResponse[T any] struct {
 var goldens = []struct {
 	name  string
 	value any
-	rt    any // pointer to the static type used for the decode leg
+	rt    any
 }{
 	{"response_hello", OKResponse(1, Hello()), &typedResponse[HelloResult]{}},
 	{"response_ping", OKResponse(2, PingResult{Pong: true}), &typedResponse[PingResult]{}},
@@ -40,7 +34,6 @@ var goldens = []struct {
 		ProtocolVersion: 1, BackendVersion: BackendVersion, Lifecycle: LifecycleReady,
 		User:     &User{ID: "183627919046737920", Username: "m", DisplayName: "m", AvatarURL: "https://cdn.discordapp.com/avatars/183627919046737920/a.png"},
 		Presence: "online", TotalMentionCount: 3, UnreadDMChannelID: str("1049931213073821696"), Generation: 7, Error: "",
-		// A session in a call: the non-idle shape of the voice object.
 		Voice: VoiceState{Status: VoiceConnected, GuildID: str("1000000000000000001"), ChannelID: str("1000000000000000012"), Muted: true, Deafened: false, Error: ""},
 	}), &typedResponse[State]{}},
 	{"response_get_state_logged_out", OKResponse(3, State{
@@ -91,7 +84,6 @@ var goldens = []struct {
 	{"event_typing_start", NewTypingStart("1049931213073821696", str("1000000000000000001"), "2000000000000000001", "ada", "2026-08-20T14:03:22.000Z"), &TypingStartEvent{}},
 	{"event_read_state_changed", NewReadStateChanged("1049931213073821696", str("1000000000000000001"), true, 2, str("1049931302442426390"), 5), &ReadStateChangedEvent{}},
 	{"event_read_state_changed_dm_ack", NewReadStateChanged("1049931213073821696", nil, false, 0, str("1049931339989602304"), 0), &ReadStateChangedEvent{}},
-	// Phase 2.
 	{"response_send", OKResponse(31, SendResult{MessageID: "1049931339989602304", Nonce: "a1b2c3d4e5f60718"}), &typedResponse[SendResult]{}},
 	{"response_edit", OKResponse(32, EmptyResult{}), &typedResponse[EmptyResult]{}},
 	{"response_delete", OKResponse(33, EmptyResult{}), &typedResponse[EmptyResult]{}},
@@ -119,7 +111,6 @@ var goldens = []struct {
 	{"event_qr_cancelled_declined", NewQRCancelled(QRReasonDeclined, ""), &QRCancelledEvent{}},
 	{"event_qr_cancelled_expired", NewQRCancelled(QRReasonExpired, ""), &QRCancelledEvent{}},
 	{"event_qr_cancelled_error", NewQRCancelled(QRReasonError, "remoteauth: ticket exchange failed: http 400"), &QRCancelledEvent{}},
-	// Phase 3.
 	{"response_quick_switch", OKResponse(60, QuickSwitchResult{Entries: []QuickSwitchEntry{
 		{Channel: sampleThread, GuildName: str("Omarchy"), LastMessagePreview: "shall we?", Score: 12.97},
 		{Channel: Channel{ID: "1049931213073821696", GuildID: nil, Type: "dm", Name: "ada", Topic: "", ParentID: nil, Position: 0, LastMessageID: str("1049931302442426390"), Unread: UnreadRead, MentionCount: 0, Muted: false,
@@ -136,8 +127,6 @@ var goldens = []struct {
 	}}}}), &typedResponse[ListEmojiResult]{}},
 	{"response_list_emoji_empty", OKResponse(64, ListEmojiResult{Guilds: []GuildEmoji{}}), &typedResponse[ListEmojiResult]{}},
 	{"event_channel_update_thread_create", NewChannelUpdate(ChannelChangeCreate, sampleThread), &ChannelUpdateEvent{}},
-	// An archived thread: it drops out of list_threads but stays in
-	// list_channels, so `archived` is what a client filters on.
 	{"event_channel_update_thread_archived", NewChannelUpdate(ChannelChangeUpdate, archivedThread), &ChannelUpdateEvent{}},
 	{"event_channel_update_delete", NewChannelUpdate(ChannelChangeDelete, Channel{ID: "1049931500000000000", GuildID: str("1000000000000000001"), Type: "thread", Name: "", Topic: "", ParentID: str("1049931213073821696"), Position: 0, LastMessageID: nil, Unread: UnreadRead, MentionCount: 0, Muted: false, Recipients: []User{}}), &ChannelUpdateEvent{}},
 	{"event_member_list_update", NewMemberListUpdate("1049931213073821696", str("1000000000000000001"),
@@ -153,7 +142,6 @@ var goldens = []struct {
 	{"event_member_list_update_empty", NewMemberListUpdate("1049931213073821696", str("1000000000000000001"), nil, nil), &MemberListUpdateEvent{}},
 	{"event_presence_update", NewPresenceUpdate("2000000000000000001", "idle", "Listening to Spotify"), &PresenceUpdateEvent{}},
 	{"event_presence_update_offline", NewPresenceUpdate("2000000000000000001", "offline", ""), &PresenceUpdateEvent{}},
-	// Voice.
 	{"event_voice_members", NewVoiceMembers("1000000000000000001", []VoiceChannelMembers{
 		{ChannelID: "1000000000000000012", Users: []User{
 			{ID: "183627919046737920", Username: "m", DisplayName: "m", AvatarURL: "https://cdn.discordapp.com/avatars/183627919046737920/a.png"},
@@ -227,7 +215,6 @@ func TestGoldenEncodeDecode(t *testing.T) {
 			if bytes.Count(got, []byte("\n")) != 1 || got[len(got)-1] != '\n' {
 				t.Fatalf("%s is not exactly one newline-terminated line", g.name)
 			}
-			// Decode back into the same static type and compare.
 			if err := json.Unmarshal(want, g.rt); err != nil {
 				t.Fatal(err)
 			}
@@ -242,8 +229,6 @@ func TestGoldenEncodeDecode(t *testing.T) {
 	}
 }
 
-// requestGoldens are the request lines the QML client sends; each fixture is
-// decoded with the real decoder and its params checked.
 func TestGoldenRequests(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -453,8 +438,6 @@ func TestMalformedLineIsInvalidRequestWithIDZero(t *testing.T) {
 	}
 }
 
-// A parseable line with a missing command is invalid_request but keeps its id
-// so the client can fail the pending request.
 func TestMissingCommandEchoesID(t *testing.T) {
 	for _, line := range []string{`{"v":1,"id":3}`, `{"v":1,"id":3,"command":""}`} {
 		r, e := DecodeRequest([]byte(line))
@@ -473,8 +456,6 @@ func TestUnsupportedVersion(t *testing.T) {
 
 const fakeToken = "MTgzNjI3OTE5MDQ2NzM3OTIw.GabcDE.xyz_123456789-abcdefghijklmnop"
 
-// Error messages are redacted where they are built (Errorf), so a token in a
-// wrapped Discord error never reaches the wire.
 func TestErrorfRedacts(t *testing.T) {
 	for _, msg := range []string{
 		"token rejected: Authorization: Bearer " + fakeToken,
@@ -485,7 +466,6 @@ func TestErrorfRedacts(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// json.Marshal HTML-escapes the angle brackets of the marker.
 		if bytes.Contains(out, []byte(fakeToken)) || !bytes.Contains(out, []byte(`\u003credacted\u003e`)) {
 			t.Fatalf("secret leaked: %s", out)
 		}
@@ -495,8 +475,6 @@ func TestErrorfRedacts(t *testing.T) {
 	}
 }
 
-// User-controlled text (guild names, topics) must never be altered by
-// redaction: the encoded line stays valid JSON and round-trips intact.
 func TestEncodeDoesNotRedactUserContent(t *testing.T) {
 	names := []string{"Authorization Team", "token=abc", `quote " back \ slash`, "authorization: bearer x", fakeToken}
 	var guilds []Guild

@@ -3,8 +3,6 @@ import Quickshell
 import qs.Commons
 import qs.Ui
 
-// Per-monitor bar mark. The socket client lives in Service.qml only; this
-// widget mirrors it through bar.shell.serviceFor and null-guards everything.
 BarWidget {
   id: root
 
@@ -16,12 +14,10 @@ BarWidget {
   readonly property var hostWindow: QsWindow.window
   readonly property string screenName: hostWindow && hostWindow.screen
     ? String(hostWindow.screen.name || "") : ""
-  // The open panel lives on this bar's monitor (or we cannot tell).
   readonly property bool panelOnThisScreen: !discord || !discord.panelScreenName
     || !screenName || discord.panelScreenName === screenName
   readonly property bool online: !!(discord && discord.showStructure)
   readonly property int mentionCount: discord ? discord.totalMentionCount : 0
-  // Plain unreads are a subtle dot; mentions take precedence (badge).
   readonly property bool unreadDot: online && mentionCount === 0
     && !!(discord && discord.anyUnread)
   readonly property bool showMentionCount:
@@ -30,8 +26,6 @@ BarWidget {
     String(root.setting("middleClick", "Last unread DM"))
   readonly property string badgeText: showMentionCount && mentionCount > 0
     ? (mentionCount > 99 ? "99+" : String(mentionCount)) : ""
-  // In a voice call: a mic glyph next to the mark, crossed out while muted
-  // (deafened counts as muted here — one glyph, one question: am I audible).
   readonly property bool inCall: !!(discord && discord.voice
     && String(discord.voice.status || "idle") === "connected")
   readonly property bool callSilent: inCall
@@ -52,10 +46,6 @@ BarWidget {
     if (!bar || !bar.shell) return
     var encoded = JSON.stringify(payload || ({}))
     var host = bar.shell
-    // A plain click toggles the panel when it is on this monitor; from
-    // another monitor it falls through and remaps the panel here instead.
-    // In persistent mode the host counts the window as open from shell start,
-    // so judge by the window itself (mapped and focused), as Service.togglePanel does.
     var isOpen = (discord && discord.persistentWindow)
       ? (discord.panelMapped && discord.panelActive)
       : (typeof host.isPluginOpen === "function" && host.isPluginOpen(moduleName))
@@ -64,15 +54,10 @@ BarWidget {
       return
     }
     if (typeof host.hide === "function" && typeof host.summon === "function") {
-      // A persistent window is never remapped: the panel's open() focuses it
-      // where Hyprland put it, so hiding first would only fight that.
       if (discord && discord.persistentWindow) {
         host.summon(moduleName, encoded)
         return
       }
-      // Remap an existing panel onto the workspace containing this bar.
-      // Splitting hide and summon across event-loop turns lets Wayland finish
-      // unmapping the old surface before the shell opens it here.
       host.hide(moduleName)
       Qt.callLater(function() {
         if (root.bar && root.bar.shell) root.bar.shell.summon(root.moduleName, encoded)

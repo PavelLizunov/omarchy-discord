@@ -2,16 +2,13 @@ import QtQuick
 import QtQuick.Shapes
 import qs.Commons
 
-// Discord mark as vector geometry so it takes the theme foreground at any
-// size. Path and optical metrics adapted from thisisgm/omarchy-discord
-// (DiscordIcon.qml, MIT License, Copyright (c) 2026 GM).
+// Adapted from thisisgm/omarchy-discord (MIT License, Copyright (c) 2026 GM).
 Item {
   id: root
 
   property real iconSize: Style.font.icon
   property color color: Color.foreground
 
-  // Measured ink bounds, not the viewBox, so the weight matches neighbours.
   readonly property real boxWidth: 24.0
   readonly property real boxTop: 2.85
   readonly property real boxHeight: 18.3

@@ -16,7 +16,6 @@ import (
 	"github.com/mattcalayo/omarchy-discord/backend/internal/protocol"
 )
 
-// fakeBackend is a stand-in session: fixed snapshot, a couple of commands.
 type fakeBackend struct {
 	mu    sync.Mutex
 	ready bool
@@ -66,8 +65,6 @@ func (f *fakeBackend) Handle(ctx context.Context, req *protocol.Request) (any, *
 		}
 		if req.Command == "open_channel" {
 			if strings.HasPrefix(p.ChannelID, "slow") {
-				// Models a cold tail fetch; the registration itself is late
-				// so only the per-channel lane keeps a racing close correct.
 				time.Sleep(100 * time.Millisecond)
 			}
 			c.OpenChannel(p.ChannelID)
@@ -85,14 +82,12 @@ type msg map[string]any
 
 func startServer(t *testing.T, b Backend) (*Server, context.CancelFunc) {
 	t.Helper()
-	// Unix socket paths are length-limited; keep it short.
 	dir, err := os.MkdirTemp("", "ods")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	path := filepath.Join(dir, "sub", "b.sock")
-	// Pre-create a stale file to prove it gets unlinked.
 	os.MkdirAll(filepath.Dir(path), 0o700)
 	os.WriteFile(path, nil, 0o600)
 	srv := New(path, b)
@@ -146,7 +141,6 @@ func TestSnapshotThenCorrelatedResponses(t *testing.T) {
 	srv, _ := startServer(t, &fakeBackend{})
 	c, sc := dial(t, srv)
 
-	// Send requests immediately; the snapshot must still arrive first.
 	fmt.Fprint(c, `{"v":1,"id":1,"command":"hello"}`+"\n"+`{"v":1,"id":2,"command":"ping"}`+"\n"+`{"v":1,"id":3,"command":"get_state"}`+"\n")
 
 	first := next(t, sc)
@@ -202,7 +196,7 @@ func TestReadySnapshotIncludesGuildsSynced(t *testing.T) {
 func TestMalformedAndUnknownAndVersion(t *testing.T) {
 	srv, _ := startServer(t, &fakeBackend{})
 	c, sc := dial(t, srv)
-	next(t, sc) // snapshot
+	next(t, sc)
 
 	fmt.Fprint(c, "{this is not json\n")
 	m := next(t, sc)
@@ -239,7 +233,6 @@ func TestOutOfOrderResponsesAndBroadcastFanOut(t *testing.T) {
 	next(t, sc1)
 	next(t, sc2)
 
-	// A slow command must not block ping.
 	fmt.Fprint(c1, `{"v":1,"id":10,"command":"slow"}`+"\n"+`{"v":1,"id":11,"command":"ping"}`+"\n")
 	if m := next(t, sc1); m["id"] != float64(11) {
 		t.Fatalf("ping should overtake slow: %v", m)
@@ -257,8 +250,6 @@ func TestOutOfOrderResponsesAndBroadcastFanOut(t *testing.T) {
 	}
 }
 
-// The snapshot's lines are never interleaved with broadcast events, even under
-// concurrent connects and broadcasts.
 func TestSnapshotNotInterleavedByBroadcasts(t *testing.T) {
 	srv, _ := startServer(t, &fakeBackend{ready: true})
 	stop := make(chan struct{})
@@ -288,13 +279,11 @@ func TestSnapshotNotInterleavedByBroadcasts(t *testing.T) {
 	wg.Wait()
 }
 
-// Routed events reach only the clients that opened the channel; a notify
-// (All) routed event reaches everyone; closing the channel stops delivery.
 func TestRoutedEventsFollowOpenChannels(t *testing.T) {
 	srv, _ := startServer(t, &fakeBackend{})
 	a, sa := dial(t, srv)
 	b, sb := dial(t, srv)
-	next(t, sa) // snapshots
+	next(t, sa)
 	next(t, sb)
 
 	fmt.Fprintln(a, `{"v":1,"id":1,"command":"open_channel","channel_id":"77"}`)
@@ -310,7 +299,6 @@ func TestRoutedEventsFollowOpenChannels(t *testing.T) {
 	srv.Broadcast(Routed{ChannelID: "78", All: true, Event: protocol.NewMessageCreate(msg("3"), true, "other")})
 	srv.Broadcast(protocol.NewReadStateChanged("77", nil, true, 0, nil, 0))
 
-	// A: message 1 (open), then 3 (notify), then read state; never 2.
 	if ev := next(t, sa); ev["event"] != "message_create" || ev["message"].(map[string]any)["id"] != "1" {
 		t.Fatalf("a first: %v", ev)
 	}
@@ -320,14 +308,12 @@ func TestRoutedEventsFollowOpenChannels(t *testing.T) {
 	if ev := next(t, sa); ev["event"] != "read_state_changed" {
 		t.Fatalf("a third: %v", ev)
 	}
-	// B: only the notify message and the read state.
 	if ev := next(t, sb); ev["event"] != "message_create" || ev["message"].(map[string]any)["id"] != "3" {
 		t.Fatalf("b first: %v", ev)
 	}
 	if ev := next(t, sb); ev["event"] != "read_state_changed" {
 		t.Fatalf("b second: %v", ev)
 	}
-	// Close: A stops receiving; a second close is channel_not_open.
 	fmt.Fprintln(a, `{"v":1,"id":2,"command":"close_channel","channel_id":"77"}`)
 	if r := next(t, sa); r["ok"] != true {
 		t.Fatalf("close: %v", r)
@@ -341,12 +327,10 @@ func TestRoutedEventsFollowOpenChannels(t *testing.T) {
 	if r := next(t, sa); r["type"] != "response" || r["id"] != float64(4) {
 		t.Fatalf("after close, expected only the ping response, got %v", r)
 	}
-	// B still gets nothing for 77 either.
 	fmt.Fprintln(b, `{"v":1,"id":5,"command":"ping"}`)
 	if r := next(t, sb); r["id"] != float64(5) {
 		t.Fatalf("b: %v", r)
 	}
-	// Open-channel state is per connection: B opening 77 now gets deletes, A does not.
 	fmt.Fprintln(b, `{"v":1,"id":6,"command":"open_channel","channel_id":"77"}`)
 	next(t, sb)
 	srv.Broadcast(Routed{ChannelID: "77", Event: protocol.NewMessageDelete("77", nil, "9")})
@@ -365,10 +349,6 @@ func TestClientFromContextNil(t *testing.T) {
 	}
 }
 
-// TestOpenCloseSameChannelOrdered: open_channel and close_channel for one
-// channel run in arrival order even though each request has its own
-// goroutine, so a close sent right after a slow open lands after it and the
-// channel ends closed. Other channels are not held up by the slow open.
 func TestOpenCloseSameChannelOrdered(t *testing.T) {
 	srv, _ := startServer(t, &fakeBackend{})
 	a, sa := dial(t, srv)
@@ -377,7 +357,6 @@ func TestOpenCloseSameChannelOrdered(t *testing.T) {
 	fmt.Fprintln(a, `{"v":1,"id":1,"command":"open_channel","channel_id":"slow1"}`)
 	fmt.Fprintln(a, `{"v":1,"id":2,"command":"close_channel","channel_id":"slow1"}`)
 	fmt.Fprintln(a, `{"v":1,"id":3,"command":"open_channel","channel_id":"77"}`)
-	// 77 opens without waiting for slow1.
 	if r := next(t, sa); r["id"] != float64(3) || r["ok"] != true {
 		t.Fatalf("independent channel blocked: %v", r)
 	}
@@ -392,7 +371,6 @@ func TestOpenCloseSameChannelOrdered(t *testing.T) {
 	if ev := next(t, sa); ev["event"] != "message_delete" || ev["message_id"] != "2" {
 		t.Fatalf("slow1 leaked after close, or 77 not open: %v", ev)
 	}
-	// Lanes are released: a fresh open/close pair works, and the lane map drains.
 	fmt.Fprintln(a, `{"v":1,"id":4,"command":"open_channel","channel_id":"slow1"}`)
 	fmt.Fprintln(a, `{"v":1,"id":5,"command":"close_channel","channel_id":"slow1"}`)
 	if r := next(t, sa); r["id"] != float64(4) || r["ok"] != true {
@@ -412,9 +390,6 @@ func TestOpenCloseSameChannelOrdered(t *testing.T) {
 	srv.mu.Unlock()
 }
 
-// Member-subscription routing is independent of the open set, per
-// connection, and dies with the connection; Open/Members keys deliver an
-// event at most once.
 func TestRoutedMemberSubscriptions(t *testing.T) {
 	srv, _ := startServer(t, &fakeBackend{})
 	a, sa := dial(t, srv)
@@ -429,7 +404,6 @@ func TestRoutedMemberSubscriptions(t *testing.T) {
 
 	list := protocol.NewMemberListUpdate("77", nil, nil, nil)
 	srv.Broadcast(Routed{Members: []string{"77"}, Event: list})
-	// Presence matching both an open DM (B) and a member list (A), once each.
 	srv.Broadcast(Routed{Open: []string{"77"}, Members: []string{"77"}, Event: protocol.NewPresenceUpdate("9", "idle", "")})
 	srv.Broadcast(Routed{Open: []string{"78"}, Members: []string{"78"}, Event: protocol.NewPresenceUpdate("8", "idle", "")})
 
@@ -439,7 +413,6 @@ func TestRoutedMemberSubscriptions(t *testing.T) {
 	if ev := next(t, sa); ev["event"] != "presence_update" || ev["user_id"] != "9" {
 		t.Fatalf("a second: %v", ev)
 	}
-	// B (open only) never sees the list, sees presence 9 once.
 	if ev := next(t, sb); ev["event"] != "presence_update" || ev["user_id"] != "9" {
 		t.Fatalf("b first: %v", ev)
 	}
@@ -447,7 +420,6 @@ func TestRoutedMemberSubscriptions(t *testing.T) {
 	if r := next(t, sb); r["id"] != float64(2) {
 		t.Fatalf("b leaked: %v", r)
 	}
-	// Unsubscribe stops delivery.
 	fmt.Fprintln(a, `{"v":1,"id":3,"command":"unsubscribe_members","channel_id":"77"}`)
 	next(t, sa)
 	srv.Broadcast(Routed{Members: []string{"77"}, Event: list})
@@ -455,7 +427,6 @@ func TestRoutedMemberSubscriptions(t *testing.T) {
 	if r := next(t, sa); r["id"] != float64(4) {
 		t.Fatalf("a after unsubscribe: %v", r)
 	}
-	// Resubscribe, then drop the connection: the server forgets the sub.
 	fmt.Fprintln(a, `{"v":1,"id":5,"command":"subscribe_members","channel_id":"77"}`)
 	next(t, sa)
 	a.Close()
@@ -476,14 +447,13 @@ func TestRoutedMemberSubscriptions(t *testing.T) {
 		}
 	}
 	srv.mu.Unlock()
-	srv.Broadcast(Routed{Members: []string{"77"}, Event: list}) // nobody; must not panic
+	srv.Broadcast(Routed{Members: []string{"77"}, Event: list})
 	fmt.Fprintln(b, `{"v":1,"id":6,"command":"ping"}`)
 	if r := next(t, sb); r["id"] != float64(6) {
 		t.Fatalf("b: %v", r)
 	}
 }
 
-// closerBackend records the connections the server released.
 type closerBackend struct {
 	fakeBackend
 	mu     sync.Mutex
@@ -496,13 +466,10 @@ func (b *closerBackend) ClientClosed(c Client) {
 	b.closed = append(b.closed, c)
 }
 
-// A panicking command fails that one request with internal_error; the daemon
-// and the connection keep working. Without the recover, one library panic on a
-// request goroutine takes the whole process down.
 func TestPanicInCommandFailsOnlyThatRequest(t *testing.T) {
 	srv, _ := startServer(t, &fakeBackend{})
 	c, sc := dial(t, srv)
-	next(t, sc) // snapshot
+	next(t, sc)
 
 	fmt.Fprint(c, `{"v":1,"id":1,"command":"boom"}`+"\n")
 	res := next(t, sc)
@@ -512,19 +479,17 @@ func TestPanicInCommandFailsOnlyThatRequest(t *testing.T) {
 	if e, _ := res["error"].(map[string]any); e == nil || e["code"] != protocol.CodeInternalError {
 		t.Fatalf("want internal_error, got %v", res["error"])
 	}
-	// The connection is still usable.
 	fmt.Fprint(c, `{"v":1,"id":2,"command":"ping"}`+"\n")
 	if res := next(t, sc); res["id"] != float64(2) || res["ok"] != true {
 		t.Fatalf("ping after panic: %v", res)
 	}
 }
 
-// A backend that tracks per-connection state is told when a connection ends.
 func TestClientClosedOnDisconnect(t *testing.T) {
 	b := &closerBackend{}
 	srv, _ := startServer(t, b)
 	c, sc := dial(t, srv)
-	next(t, sc) // snapshot
+	next(t, sc)
 	fmt.Fprint(c, `{"v":1,"id":1,"command":"subscribe_members","channel_id":"1"}`+"\n")
 	next(t, sc)
 	c.Close()

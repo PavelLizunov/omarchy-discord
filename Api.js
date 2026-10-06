@@ -1,5 +1,3 @@
-// Stateless helpers shared by the Discord plugin's QML files. Kept out of
-// bindings so heavy or security-relevant logic has one home.
 
 function assign(target, source) {
   var next = target && typeof target === "object" && !Array.isArray(target)
@@ -22,9 +20,6 @@ function parseJson(text, fallback) {
   }
 }
 
-// Every error string that reaches the UI passes through here. Adapted from
-// quickshell.spotify's Api.redact; the field list adds Discord's token, QR
-// ticket, and encrypted_token.
 var SECRET_FIELDS = "token|access_token|refresh_token|encrypted_token|ticket|code|code_verifier|client_secret|password"
 
 function redact(value) {
@@ -52,14 +47,6 @@ function clampInt(value, min, max, fallback) {
   return Math.max(min, Math.min(max, n))
 }
 
-// The backend's media cache only fetches Discord's CDN hosts; anything else
-// (embed images off-site) is not even requested.
-function isCdnUrl(url) {
-  return /^https:\/\/(cdn\.discordapp\.com|media\.discordapp\.net)\//i.test(String(url || ""))
-}
-
-// --- theme helpers ---
-// Relative luminance of a QColor (WCAG), 0..1.
 function luminance(color) {
   if (!color || color.r === undefined) return 0
   var chan = function(c) { return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4) }
@@ -72,12 +59,6 @@ function contrastRatio(a, b) {
   return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
 }
 
-// Secondary-text colour. Themes define `muted` for their own purposes and
-// the shell never paints text with it; on several bundled themes (rose-pine,
-// catppuccin-latte, flexoki-light, tokyo-night…) it sits at a 1.5–2.5
-// contrast ratio against the background, unreadable as text. When it clears
-// 3:1 it is used as-is, otherwise the foreground at 60 % alpha stands in —
-// the same construction the shell uses for its own placeholder text.
 var SECONDARY_MIN_CONTRAST = 3.0
 var SECONDARY_ALPHA = 0.6
 
@@ -87,8 +68,6 @@ function secondaryColor(muted, foreground, background) {
   return Qt.rgba(foreground.r, foreground.g, foreground.b, SECONDARY_ALPHA)
 }
 
-// Opaque composite of `color` at `alpha` over `background` (for rich text,
-// where a translucent colour used as both ink and cover would show through).
 function blend(color, background, alpha) {
   if (!color || color.r === undefined || !background || background.r === undefined) return color
   var a = Math.max(0, Math.min(1, Number(alpha) || 0))
@@ -123,8 +102,6 @@ function channelGlyph(type) {
   }
 }
 
-// Snowflake ids are decimal strings too wide for a double; compare by length
-// then lexically.
 function compareIds(a, b) {
   var x = String(a || "")
   var y = String(b || "")
@@ -132,7 +109,6 @@ function compareIds(a, b) {
   return x < y ? -1 : (x > y ? 1 : 0)
 }
 
-// Guild rail label: first letters of up to three words ("Omarchy Dev" -> "OD").
 function userLabel(user, knownUsers) {
   var value = user || {}
   var id = String(value.id || "")
@@ -147,31 +123,20 @@ function initials(name) {
   return out || "?"
 }
 
-// Sidebar filter: stage channels are a non-goal and hidden entirely (voice
-// channels are joinable, so they show); a category whose visible children
-// are all hidden goes with them. Thread rows (list_channels carries every
-// active thread the cache knows — hundreds on a busy guild) never sit in the
-// flat list: they are shown under their parent on demand
-// (Panel.channelRows / Service.threadsFor).
 function isHiddenChannelType(type) {
   var t = String(type || "")
   return t === "stage" || t === "thread"
 }
 
-// Channel types that can carry threads (the `t` affordance).
 function hasThreads(type) {
   var t = String(type || "")
   return t === "text" || t === "announcement" || t === "forum"
 }
 
-// An archived thread is not an active one: list_threads drops it and the
-// flat list must not count it. `archived` is an additive wire field, so a
-// channel object without it is live.
 function isActiveThread(row) {
   return !!row && String(row.type || "") === "thread" && row.archived !== true
 }
 
-// parent id -> number of active threads, from a raw list_channels result.
 function threadCounts(channels) {
   var out = {}
   var list = Array.isArray(channels) ? channels : []
@@ -184,8 +149,6 @@ function threadCounts(channels) {
   return out
 }
 
-// Thread rows of one parent from a raw list_channels result, newest activity
-// first (the list_threads order), used until list_threads answers.
 function threadsOf(channels, parentId) {
   var pid = String(parentId || "")
   var list = Array.isArray(channels) ? channels : []
@@ -218,24 +181,18 @@ function visibleChannels(channels) {
   return out
 }
 
-// Enter opens these (threads included); a forum only expands its threads.
 function isOpenableChannel(row) {
   if (!row) return false
   var t = String(row.type || "")
   return t !== "category" && t !== "forum" && t !== "voice" && t !== "stage"
 }
 
-// The sidebar cursor lands on these (thread rows under an expanded parent
-// too, and voice channels: Enter joins them instead of opening them).
 function isSelectableChannel(row) {
   if (!row) return false
   var t = String(row.type || "")
   return t !== "category" && t !== "stage"
 }
 
-// The occupants of one voice channel out of a voice_members payload
-// (guildId -> [{ channel_id, users: [user] }]). The users carry everything a
-// row needs, so nothing is looked up.
 function voiceOccupants(channels, channelId) {
   var list = Array.isArray(channels) ? channels : []
   var id = String(channelId || "")
@@ -246,12 +203,6 @@ function voiceOccupants(channels, channelId) {
   return []
 }
 
-// --- last-visited channel per guild ---
-// Persisted as a JSON string on the plugin's shell.json entry. A
-// recency-ordered [{ g, c }] array rather than a { guildId: channelId } map
-// because the cap needs an eviction order: re-assigning an existing key does
-// not move it in a JS object, so object key order is insertion order, not
-// recency, and the "oldest" entry could not be identified.
 var LAST_CHANNEL_CAP = 32
 
 function parseLastChannels(raw) {
@@ -278,8 +229,6 @@ function lastChannelFor(list, guildId) {
   return ""
 }
 
-// Returns the SAME array reference when the pair is already at the head, so
-// the caller can skip the shell.json write on the common repeat-open case.
 function bumpLastChannel(list, guildId, channelId) {
   var g = String(guildId || "")
   var c = String(channelId || "")
@@ -294,15 +243,6 @@ function bumpLastChannel(list, guildId, channelId) {
   return out
 }
 
-// The channel to open when a guild is entered: the remembered one, else a
-// channel named "general", else the first openable row. The two lists are
-// deliberately different — the remembered id is validated against the RAW
-// channel list because that is the only one carrying thread rows (a
-// remembered thread must still resolve), while the default walks
-// visibleChannels() so it can never land on an arbitrary thread out of the
-// hundreds list_channels ships. `allowDefault` is false for the DM
-// pseudo-guild: a server has a default channel, a DM inbox does not, and
-// auto-opening an untouched DM trips the backend's virgin-DM guard.
 function guildEntryChannel(channels, remembered, allowDefault) {
   var list = Array.isArray(channels) ? channels : []
   var want = String(remembered || "")
@@ -322,9 +262,6 @@ function guildEntryChannel(channels, remembered, allowDefault) {
   return first
 }
 
-// Member pane rows from a member_list_update: every group as a header
-// (Discord's total count), its served members beneath it, in wire order.
-// Members whose group is unknown get a header named after the group id.
 function memberRows(list) {
   var out = []
   if (!list) return out
@@ -369,8 +306,6 @@ function isUnread(row) {
   return !!row && String(row.unread || "read") !== "read"
 }
 
-// Rows in a timeline window: optimistic rows ("pending-N") sort after every
-// real snowflake, otherwise by id.
 function compareRows(a, b) {
   var ap = !!(a && a.pending)
   var bp = !!(b && b.pending)
@@ -378,8 +313,6 @@ function compareRows(a, b) {
   return compareIds(a && a.id, b && b.id)
 }
 
-// Clipboard paste: the image type to stage from `wl-paste --list-types`
-// output, preferring lossless; "" when the clipboard holds no image.
 var IMAGE_PREFERENCE = ["image/png", "image/jpeg", "image/webp", "image/gif"]
 
 function bestImageType(types) {
@@ -404,7 +337,6 @@ function imageExtension(mime) {
   }
 }
 
-// Node test hook; harmless under QML (no `module` there).
 if (typeof module !== "undefined" && module.exports) {
   module.exports = { visibleChannels: visibleChannels, isOpenableChannel: isOpenableChannel,
     isSelectableChannel: isSelectableChannel, voiceOccupants: voiceOccupants,

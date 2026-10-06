@@ -1,12 +1,3 @@
-// Command omarchy-discord-backend is the Go daemon behind the quickshell.discord
-// plugin. Subcommands:
-//
-//	serve   (default) run the socket server and Discord session
-//	check   print a JSON environment summary and exit
-//	login   read a token from stdin, validate it, store it in the keyring
-//	logout  clear the keyring entry
-//
-// Exit codes are listed in backend/README.md.
 package main
 
 import (
@@ -36,15 +27,14 @@ import (
 	"github.com/mattcalayo/omarchy-discord/backend/internal/socket"
 )
 
-// Exit codes. Distinct per failure so scripts can tell them apart.
 const (
 	exitOK            = 0
 	exitUsage         = 1
-	exitRuntimeDir    = 2 // runtime dir not writable / socket bind failed
+	exitRuntimeDir    = 2
 	exitNoSecretTool  = 3
-	exitNoToken       = 4 // check: no token stored; login: empty stdin
+	exitNoToken       = 4
 	exitLoginRejected = 5
-	exitKeyring       = 6 // secret-tool store/clear failed
+	exitKeyring       = 6
 )
 
 func main() {
@@ -65,7 +55,6 @@ func run(args []string) int {
 	if fs.NArg() > 0 {
 		cmd = fs.Arg(0)
 	}
-	// Flags may also follow the subcommand.
 	if fs.NArg() > 1 {
 		if err := fs.Parse(fs.Args()[1:]); err != nil {
 			return exitUsage
@@ -94,7 +83,6 @@ func serve(socketPath string) int {
 		redact.Logf("secret-tool not found; login will not persist")
 	}
 	mgr := session.New(keyring.Keyring{})
-	// Same stderr as redact.Logf (the journal); the engine logs at Info.
 	mgr.EnableVoice(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	srv := socket.New(socketPath, mgr)
 	if err := srv.Listen(); err != nil {
@@ -103,7 +91,6 @@ func serve(socketPath string) int {
 	}
 	cache, err := media.New(media.Options{Dir: mediaDir(), Emit: srv.Broadcast})
 	if err != nil {
-		// Not fatal: fetch_media answers media_error until the dir is fixed.
 		redact.Logf("media cache unavailable: %v", err)
 	}
 	mgr.Configure(filepath.Dir(socketPath), cache)
@@ -131,15 +118,10 @@ type checkReport struct {
 	StagedDirWritable  bool   `json:"staged_dir_writable"`
 	SecretTool         bool   `json:"secret_tool"`
 	TokenPresent       bool   `json:"token_present"`
-	// AudioServer reports whether the PulseAudio socket voice needs is
-	// reachable. It is informational: no exit code depends on it.
-	AudioServer bool   `json:"audio_server"`
-	Error       string `json:"error,omitempty"`
+	AudioServer        bool   `json:"audio_server"`
+	Error              string `json:"error,omitempty"`
 }
 
-// audioServer dials the Pulse/pipewire-pulse socket: $PULSE_SERVER when set,
-// else $XDG_RUNTIME_DIR/pulse/native. Only unix sockets are probed — a remote
-// `tcp:` server reports false rather than opening a network connection here.
 func audioServer() bool {
 	addr := strings.TrimPrefix(os.Getenv("PULSE_SERVER"), "unix:")
 	if addr == "" {
@@ -160,7 +142,6 @@ func audioServer() bool {
 	return true
 }
 
-// mediaDir is $XDG_CACHE_HOME/omarchy-discord/media (fallback ~/.cache).
 func mediaDir() string {
 	dir := os.Getenv("XDG_CACHE_HOME")
 	if dir == "" {
@@ -205,7 +186,6 @@ func check(socketPath string) int {
 	return code
 }
 
-// dirWritable creates dir (0700) if needed and probes it with a temp file.
 func dirWritable(dir string) bool {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return false
@@ -219,8 +199,6 @@ func dirWritable(dir string) bool {
 	return true
 }
 
-// login reads a token from stdin (first line), validates it with REST
-// /users/@me, and stores it in the keyring.
 func login() int {
 	if !keyring.Available() {
 		fmt.Fprintln(os.Stderr, "secret-tool not found")

@@ -17,7 +17,6 @@ import (
 	"github.com/mattcalayo/omarchy-discord/backend/internal/socket"
 )
 
-// fakeREST records write calls and returns scripted errors.
 type fakeREST struct {
 	sends    []api.SendMessageData
 	edits    []string
@@ -69,7 +68,6 @@ func httpErr(status int) error {
 	return fmt.Errorf("wrapped: %w", &httputil.HTTPError{Status: status, Message: "nope"})
 }
 
-// writeHarness is a ready manager with a fake REST layer and #general open.
 func writeHarness(t *testing.T) (*Manager, *fakeREST, func(line string) (any, *protocol.Error)) {
 	t.Helper()
 	m, _ := readyManager(t)
@@ -134,7 +132,6 @@ func TestSendValidation(t *testing.T) {
 	if len(f.sends) != 0 {
 		t.Fatalf("REST called on invalid input: %+v", f.sends)
 	}
-	// Exactly 2000 runes (multi-byte) is fine.
 	if _, e := call(`{"v":1,"id":1,"command":"send",` + general + `,"content":"` + strings.Repeat("é", 2000) + `"}`); e != nil {
 		t.Fatal(e)
 	}
@@ -158,7 +155,6 @@ func TestWriteErrorMapping(t *testing.T) {
 			t.Errorf("%v: want %s got %v", c.err, c.want, e)
 		}
 	}
-	// 404 on a message-scoped command is unknown_message.
 	f.err = httpErr(404)
 	if _, e := call(`{"v":1,"id":1,"command":"delete",` + general + `,"message_id":"600000000000000001"}`); e == nil || e.Code != protocol.CodeUnknownMessage {
 		t.Fatalf("404 delete: %v", e)
@@ -167,7 +163,6 @@ func TestWriteErrorMapping(t *testing.T) {
 		t.Fatal("keyring cleared prematurely")
 	}
 
-	// 401 → reauth_needed, keyring cleared, command fails not_logged_in.
 	f.err = httpErr(401)
 	_, e := call(`{"v":1,"id":1,"command":"send",` + general + `,"content":"x"}`)
 	if e == nil || e.Code != protocol.CodeNotLoggedIn {
@@ -186,7 +181,6 @@ func TestWriteErrorMapping(t *testing.T) {
 	if tok != "" || n == nil {
 		t.Fatalf("token %q n %v", tok, n != nil)
 	}
-	// Structure is still served read-only; writes are not_logged_in.
 	if _, e := call(`{"v":1,"id":1,"command":"list_guilds"}`); e != nil {
 		t.Fatalf("list_guilds after reauth: %v", e)
 	}
@@ -217,7 +211,6 @@ func TestEditOwnOnly(t *testing.T) {
 	if _, e := call(`{"v":1,"id":1,"command":"edit",` + general + `,"message_id":"600000000000000002","content":""}`); e == nil || e.Code != protocol.CodeInvalidArgument {
 		t.Fatalf("edit empty: %v", e)
 	}
-	// Uncached: REST decides.
 	if _, e := call(`{"v":1,"id":1,"command":"edit",` + general + `,"message_id":"600000000000000099","content":"x"}`); e != nil {
 		t.Fatalf("edit uncached: %v", e)
 	}
@@ -233,7 +226,7 @@ func TestReactSanitizesEmoji(t *testing.T) {
 	_, f, call := writeHarness(t)
 	for emoji, want := range map[string]discord.APIEmoji{
 		"👍":                           "👍",
-		"❤️":                          "❤", // U+FE0F stripped
+		"❤️":                          "❤",
 		"omarchy:1000000000000000099": "omarchy:1000000000000000099",
 	} {
 		if _, e := call(`{"v":1,"id":1,"command":"react",` + general + `,"message_id":"600000000000000001","emoji":"` + emoji + `"}`); e != nil {
@@ -273,7 +266,6 @@ func TestTypingThrottle(t *testing.T) {
 	if f.typings != 2 {
 		t.Fatalf("typings after 10s %d", f.typings)
 	}
-	// Another channel has its own budget.
 	client := newFakeClient()
 	client.OpenChannel("300000000000000003")
 	if _, e := m.Handle(socket.WithClient(context.Background(), client), req(t, `{"v":1,"id":1,"command":"typing","channel_id":"300000000000000003"}`)); e != nil || f.typings != 3 {
@@ -299,7 +291,6 @@ func TestSetPresence(t *testing.T) {
 	if st.Presence != "invisible" {
 		t.Fatalf("presence %q", st.Presence)
 	}
-	// Same status again: no state change.
 	call(`{"v":1,"id":1,"command":"set_presence","status":"invisible"}`)
 	noEvent(t, m)
 	f.err = httpErr(429)

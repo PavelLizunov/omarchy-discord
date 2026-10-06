@@ -19,7 +19,6 @@ import (
 	"github.com/mattcalayo/omarchy-discord/backend/internal/remoteauth"
 )
 
-// scriptedQR is a fake remote-auth flow driven by the test.
 type scriptedQR struct {
 	steps chan func(ev remoteauth.Events) (done bool, res remoteauth.Result, err error)
 }
@@ -52,7 +51,6 @@ func (s *scriptedQR) finish(res remoteauth.Result, err error) {
 	s.steps <- func(remoteauth.Events) (bool, remoteauth.Result, error) { return true, res, err }
 }
 
-// qrManager is a logged-out manager with the QR seams faked and no network.
 func qrManager(t *testing.T) (*Manager, *scriptedQR, *fakeKeyring) {
 	t.Helper()
 	kr := &fakeKeyring{}
@@ -66,7 +64,7 @@ func qrManager(t *testing.T) (*Manager, *scriptedQR, *fakeKeyring) {
 	}
 	m.runLoop = func(ctx context.Context, _ *ningen.State, done chan struct{}) { <-ctx.Done(); close(done) }
 	m.Start(context.Background())
-	nextEvent(t, m) // logged_out
+	nextEvent(t, m)
 	return m, s, kr
 }
 
@@ -95,7 +93,6 @@ func TestQRLoginHappyPath(t *testing.T) {
 	if st, _ := os.Stat(m.qrPath); st.Mode().Perm() != 0o600 {
 		t.Fatalf("qr image mode %v", st.Mode())
 	}
-	// A second start while running, and a token login, are refused.
 	if _, e := m.Handle(context.Background(), req(t, `{"v":1,"id":51,"command":"start_qr_login"}`)); e == nil || e.Code != protocol.CodeQRUnavailable {
 		t.Fatalf("second start: %v", e)
 	}
@@ -139,7 +136,7 @@ func TestQRLoginCancel(t *testing.T) {
 		t.Fatal(e)
 	}
 	lifecycleEvent(t, m)
-	nextEvent(t, m) // qr_code
+	nextEvent(t, m)
 	if _, e := m.Handle(context.Background(), req(t, `{"v":1,"id":51,"command":"cancel_qr_login"}`)); e != nil {
 		t.Fatal(e)
 	}
@@ -175,7 +172,7 @@ func TestQRLoginExpiryDeclinedAndError(t *testing.T) {
 			t.Fatal(e)
 		}
 		lifecycleEvent(t, m)
-		nextEvent(t, m) // qr_code
+		nextEvent(t, m)
 		s.finish(remoteauth.Result{}, c.err)
 		ev := nextEvent(t, m).(protocol.QRCancelledEvent)
 		if ev.Reason != c.reason {
@@ -195,7 +192,6 @@ func TestQRLoginExpiryDeclinedAndError(t *testing.T) {
 
 func TestQRLoginUnavailable(t *testing.T) {
 	m, s, _ := qrManager(t)
-	// Dial failure before any code: qr_unavailable, no qr_cancelled.
 	s.finish(remoteauth.Result{}, errors.New("dial gateway: refused"))
 	if _, e := m.Handle(context.Background(), req(t, `{"v":1,"id":50,"command":"start_qr_login"}`)); e == nil || e.Code != protocol.CodeQRUnavailable {
 		t.Fatalf("dial failure: %v", e)
@@ -208,7 +204,6 @@ func TestQRLoginUnavailable(t *testing.T) {
 	}
 	noEvent(t, m)
 
-	// No code within the wait window: qr_unavailable and the flow is torn down.
 	start := time.Now()
 	if _, e := m.Handle(context.Background(), req(t, `{"v":1,"id":51,"command":"start_qr_login"}`)); e == nil || e.Code != protocol.CodeQRUnavailable {
 		t.Fatalf("timeout: %v", e)
@@ -216,7 +211,7 @@ func TestQRLoginUnavailable(t *testing.T) {
 	if time.Since(start) > 2*time.Second {
 		t.Fatal("did not time out within the wait window")
 	}
-	lifecycleEvent(t, m) // qr_pending
+	lifecycleEvent(t, m)
 	if lc := lifecycleEvent(t, m); lc != protocol.LifecycleLoggedOut {
 		t.Fatalf("lifecycle %s", lc)
 	}
@@ -224,7 +219,6 @@ func TestQRLoginUnavailable(t *testing.T) {
 		t.Fatal("flow still running after timeout")
 	}
 
-	// Logged in: refused outright.
 	lm, _ := readyManager(t)
 	if _, e := lm.Handle(context.Background(), req(t, `{"v":1,"id":52,"command":"start_qr_login"}`)); e == nil || e.Code != protocol.CodeQRUnavailable {
 		t.Fatalf("logged in: %v", e)
@@ -232,8 +226,6 @@ func TestQRLoginUnavailable(t *testing.T) {
 	noEvent(t, lm)
 }
 
-// gatedKeyring blocks Store until release is closed, to hold a login in the
-// keyring-store window.
 type gatedKeyring struct {
 	fakeKeyring
 	entered chan struct{}
@@ -246,9 +238,6 @@ func (g *gatedKeyring) Store(ctx context.Context, t string) error {
 	return g.fakeKeyring.Store(ctx, t)
 }
 
-// TestQRFinishWindowRefusesOtherAuth: while the approved QR token is being
-// stored and installed, start_qr_login, login, and cancel_qr_login are all
-// refused, and the flow leaves exactly one session behind.
 func TestQRFinishWindowRefusesOtherAuth(t *testing.T) {
 	m, s, _ := qrManager(t)
 	kr := &gatedKeyring{entered: make(chan struct{}), release: make(chan struct{})}
@@ -258,7 +247,7 @@ func TestQRFinishWindowRefusesOtherAuth(t *testing.T) {
 		t.Fatal(e)
 	}
 	lifecycleEvent(t, m)
-	nextEvent(t, m) // qr_code
+	nextEvent(t, m)
 	s.finish(remoteauth.Result{Token: "qr-token", User: remoteauth.User{ID: "1", Username: "u"}}, nil)
 	<-kr.entered
 
@@ -274,8 +263,6 @@ func TestQRFinishWindowRefusesOtherAuth(t *testing.T) {
 				t.Fatalf("%s during finish: %v", c, e)
 			}
 		case <-time.After(time.Second):
-			// login waits for opMu, which the finishing flow holds; it must
-			// still be refused once the flow releases it.
 			if !strings.HasPrefix(c, "login") {
 				t.Fatalf("%s blocked during finish", c)
 			}
@@ -303,8 +290,6 @@ func TestQRFinishWindowRefusesOtherAuth(t *testing.T) {
 	m.Stop()
 }
 
-// TestQRCancelAfterForeignStateChangeKeepsIt: a flow that ends without login
-// only restores its previous lifecycle when nothing else changed it.
 func TestQRCancelAfterForeignStateChangeKeepsIt(t *testing.T) {
 	m, s, _ := qrManager(t)
 	s.code()
@@ -312,9 +297,7 @@ func TestQRCancelAfterForeignStateChangeKeepsIt(t *testing.T) {
 		t.Fatal(e)
 	}
 	lifecycleEvent(t, m)
-	nextEvent(t, m) // qr_code
-	// Something else installs a session under the flow (the situation the
-	// old code produced; replaceSession is the primitive every login uses).
+	nextEvent(t, m)
 	m.opMu.Lock()
 	m.replaceSession(m.newState("other"), "other")
 	m.opMu.Unlock()
@@ -327,7 +310,7 @@ func TestQRCancelAfterForeignStateChangeKeepsIt(t *testing.T) {
 	if _, ok := nextEvent(t, m).(protocol.QRCancelledEvent); !ok {
 		t.Fatal("want qr_cancelled")
 	}
-	noEvent(t, m) // no state_changed back to logged_out
+	noEvent(t, m)
 	m.mu.Lock()
 	lc := m.lifecycle
 	m.mu.Unlock()
@@ -337,8 +320,6 @@ func TestQRCancelAfterForeignStateChangeKeepsIt(t *testing.T) {
 	m.Stop()
 }
 
-// TestSnapshotReplaysQRCode: a client connecting while qr_pending gets the
-// live code after state_changed, with expires_in_ms counted down.
 func TestSnapshotReplaysQRCode(t *testing.T) {
 	m, s, _ := qrManager(t)
 	now := time.Unix(1_000_000, 0)
@@ -348,7 +329,7 @@ func TestSnapshotReplaysQRCode(t *testing.T) {
 		t.Fatal(e)
 	}
 	lifecycleEvent(t, m)
-	nextEvent(t, m) // qr_code
+	nextEvent(t, m)
 	now = now.Add(30 * time.Second)
 	snap := m.Snapshot()
 	if len(snap) != 2 {
@@ -375,8 +356,6 @@ func TestSnapshotReplaysQRCode(t *testing.T) {
 	}
 }
 
-// forwarded runs Forward with a recording sink and returns a reader of what
-// reached the sink so far.
 func forwarded(m *Manager) func() []any {
 	var mu sync.Mutex
 	var got []any
@@ -409,9 +388,6 @@ func eventNames(evs []any) string {
 	return strings.Join(names, ",")
 }
 
-// TestQREventsPrecedeResponse: with the production forwarder running, the
-// events start_qr_login / cancel_qr_login document have reached the sink by
-// the time the command returns.
 func TestQREventsPrecedeResponse(t *testing.T) {
 	m, s, _ := qrManager(t)
 	sink := forwarded(m)
@@ -428,7 +404,6 @@ func TestQREventsPrecedeResponse(t *testing.T) {
 	if got := eventNames(sink()); got != "state_changed:qr_pending,qr_code,qr_cancelled,state_changed:logged_out" {
 		t.Fatalf("events at cancel response: %s", got)
 	}
-	// Failure before the first code: both lifecycle events precede the error.
 	s.finish(remoteauth.Result{}, errors.New("dial gateway: refused"))
 	if _, e := m.Handle(context.Background(), req(t, `{"v":1,"id":52,"command":"start_qr_login"}`)); e == nil || e.Code != protocol.CodeQRUnavailable {
 		t.Fatalf("dial failure: %v", e)
@@ -438,9 +413,6 @@ func TestQREventsPrecedeResponse(t *testing.T) {
 	}
 }
 
-// TestConcurrentLoginAndQRLeaveOneSession races a token login against a QR
-// approval; whichever wins, exactly one session is installed and the other
-// is refused (qr_unavailable) or replaced cleanly, never orphaned.
 func TestConcurrentLoginAndQRLeaveOneSession(t *testing.T) {
 	m, s, _ := qrManager(t)
 	installed := 0
@@ -468,8 +440,6 @@ func TestConcurrentLoginAndQRLeaveOneSession(t *testing.T) {
 		_, loginErr = m.Handle(context.Background(), req(t, `{"v":1,"id":51,"command":"login","token":"x"}`))
 	}()
 	wg.Wait()
-	// Login either lost the guard (qr_unavailable) or, had it won, would have
-	// failed REST validation (no network) — it never installs anything here.
 	if loginErr == nil || (loginErr.Code != protocol.CodeQRUnavailable && loginErr.Code != protocol.CodeLoginFailed) {
 		t.Fatalf("login: %v", loginErr)
 	}

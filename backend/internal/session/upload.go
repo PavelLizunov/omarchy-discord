@@ -18,14 +18,10 @@ import (
 )
 
 const (
-	// progressInterval is the minimum spacing between upload_progress events
-	// for one file (the final event is always sent).
 	progressInterval = 100 * time.Millisecond
-	// maxUploadFiles is Discord's per-message attachment cap.
-	maxUploadFiles = 10
+	maxUploadFiles   = 10
 )
 
-// progressReader wraps a file and reports bytes read at a bounded rate.
 type progressReader struct {
 	r        io.Reader
 	total    int64
@@ -54,14 +50,12 @@ func (p *progressReader) Read(b []byte) (int, error) {
 	return n, err
 }
 
-// stagedFile is one validated upload.
 type stagedFile struct {
 	path string
 	name string
 	size int64
 }
 
-// validateUploadPath accepts an absolute path to a readable regular file.
 func validateUploadPath(p string) (stagedFile, *protocol.Error) {
 	if !filepath.IsAbs(p) {
 		return stagedFile{}, protocol.Errorf(protocol.CodeInvalidArgument, "upload path must be absolute")
@@ -81,7 +75,6 @@ func validateUploadPath(p string) (stagedFile, *protocol.Error) {
 	return stagedFile{path: p, name: filepath.Base(p), size: st.Size()}, nil
 }
 
-// underStagedDir reports whether p lives in the staged-uploads directory.
 func underStagedDir(stagedDir, p string) bool {
 	if stagedDir == "" {
 		return false
@@ -90,7 +83,6 @@ func underStagedDir(stagedDir, p string) bool {
 	return err == nil && rel != "." && !strings.HasPrefix(rel, "..")
 }
 
-// upload implements the upload command.
 func (m *Manager) upload(ctx context.Context, req *protocol.Request) (any, *protocol.Error) {
 	var p protocol.UploadParams
 	if e := req.Params(&p); e != nil {
@@ -173,8 +165,6 @@ func (m *Manager) upload(ctx context.Context, req *protocol.Request) (any, *prot
 	return protocol.SendResult{MessageID: msg.ID.String(), Nonce: data.Nonce}, nil
 }
 
-// progress wraps a file reader so upload_progress reaches the requesting
-// connection as the multipart body streams.
 func (m *Manager) progress(c socket.Client, uploadID int64, name string, r io.Reader, size int64) io.Reader {
 	return &progressReader{r: r, total: size, now: m.now, report: func(sent, total int64) {
 		c.Push(protocol.NewUploadProgress(uploadID, name, sent, total))

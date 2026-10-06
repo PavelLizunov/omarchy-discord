@@ -7,17 +7,6 @@ import "Api.js" as Api
 import "Keymap.js" as Keymap
 import "Markdown.js" as Markdown
 
-// The "mini player": a Ctrl+K quick switcher over channels and DMs, owned
-// by Service.qml so it works from any app (IpcHandler
-// quickshell.discord.switcher) and from inside the panel. Enter opens the
-// panel on the chosen channel through the normal summon payload path.
-//
-// Surface: a full-screen layer-shell overlay with a centered card, the
-// shell's own emoji-overlay shape. qs.Ui KeyboardPanel is the bar-popup
-// variant of this (it needs a bar anchor the Service does not have), so its
-// focus prime is replicated here: WlrKeyboardFocus.Exclusive for ~75 ms after
-// the surface maps (the only way a keyboard-summoned surface gets keys),
-// then OnDemand so pointer hit-testing on other outputs is released.
 Item {
   id: root
 
@@ -34,12 +23,9 @@ Item {
   readonly property int debounceMs: 80
   readonly property string fontFamily: Style.font.family
   readonly property color foreground: Color.popups.text
-  // The overlay card is a popup surface: guard the secondary text against
-  // that pair, not the panel background.
   readonly property color muted: Api.secondaryColor(Color.muted, Color.popups.text, Color.popups.background)
   readonly property bool loggedOut: !!(service && service.loggedOut)
   readonly property bool offline: !service || !service.connected
-  // Rows: backend entries, or a single "Log in" row while logged out.
   readonly property var rows: {
     if (loggedOut) return [{ kind: "login" }]
     var out = []
@@ -97,7 +83,6 @@ Item {
     return opened ? close() : open()
   }
 
-  // Screen hosting the open panel when there is one, else the default.
 
   function runQuery() {
     if (!service) return
@@ -132,8 +117,6 @@ Item {
     close()
     if (row.kind === "login") { service.openPanel({}); return }
     if (!row.id) return
-    // hide+summon inside openPanel remaps an already-open panel; the
-    // payload is the same {channel_id} the bar's middle click sends.
     service.openPanel({ channel_id: row.id })
   }
 
@@ -163,7 +146,6 @@ Item {
     onTriggered: root.runQuery()
   }
 
-  // KeyboardPanel's prime: Exclusive briefly once the surface is mapped.
 
     Rectangle {
       anchors.fill: parent
@@ -189,8 +171,6 @@ Item {
 
       MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons }
 
-      // Keys go to the search field first; everything the switcher owns is
-      // taken here before the field sees it (BeforeItem on the field itself).
       Column {
         id: contentColumn
         anchors.fill: parent

@@ -4,9 +4,6 @@ import Quickshell.Io
 
 import "Api.js" as Api
 
-// Private Unix-socket client for the Discord backend. Copied from
-// quickshell.spotify's BackendClient: a failed connect leaves Quickshell's
-// Socket dead, so each retry recreates it through a Loader.
 Item {
   id: root
 
@@ -23,9 +20,6 @@ Item {
   property var pending: ({})
   property int reconnectAttempt: 0
 
-  // Same location the backend binds. QML cannot learn the uid, so without
-  // XDG_RUNTIME_DIR there is no trustworthy fallback (never world-writable
-  // /tmp): the path stays empty and the client refuses to connect.
   readonly property string socketPath: {
     var runtime = String(Quickshell.env("XDG_RUNTIME_DIR") || "")
     return runtime ? runtime + "/omarchy-discord/backend.sock" : ""
@@ -83,7 +77,6 @@ Item {
     if (message.type !== "response") return
     var id = String(message.id || "")
     var callback = pending[id]
-    // Malformed requests are answered with id 0; tolerate unknown ids.
     if (callback === undefined) return
     var nextPending = ({})
     for (var key in pending) if (key !== id) nextPending[key] = pending[key]
@@ -112,8 +105,6 @@ Item {
 
   onConnectedChanged: {
     if (connected) reconnectAttempt = 0
-    // A backend restart drops the socket while `wanted` stays true; fail every
-    // in-flight request so callers can clear their busy state.
     else resetPending("The Discord backend disconnected")
   }
 
@@ -127,20 +118,14 @@ Item {
         onRead: function(line) { root.handleLine(line) }
       }
       onConnectionStateChanged: {
-        // Unix-socket connects complete synchronously, before the Loader has
-        // published this item, so defer the greeting one turn.
         if (connected) {
-          // Capture both now: if the Loader tears this Socket down before the
-          // deferred call runs, its context object is gone and `root` is undefined.
           var client = root
           var sock = this
           Qt.callLater(function() {
-            // A plugin reload can destroy root/sock between scheduling and
-            // running; destroyed wrappers throw on access, so guard with try.
             try {
               if (client && sock && client.activeSocket === sock && sock.connected)
                 client.sendCommand("hello", null, null)
-            } catch (e) { /* torn down during reload; the next Socket greets */ }
+            } catch (e) {}
           })
         } else root.lifecycle = ""
       }

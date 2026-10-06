@@ -1,8 +1,3 @@
-// Package media caches Discord CDN downloads in a size-capped directory and
-// hands local paths to the client. Fetch answers immediately — a hit returns
-// the path, a miss starts a background download that reports completion with a
-// media_ready event. Only allowlisted hosts are ever contacted, redirects
-// included.
 package media
 
 import (
@@ -26,10 +21,8 @@ import (
 	"github.com/mattcalayo/omarchy-discord/backend/internal/redact"
 )
 
-// DefaultCapMB is the default LRU cap.
 const DefaultCapMB = 512
 
-// AllowedHosts are the only hosts fetched by default.
 var AllowedHosts = []string{"cdn.discordapp.com", "media.discordapp.net"}
 
 const (
@@ -41,10 +34,8 @@ const (
 	keyLen             = sha256.Size * 2
 )
 
-// sizedPrefixes are the CDN path families that honour a ?size= hint.
 var sizedPrefixes = []string{"/avatars/", "/emojis/", "/icons/", "/app-icons/", "/banners/"}
 
-// extByType maps the content types we serve to their file extension.
 var extByType = map[string]string{
 	"image/png":  ".png",
 	"image/jpeg": ".jpg",
@@ -57,24 +48,21 @@ var extByType = map[string]string{
 	"audio/ogg":  ".ogg",
 }
 
-// Options configures a Cache.
 type Options struct {
-	Dir         string       // cache dir; created 0700 by New
-	CapMB       int          // 0 → DefaultCapMB
-	Emit        func(ev any) // receives protocol.MediaReadyEvent values; required
-	Hosts       []string     // nil → AllowedHosts
-	AllowHTTP   bool         // tests only; otherwise the scheme must be https
-	Concurrency int          // 0 → 4
-	Client      *http.Client // optional base; New copies it and installs its own CheckRedirect
+	Dir         string
+	CapMB       int
+	Emit        func(ev any)
+	Hosts       []string
+	AllowHTTP   bool
+	Concurrency int
+	Client      *http.Client
 }
 
-// entry is one indexed cache file.
 type entry struct {
 	name string
 	size int64
 }
 
-// Cache is a concurrent, LRU-evicted directory of downloaded media.
 type Cache struct {
 	dir       string
 	emit      func(ev any)
@@ -91,7 +79,6 @@ type Cache struct {
 	inflight map[string]struct{}
 }
 
-// New creates the cache directory and returns a ready cache.
 func New(o Options) (*Cache, error) {
 	if o.Dir == "" {
 		return nil, errors.New("media: Dir is required")
@@ -141,10 +128,8 @@ func New(o Options) (*Cache, error) {
 	return c, nil
 }
 
-// Dir returns the cache directory.
 func (c *Cache) Dir() string { return c.dir }
 
-// SetCapMB changes the cap; it takes effect at the next eviction pass.
 func (c *Cache) SetCapMB(mb int) {
 	if mb <= 0 {
 		return
@@ -152,16 +137,12 @@ func (c *Cache) SetCapMB(mb int) {
 	c.setCapBytes(int64(mb) << 20)
 }
 
-// setCapBytes sets the cap in bytes (tests need caps smaller than a megabyte).
 func (c *Cache) setCapBytes(n int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.capBytes = n
 }
 
-// Fetch returns the cached path for rawURL, or reports a miss and downloads it
-// in the background. ctx bounds the caller's request only: the download outlives
-// it, since the connection may drop before the bytes arrive.
 func (c *Cache) Fetch(ctx context.Context, rawURL string, size int) (protocol.FetchMediaResult, *protocol.Error) {
 	var zero protocol.FetchMediaResult
 	if rawURL == "" {
@@ -197,7 +178,6 @@ func (c *Cache) Fetch(ctx context.Context, rawURL string, size int) (protocol.Fe
 	return protocol.FetchMediaResult{Cached: false}, nil
 }
 
-// allowed reports whether u is on the allowlist and uses a permitted scheme.
 func (c *Cache) allowed(u *url.URL) bool {
 	if u.Scheme != "https" && !(c.allowHTTP && u.Scheme == "http") {
 		return false
@@ -214,7 +194,6 @@ func (c *Cache) allowed(u *url.URL) bool {
 	return false
 }
 
-// checkRedirect refuses to follow a redirect off the allowlist.
 func (c *Cache) checkRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= maxRedirects {
 		return errors.New("too many redirects")
@@ -225,14 +204,11 @@ func (c *Cache) checkRedirect(req *http.Request, via []*http.Request) error {
 	return nil
 }
 
-// cacheKey is the hex sha256 of the URL and its size hint.
 func cacheKey(rawURL string, size int) string {
 	sum := sha256.Sum256([]byte(rawURL + "\x00" + strconv.Itoa(size)))
 	return hex.EncodeToString(sum[:])
 }
 
-// sizedURL appends the size hint on the CDN paths that support it; every other
-// URL is fetched exactly as given.
 func sizedURL(u *url.URL, rawURL string, size int) string {
 	if size <= 0 || u.RawQuery != "" {
 		return rawURL
@@ -247,8 +223,6 @@ func sizedURL(u *url.URL, rawURL string, size int) string {
 	return rawURL
 }
 
-// download fetches one entry and emits its media_ready, keyed by the URL the
-// caller asked for rather than the sized one it resolved to.
 func (c *Cache) download(key, rawURL, fetchURL string) {
 	c.sem <- struct{}{}
 	defer func() { <-c.sem }()
@@ -272,7 +246,6 @@ func (c *Cache) download(key, rawURL, fetchURL string) {
 	c.emit(protocol.NewMediaReady(rawURL, true, path, ""))
 }
 
-// get downloads fetchURL into the cache directory and indexes it.
 func (c *Cache) get(ctx context.Context, key, fetchURL string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fetchURL, nil)
 	if err != nil {
@@ -327,8 +300,6 @@ func (c *Cache) get(ctx context.Context, key, fetchURL string) (string, error) {
 	return path, nil
 }
 
-// extFor picks the file extension from the content type, falling back to the
-// URL's own extension when the type is unknown.
 func extFor(contentType, rawURL string) string {
 	ct := strings.ToLower(strings.TrimSpace(contentType))
 	if i := strings.IndexByte(ct, ';'); i >= 0 {
@@ -353,7 +324,6 @@ func extFor(contentType, rawURL string) string {
 	return ext
 }
 
-// indexLocked scans the cache directory once, dropping leftover temp files.
 func (c *Cache) indexLocked() {
 	if c.indexed {
 		return
@@ -386,7 +356,6 @@ func (c *Cache) indexLocked() {
 	}
 }
 
-// isKeyName reports whether name starts with a cache key.
 func isKeyName(name string) bool {
 	if len(name) < keyLen {
 		return false
@@ -395,8 +364,6 @@ func isKeyName(name string) bool {
 	return err == nil
 }
 
-// evictLocked deletes oldest-first until the cache fits its cap, never touching
-// the entry just written.
 func (c *Cache) evictLocked(keep string) {
 	for c.total > c.capBytes {
 		var (
@@ -427,7 +394,6 @@ func (c *Cache) evictLocked(keep string) {
 	}
 }
 
-// cause unwraps the transport's *url.Error so the message never echoes the URL.
 func cause(err error) error {
 	var ue *url.Error
 	if errors.As(err, &ue) && ue.Err != nil {

@@ -4,19 +4,6 @@ import Quickshell
 
 import "Keymap.js" as Keymap
 
-// Offscreen contract harness for the panel's keyboard and guild-entry
-// behaviour. `components/harness/run-panel.sh` builds a scratch config root of
-// symlinks next to the shell's Commons/Ui, points XDG_RUNTIME_DIR at a scratch
-// directory (so the mounted Service can never reach the live backend socket)
-// and runs this with QT_QPA_PLATFORM=offscreen. Nothing is injected into the
-// Wayland session; every key is a synthesized event through Panel.dispatchKey.
-//
-// Two halves:
-//   * Panel.qml against MockService — the Esc ladder and what entering a guild
-//     asks the service to do.
-//   * the real Service.qml with no socket — enterGuild / resolveGuildEntry:
-//     remembered channel, the general and first-channel fallbacks, the parked
-//     retry, and the stale guards.
 ShellRoot {
   id: harness
 
@@ -48,21 +35,18 @@ ShellRoot {
     return event.accepted
   }
 
-  // A modifier chord addressed by key code (the voice chords carry no text).
   function chord(key, modifiers) {
     var event = { key: key, text: "", modifiers: modifiers, accepted: false }
     panel.dispatchKey(event)
     return event.accepted
   }
 
-  // A guild with a "general", one without, and a DM list.
   function fixtures() {
     mock.guilds = [
       { id: "g1", name: "First", kind: "guild" },
       { id: "g2", name: "Second", kind: "guild" }
     ]
     mock.dms = [{ id: "d1", name: "ada", type: "dm" }]
-    // Two people in the lounge, one of them talking.
     mock.voiceMembers = {
       g1: [{ channel_id: "c-voice", users: [
         { id: "u1", username: "ada", display_name: "Ada Lovelace", avatar_url: "" },
@@ -84,11 +68,7 @@ ShellRoot {
     }
   }
 
-  // --- Panel.qml + MockService ---
   function runPanelChecks() {
-    // open() / close() route through enter() / leave() via onOpenedChanged;
-    // with no `persistentWindow` on the mock the panel is in On demand mode,
-    // so `opened` is still the host-driven flag.
     console.log("Panel.qml — window lifecycle")
     mock.reset()
     panel.close()
@@ -128,8 +108,6 @@ ShellRoot {
     press("l")
     check("l enters the guild too", mock.lastCall("enterGuild"), "g1")
 
-    // The guild that already owns the open channel: re-entering it must not
-    // disturb the timeline.
     mock.reset()
     mock.selectedGuildId = "g1"
     mock.currentChannelId = "c-random"
@@ -153,7 +131,6 @@ ShellRoot {
     check("Enter on a voice row joins it", mock.lastCall("voiceJoin"), "c-voice")
     check("and never opens it as a channel", mock.callCount("showChannel"), 0)
 
-    // Already in that call: Enter is the way to the call bar, not a re-join.
     mock.reset()
     mock.voice = { status: "connected", guildId: "g1", channelId: "c-voice",
       muted: false, deafened: false, error: "" }
@@ -167,8 +144,6 @@ ShellRoot {
     check("Esc leaves the call bar", press("Escape"), true)
     check("and the call bar no longer has focus", panel.callBarFocused, false)
 
-    // A failed call keeps its guild and channel ids: the row is not joined
-    // and Enter on it retries the join instead of parking on the error.
     mock.reset()
     mock.voice = { status: "error", guildId: "g1", channelId: "c-voice",
       muted: false, deafened: false, error: "no audio device" }
@@ -179,9 +154,6 @@ ShellRoot {
     check("Enter on a failed call retries the join", mock.lastCall("voiceJoin"), "c-voice")
     check("and does not park on the call bar", panel.callBarFocused, false)
 
-    // The bar can vanish under the keyboard: hanging up while it holds focus
-    // from a zone that is not the sidebar must hand the focus back, or every
-    // zone key is dead until the next Tab.
     mock.reset()
     mock.currentChannelId = "c-general"
     mock.voice = { status: "connected", guildId: "g1", channelId: "c-voice",
@@ -215,17 +187,12 @@ ShellRoot {
     panel.zone = "sidebar"
     panel.column = "rail"
     var readyHost = panel.controls.parent
-    // The host must reserve the row's full height, or the focus ring's bottom
-    // edge lands on the Timeline pane's border.
     check("the host reserves the whole controls row",
       panel.controls.parent.height >= panel.controls.height, true)
     var reached = false
     for (var i = 0; i < 12 && !reached; i++) { press("Tab"); reached = panel.buttonFocused }
     check("Tab reaches the panel controls while ready", reached, true)
 
-    // The channel-title row hosts the controls only while it can still show a
-    // channel name. Squeezing them in regardless pushes the row off the left
-    // edge of the timeline column, over the channel list and the rail.
     mock.currentChannelId = "c-general"
     mock.membersWanted = true
     check("the member pane never squeezes the channel name out",
@@ -249,7 +216,6 @@ ShellRoot {
     mock.showStructure = true
   }
 
-  // --- the real Service.qml, no socket ---
   function runServiceChecks() {
     console.log("Service.qml — guild entry (CHANGE B)")
     service.setUiVisible("full-panel", true)
@@ -280,7 +246,6 @@ ShellRoot {
     service.enterGuild("g1")
     check("an unopenable memory falls back too", service.currentChannelId, "c-general")
 
-    // Channels still loading: the intent parks and the response resolves it.
     service.currentChannelId = ""
     service.lastChannels = [{ g: "g3", c: "c-late" }]
     service.channelsLoading = { g3: true }
@@ -296,7 +261,6 @@ ShellRoot {
     check("the response resolves the parked entry", service.currentChannelId, "c-late")
     check("and unparks it", service.pendingGuildEntry, "")
 
-    // A guild the user has navigated away from must never fire.
     service.currentChannelId = ""
     service.channelsLoading = { g4: true }
     service.selectedGuildId = "g4"
@@ -306,7 +270,6 @@ ShellRoot {
     check("navigating away drops the parked entry", service.pendingGuildEntry, "")
     check("and opens nothing", service.currentChannelId, "")
 
-    // A closed panel must never have a channel opened behind it.
     service.setUiVisible("full-panel", false)
     service.selectedGuildId = "g1"
     service.lastChannels = [{ g: "g1", c: "c-random" }]
@@ -314,7 +277,6 @@ ShellRoot {
     check("a closed panel opens nothing", service.currentChannelId, "")
     service.setUiVisible("full-panel", true)
 
-    // DMs: remembered only, never a default.
     service.currentChannelId = ""
     service.lastChannels = []
     service.selectedGuildId = "dms"
@@ -324,7 +286,6 @@ ShellRoot {
     service.enterGuild("dms")
     check("DMs open the remembered conversation", service.currentChannelId, "d1")
 
-    // Teardown drops a parked intent.
     service.channelsLoading = { g5: true }
     service.selectedGuildId = "g5"
     service.enterGuild("g5")
@@ -343,7 +304,6 @@ ShellRoot {
       [{ g: "g1", c: "c-general" }, { g: "g2", c: "c-chat" }])
 
     console.log("Service.qml — voice state and events")
-    // state_changed carries protocol.State.voice on every change.
     service.applyState({ lifecycle: "connecting", generation: 500,
       voice: { status: "connected", guild_id: "g1", channel_id: "c-voice",
         muted: true, deafened: false, error: "" } })
@@ -361,8 +321,6 @@ ShellRoot {
     check("an empty channel has none", service.voiceUsers("g1", "c-general").length, 0)
     check("an unknown guild has none", service.voiceUsers("g9", "c-voice").length, 0)
 
-    // A reconnect Snapshot pushes one voice_members per occupied guild: each
-    // merges into the map, so the last one does not wipe the others.
     service.handleEvent("voice_members", { guild_id: "g2", channels: [
       { channel_id: "c-chat", users: [{ id: "u2", username: "lin", display_name: "Lin", avatar_url: "" }] }
     ] })
@@ -374,7 +332,6 @@ ShellRoot {
     service.handleEvent("voice_speaking", { user_id: "u1", speaking: false })
     check("and unmarks it", service.speaking["u1"] === undefined, true)
 
-    // Leaving the call clears every speaker, whatever the backend sent.
     service.handleEvent("voice_speaking", { user_id: "u1", speaking: true })
     service.applyState({ lifecycle: "connecting", generation: 501,
       voice: { status: "idle", guild_id: null, channel_id: null,
@@ -400,8 +357,6 @@ ShellRoot {
   Service {
     id: service
     shell: null
-    // No __sourceDir on purpose: an empty pluginDir keeps DaemonManager inert,
-    // so `wanted` never goes true and no socket is ever opened.
     manifest: ({ id: "quickshell.discord" })
   }
 
@@ -412,7 +367,6 @@ ShellRoot {
     service: mock
   }
 
-  // Let the panel window map and every binding settle before asserting.
   Timer {
     interval: 400
     running: true

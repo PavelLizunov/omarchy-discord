@@ -1,5 +1,3 @@
-// Unit test for the pure Api.js helpers behind the per-guild last-visited
-// channel. Run: node --test components/harness/api.test.js
 const test = require("node:test")
 const assert = require("node:assert/strict")
 const Api = require("../../Api.js")
@@ -14,7 +12,6 @@ test("parseLastChannels tolerates garbage", () => {
   assert.deepEqual(Api.parseLastChannels("null"), [])
   assert.deepEqual(Api.parseLastChannels('[null,{"g":"1"},{"c":"2"},{"g":"1","c":"2"}]'),
     [{ g: "1", c: "2" }])
-  // Numeric snowflakes survive as strings (JSON would lose 64-bit precision).
   assert.deepEqual(Api.parseLastChannels('[{"g":1,"c":2}]'), [{ g: "1", c: "2" }])
 })
 
@@ -27,9 +24,7 @@ test("parseLastChannels truncates at the cap", () => {
 test("bumpLastChannel returns the same reference when nothing moved", () => {
   const list = [{ g: "1", c: "10" }, { g: "2", c: "20" }]
   assert.equal(Api.bumpLastChannel(list, "1", "10"), list)
-  // A different channel in the same guild is a move, not a no-op.
   assert.notEqual(Api.bumpLastChannel(list, "1", "11"), list)
-  // Missing ids never write.
   assert.equal(Api.bumpLastChannel(list, "", "10"), list)
   assert.equal(Api.bumpLastChannel(list, "1", ""), list)
 })
@@ -70,7 +65,6 @@ const guild = [
 
 test("guildEntryChannel prefers the remembered channel", () => {
   assert.equal(Api.guildEntryChannel(guild, "4", true), "4")
-  // A remembered thread resolves: threads are only in the raw list.
   assert.equal(Api.guildEntryChannel(guild, "7", true), "7")
 })
 
@@ -95,7 +89,6 @@ test("guildEntryChannel defaults to the first openable row without a general", (
 test("guildEntryChannel never defaults to a thread", () => {
   const rows = [{ id: "7", name: "a thread", type: "thread", parent_id: "1" }, ch("8", "chat")]
   assert.equal(Api.guildEntryChannel(rows, "", true), "8")
-  // Threads only — nothing to open by default.
   assert.equal(Api.guildEntryChannel([rows[0]], "", true), "")
 })
 
@@ -117,14 +110,12 @@ test("voice channels are visible and selectable, stages are neither", () => {
   assert.ok(!rows.includes("6"), "a stage channel stays hidden")
   assert.equal(Api.isSelectableChannel(ch("2", "voice-lounge", "voice")), true)
   assert.equal(Api.isSelectableChannel(ch("6", "stage", "stage")), false)
-  // Enter joins a voice channel; it is still not a channel to open.
   assert.equal(Api.isOpenableChannel(ch("2", "voice-lounge", "voice")), false)
 })
 
 test("a category of nothing but voice channels now stays", () => {
   const rows = Api.visibleChannels([ch("cat", "Voice", "category"), ch("2", "lounge", "voice")])
   assert.deepEqual(rows.map(r => r.id), ["cat", "2"])
-  // One of stages only still goes.
   assert.deepEqual(Api.visibleChannels([ch("cat", "Stages", "category"), ch("6", "s", "stage")]), [])
 })
 

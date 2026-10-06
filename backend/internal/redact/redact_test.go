@@ -34,8 +34,6 @@ func TestRedact(t *testing.T) {
 	}
 }
 
-// The rules are JSON-safe: even when (mis)applied to a serialized line they
-// never consume quotes or escape backslashes, so the result stays valid JSON.
 func TestRedactKeepsJSONValid(t *testing.T) {
 	lines := []string{
 		`{"name":"Authorization Team","topic":"x"}`,

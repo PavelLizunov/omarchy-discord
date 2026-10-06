@@ -19,18 +19,13 @@ import (
 )
 
 const (
-	// openTail is how many messages open_channel returns.
-	openTail = 50
-	// historyDefault / historyMax bound the history page size.
+	openTail       = 50
 	historyDefault = 50
 	historyMax     = 100
-	// avatarSize is the CDN size hint appended to avatar URLs.
-	avatarSize = 64
-	// previewRunes caps reply previews.
-	previewRunes = 120
+	avatarSize     = 64
+	previewRunes   = 120
 )
 
-// wireTime formats a Discord timestamp as RFC 3339 UTC with milliseconds.
 func wireTime(t time.Time) string {
 	return t.UTC().Format("2006-01-02T15:04:05.000Z07:00")
 }
@@ -45,9 +40,6 @@ func sizedURL(u string, size int) string {
 	return u + fmt.Sprintf("?size=%d", size)
 }
 
-// displayName resolves guild nick > global display name > username using only
-// the cache (never REST: member fetches are rate-limited and, for user
-// accounts, a flag risk).
 func displayName(n *ningen.State, guildID discord.GuildID, u discord.User) string {
 	if guildID.IsValid() {
 		if m, err := n.Cabinet.Member(guildID, u.ID); err == nil && m.Nick != "" {
@@ -67,9 +59,6 @@ func wireAuthor(n *ningen.State, guildID discord.GuildID, u discord.User) protoc
 	}
 }
 
-// preview flattens a message into one short plain-text line for reply quotes.
-// Markdown is left as-is (collapsed whitespace only) — parsing it is the QML
-// renderer's job and ningen's discordmd can panic on hostile input.
 func preview(msg *discord.Message) string {
 	text := strings.Join(strings.Fields(msg.Content), " ")
 	if text == "" {
@@ -92,8 +81,6 @@ func preview(msg *discord.Message) string {
 	return text
 }
 
-// isSystem reports whether a message type renders as a system line rather
-// than user content.
 func isSystem(t discord.MessageType) bool {
 	switch t {
 	case discord.DefaultMessage, discord.InlinedReplyMessage, discord.ChatInputCommandMessage, discord.ContextMenuCommand:
@@ -102,8 +89,6 @@ func isSystem(t discord.MessageType) bool {
 	return true
 }
 
-// systemLine renders a non-default message type as one plain-text line that
-// includes the actor's display name, so QML can show it without a header.
 func systemLine(n *ningen.State, msg *discord.Message) string {
 	who := displayName(n, msg.GuildID, msg.Author)
 	target := ""
@@ -171,8 +156,6 @@ func systemLine(n *ningen.State, msg *discord.Message) string {
 	return fmt.Sprintf("%s sent a system message (type %d).", who, msg.Type)
 }
 
-// replyTo resolves the reply reference from the inline referenced message or
-// the cache; an unknown target keeps the id with empty name/preview.
 func replyTo(n *ningen.State, msg *discord.Message) *protocol.ReplyTo {
 	ref := msg.Reference
 	if ref == nil || !ref.MessageID.IsValid() || ref.Type == discord.MessageReferenceTypeForward {
@@ -198,8 +181,6 @@ func replyTo(n *ningen.State, msg *discord.Message) *protocol.ReplyTo {
 	return out
 }
 
-// WireMessage maps a cached/gateway message to the wire shape. n should be an
-// offline state: every lookup is cache-only.
 func WireMessage(n *ningen.State, msg *discord.Message) protocol.Message {
 	m := protocol.Message{
 		ID:          msg.ID.String(),
@@ -255,7 +236,6 @@ func WireMessage(n *ningen.State, msg *discord.Message) protocol.Message {
 	return m
 }
 
-// wireMessages maps messages into an ascending (oldest→newest) wire slice.
 func wireMessages(n *ningen.State, msgs []discord.Message) []protocol.Message {
 	sorted := append([]discord.Message(nil), msgs...)
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
@@ -266,7 +246,6 @@ func wireMessages(n *ningen.State, msgs []discord.Message) []protocol.Message {
 	return out
 }
 
-// channelName is the sidebar name of a channel (DMs: recipient names).
 func channelName(n *ningen.State, chID discord.ChannelID) string {
 	ch, err := n.Cabinet.Channel(chID)
 	if err != nil {
@@ -283,7 +262,6 @@ func parseSnowflake(s, field string) (discord.Snowflake, *protocol.Error) {
 	return sf, nil
 }
 
-// discordError maps a REST failure to a protocol error.
 func discordError(err error) *protocol.Error {
 	var herr *httputil.HTTPError
 	if errors.As(err, &herr) {
@@ -299,24 +277,18 @@ func discordError(err error) *protocol.Error {
 	return protocol.Errorf(protocol.CodeDiscordError, "%v", err)
 }
 
-// Message fetchers; tests replace them to avoid the network.
 func fetchTail(ctx context.Context, n *ningen.State, chID discord.ChannelID, limit uint) ([]discord.Message, error) {
-	// Cache-aware: fills the cabinet on a cold channel.
 	return n.WithContext(ctx).Messages(chID, limit)
 }
 
 func fetchBefore(ctx context.Context, n *ningen.State, chID discord.ChannelID, before discord.MessageID, limit uint) ([]discord.Message, error) {
-	// Plain REST: deep pages never enter the cache.
 	return n.Client.WithContext(ctx).MessagesBefore(chID, before, limit)
 }
 
-// fetchChannel is the one REST lookup open_channel makes for an uncached
-// thread (GET /channels/{id}).
 func fetchChannel(ctx context.Context, n *ningen.State, chID discord.ChannelID) (*discord.Channel, error) {
 	return n.Client.WithContext(ctx).Channel(chID)
 }
 
-// openChannel implements the open_channel command.
 func (m *Manager) openChannel(ctx context.Context, req *protocol.Request) (any, *protocol.Error) {
 	var p protocol.OpenChannelParams
 	if e := req.Params(&p); e != nil {
@@ -334,8 +306,6 @@ func (m *Manager) openChannel(ctx context.Context, req *protocol.Request) (any, 
 	off := n.Offline()
 	ch, err := off.Cabinet.Channel(chID)
 	if err != nil {
-		// A thread the client learned of (a thread-starter system message,
-		// a link) may not be cached; ask Discord once and remember it.
 		fetched, ferr := m.fetchChannel(ctx, n, chID)
 		if ferr != nil || fetched == nil || !isThread(fetched.Type) {
 			return nil, protocol.Errorf(protocol.CodeUnknownChannel, "channel %s is not visible to this account", p.ChannelID)
@@ -349,10 +319,6 @@ func (m *Manager) openChannel(ctx context.Context, req *protocol.Request) (any, 
 		}
 		n.MemberState.Subscribe(ch.GuildID)
 	}
-	// Register the open before fetching the tail so a message that lands
-	// during the fetch is routed to this connection rather than lost; the
-	// client dedupes by id if it also shows up in the tail. A failed open
-	// rolls the registration back unless the channel was already open.
 	c := socket.ClientFromContext(ctx)
 	wasOpen := false
 	if c != nil {
@@ -373,9 +339,6 @@ func (m *Manager) openChannel(ctx context.Context, req *protocol.Request) (any, 
 		rollback()
 		return nil, protocol.Errorf(protocol.CodeEmptyDMRefused, "refusing to open a DM with no history; send a message from the official client first")
 	}
-	// The cache-aware fetch can return more than asked for (a "tiny" channel
-	// hands back its whole store); keep the newest openTail so has_more keeps
-	// meaning "a full page came back".
 	if len(msgs) > openTail {
 		sort.SliceStable(msgs, func(i, j int) bool { return msgs[i].ID > msgs[j].ID })
 		msgs = msgs[:openTail]
@@ -387,7 +350,6 @@ func (m *Manager) openChannel(ctx context.Context, req *protocol.Request) (any, 
 	}, nil
 }
 
-// closeChannel implements the close_channel command.
 func (m *Manager) closeChannel(ctx context.Context, req *protocol.Request) (any, *protocol.Error) {
 	var p protocol.CloseChannelParams
 	if e := req.Params(&p); e != nil {
@@ -403,9 +365,6 @@ func (m *Manager) closeChannel(ctx context.Context, req *protocol.Request) (any,
 	return protocol.EmptyResult{}, nil
 }
 
-// history implements the history command: the page is served from the cache
-// when it holds a full page older than before_id, else from REST without
-// touching the cache.
 func (m *Manager) history(ctx context.Context, req *protocol.Request) (any, *protocol.Error) {
 	var p protocol.HistoryParams
 	if e := req.Params(&p); e != nil {
@@ -443,7 +402,7 @@ func (m *Manager) history(ctx context.Context, req *protocol.Request) (any, *pro
 
 	var page []discord.Message
 	if cached, err := off.Cabinet.Messages(chID); err == nil || errors.Is(err, store.ErrNotFound) {
-		for _, msg := range cached { // latest → oldest
+		for _, msg := range cached {
 			if msg.ID < before {
 				page = append(page, msg)
 				if len(page) == limit {
@@ -464,9 +423,6 @@ func (m *Manager) history(ctx context.Context, req *protocol.Request) (any, *pro
 	return protocol.HistoryResult{Messages: wireMessages(off, page), HasMore: len(page) >= limit}, nil
 }
 
-// ack implements the ack command. The message must be cached: ningen only
-// sends the REST ack for cached, non-self messages, and we would rather say so
-// than silently move the local marker.
 func (m *Manager) ack(req *protocol.Request) (any, *protocol.Error) {
 	var p protocol.AckParams
 	if e := req.Params(&p); e != nil {

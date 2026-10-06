@@ -1,14 +1,3 @@
-// Package remoteauth implements Discord's QR-code "remote auth" login flow,
-// ported from discordo (internal/ui/login/qr/msg.go) and cross-checked against
-// the community protocol documentation.
-//
-// The flow: dial the remote-auth gateway → hello → init (fresh RSA-2048 public
-// key) → nonce_proof → pending_remote_init (fingerprint, rendered as a QR) →
-// pending_ticket (phone scanned; encrypted user payload) → pending_login
-// (ticket) → close the socket → exchange the ticket over REST → decrypt the
-// token. The private key only ever lives in memory for the duration of Run.
-//
-// Security: the returned token and the ticket never appear in errors or logs.
 package remoteauth
 
 import (
@@ -30,31 +19,19 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// GatewayURL is Discord's remote-auth gateway.
 const GatewayURL = "wss://remote-auth-gateway.discord.gg/?v=2"
 
-// Origin is required by the gateway; it rejects connections without it.
 const Origin = "https://discord.com"
 
-// DefaultUserAgent is a browser-like UA used when Options.UserAgent is empty.
 const DefaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
 
 var (
-	// ErrDeclined is returned when the user cancelled the login on the phone.
 	ErrDeclined = errors.New("remoteauth: login declined on phone")
-	// ErrExpired is returned when the QR code's lifetime (hello timeout_ms, or
-	// the gateway's 4003 close) lapsed before the phone approved the login.
-	ErrExpired = errors.New("remoteauth: QR code expired")
-	// ErrExchange is returned when the ticket exchange REST call fails. The
-	// wrapped detail never contains the ticket or token.
+	ErrExpired  = errors.New("remoteauth: QR code expired")
 	ErrExchange = errors.New("remoteauth: ticket exchange failed")
-	// ErrProtocol is returned for malformed or unexpected gateway traffic.
 	ErrProtocol = errors.New("remoteauth: protocol error")
 )
 
-// User is the account that scanned the QR code (decrypted pending_ticket
-// payload "id:discriminator:avatar:username"). AvatarHash is "" when the
-// gateway reports "0" (no avatar).
 type User struct {
 	ID            string
 	Discriminator string
@@ -62,35 +39,22 @@ type User struct {
 	Username      string
 }
 
-// Events receives progress callbacks. All calls happen on the goroutine that
-// called Run, before Run returns.
 type Events interface {
-	// QRCode reports the content to render as a QR (https://discord.com/ra/<fingerprint>)
-	// and how long it stays valid.
 	QRCode(url string, fingerprint string, expiresIn time.Duration)
-	// Scanned reports that a phone scanned the code; the user must still confirm.
 	Scanned(u User)
-	// Approved reports that the user confirmed on the phone; the ticket exchange follows.
 	Approved()
 }
 
-// Result is a successful login.
 type Result struct {
 	Token string
 	User  User
 }
 
-// Options tunes Run. The zero value talks to Discord.
 type Options struct {
-	// UserAgent is sent on the websocket and the exchange request. Defaults to DefaultUserAgent.
-	UserAgent string
-	// GatewayURL overrides the websocket endpoint (tests). Defaults to GatewayURL.
+	UserAgent  string
 	GatewayURL string
-	// Dial overrides the websocket dialer (tests). Defaults to websocket.DefaultDialer.
-	Dial func(ctx context.Context, url string, header http.Header) (*websocket.Conn, error)
-	// Exchange overrides the ticket → encrypted_token REST exchange (tests).
-	// Defaults to arikawa's api.Client.ExchangeRemoteAuthTicket with browser headers.
-	Exchange func(ctx context.Context, ticket, fingerprint string) (encryptedToken string, err error)
+	Dial       func(ctx context.Context, url string, header http.Header) (*websocket.Conn, error)
+	Exchange   func(ctx context.Context, ticket, fingerprint string) (encryptedToken string, err error)
 }
 
 func (o Options) withDefaults() Options {
@@ -115,10 +79,6 @@ func (o Options) withDefaults() Options {
 	return o
 }
 
-// Run performs one complete remote-auth flow. It blocks until login succeeds,
-// the user declines on the phone (ErrDeclined), the code expires (ErrExpired),
-// ctx is cancelled (ctx.Err()), or a transport/protocol error occurs. The
-// websocket is closed on every exit path.
 func Run(ctx context.Context, ev Events, opts Options) (Result, error) {
 	opts = opts.withDefaults()
 
@@ -141,7 +101,6 @@ func Run(ctx context.Context, ev Events, opts Options) (Result, error) {
 
 	f := &flow{conn: conn, key: key, spki: spki, ev: ev}
 	ticket, fingerprint, err := f.run(ctx)
-	// Close before the REST exchange, on every path.
 	_ = conn.Close()
 	if err != nil {
 		return Result{}, err
@@ -158,14 +117,12 @@ func Run(ctx context.Context, ev Events, opts Options) (Result, error) {
 	return Result{Token: string(tokenBytes), User: f.user}, nil
 }
 
-// flow holds the per-connection state of the gateway dance.
 type flow struct {
-	conn *websocket.Conn
-	key  *rsa.PrivateKey
-	spki []byte
-	ev   Events
-	user User
-	// timeout is hello's timeout_ms; reported to Events.QRCode.
+	conn    *websocket.Conn
+	key     *rsa.PrivateKey
+	spki    []byte
+	ev      Events
+	user    User
 	timeout time.Duration
 }
 
@@ -174,11 +131,7 @@ type readResult struct {
 	err  error
 }
 
-// run drives the socket until pending_login and returns (ticket, fingerprint).
 func (f *flow) run(ctx context.Context) (string, string, error) {
-	// done is closed when run returns; Run then closes the socket, which
-	// fails the pending ReadMessage, and the reader must not block handing
-	// that (or a buffered message) to a loop that is no longer listening.
 	reads := make(chan readResult, 1)
 	done := make(chan struct{})
 	defer close(done)
@@ -262,8 +215,6 @@ func (f *flow) run(ctx context.Context) (string, string, error) {
 				}
 
 			case "heartbeat_ack":
-				// Nothing to do; a zombied connection surfaces as a read error
-				// or the expiry timer.
 
 			case "nonce_proof":
 				nonce, err := decryptB64(f.key, msg.EncryptedNonce)
@@ -311,7 +262,6 @@ func (f *flow) run(ctx context.Context) (string, string, error) {
 				return msg.Ticket, fingerprint, nil
 
 			default:
-				// Unknown ops are ignored, as discordo does.
 			}
 		}
 	}
@@ -322,8 +272,6 @@ func (f *flow) send(v any) error {
 	return f.conn.WriteJSON(v)
 }
 
-// gatewayMsg is the union of every inbound payload; the gateway sends flat
-// packets keyed by "op".
 type gatewayMsg struct {
 	Op                   string `json:"op"`
 	HeartbeatInterval    int    `json:"heartbeat_interval"`
@@ -334,7 +282,6 @@ type gatewayMsg struct {
 	Ticket               string `json:"ticket"`
 }
 
-// decryptB64 base64-decodes then RSA-OAEP-SHA256-decrypts.
 func decryptB64(key *rsa.PrivateKey, enc string) ([]byte, error) {
 	raw, err := base64.StdEncoding.DecodeString(enc)
 	if err != nil {
@@ -343,8 +290,6 @@ func decryptB64(key *rsa.PrivateKey, enc string) ([]byte, error) {
 	return rsa.DecryptOAEP(sha256.New(), nil, key, raw, nil)
 }
 
-// exchangeTicket POSTs /users/@me/remote-auth/login via arikawa with the
-// browser-ish headers discordo sends.
 func exchangeTicket(ctx context.Context, userAgent, ticket, fingerprint string) (string, error) {
 	client := api.NewClient("").WithContext(ctx)
 	client.UserAgent = userAgent
@@ -358,9 +303,6 @@ func exchangeTicket(ctx context.Context, userAgent, ticket, fingerprint string) 
 	return client.ExchangeRemoteAuthTicket(ticket)
 }
 
-// wrapExchangeErr reduces an exchange error to a static message plus, for
-// HTTP errors, the status code only — response bodies and request data never
-// propagate.
 func wrapExchangeErr(err error) error {
 	var httpErr *httputil.HTTPError
 	if errors.As(err, &httpErr) {

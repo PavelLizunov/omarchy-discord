@@ -7,25 +7,9 @@ import "../Api.js" as Api
 
 import "../Markdown.js" as Markdown
 
-// Virtualized message timeline: one focus zone with a roving cursor keyed by
-// message id. `messages` is a plain JS array ascending by id.
-//
-// Scroll stability. A ListView only keeps its scroll position across model
-// changes when the model reports real insertions, and an int model
-// (`model: rows.length`) reports a full reset instead, so this view keeps a
-// tiny ListModel of message ids (`idModel`) and diffs each new `messages`
-// array against it: history prepends become `insert(0, ...)` (the ListView
-// shifts its origin, visible rows do not move) and new messages become
-// `append(...)`. Anything else (channel switch, deletes, out-of-order data)
-// falls back to a reset bracketed by captureAnchor()/restoreAnchor().
-// Delegates resolve their message through `entries[mid]` (id-keyed), so they
-// never show a stale row while the ListView renumbers indices.
-// Stick-to-bottom is `pinned` (atYEnd after the last user-driven scroll),
-// re-applied whenever the content grows.
 FocusScope {
   id: timeline
 
-  // --- public interface (wave-2 integration relies on this) ---
   property var messages: []
   property bool hasMore: false
   property bool loading: false
@@ -33,27 +17,16 @@ FocusScope {
   property string selfId: ""
   property string lastReadMessageId: ""
   property bool active: false
-  // Someone is looking at this channel (timeline or composer zone focused):
-  // gates reachedBottom (ack-on-read). Defaults to `active`.
   property bool viewing: active
   property var ctx: ({})
   property string cursorMessageId: ""
-  // Own message armed for deletion by a first D; a second D within
-  // deleteArmMs emits deleteRequested, anything else disarms.
   property string armedDeleteId: ""
   readonly property int deleteArmMs: 3000
-  // Message ids whose spoiler attachments were revealed (Enter / click).
-  // Replaced wholesale; reset on channel change.
   property var revealed: ({})
-  // The one MessageRow holding a mouse selection. Selection lives in a
-  // per-message TextEdit, so it can never span two rows and at most one row
-  // can own it; QML nulls the reference when the delegate is destroyed, and
-  // releaseSelection() does the same on the way out.
   property var selectionOwner: null
   readonly property bool hasSelection: !!selectionOwner && selectionOwner.hasSelection
 
   signal requestHistory(string beforeId)
-  // `escape` is an illegal QML signal name (clashes with the JS global), hence:
   signal escapeRequested()
   signal moveZone(string direction)
   signal openLink(string url)
@@ -62,11 +35,9 @@ FocusScope {
   signal linkCopied()
   signal activateMessage(string messageId)
   signal reachedBottom()
-  // Message actions (R / D D / E on the cursor row).
   signal replyRequested(string messageId)
   signal deleteRequested(string messageId)
   signal reactRequested(string messageId)
-  // A reaction chip was clicked: add ours or remove it (Service decides).
   signal reactionToggled(string messageId, string emoji)
 
   function scrollToBottom() {
@@ -83,11 +54,6 @@ FocusScope {
     scrollToBottom()
   }
 
-  // Keep the cursor on a real row. When its message vanished (delete, a
-  // reload that replaced the window) and the view is scrolled up, move to
-  // the nearest surviving neighbour from the previous order (`previousIds`)
-  // instead of the newest row, which would be off-screen and make the next
-  // j/k fling to the bottom (and ack).
   function ensureCursor(previousIds) {
     if (!rows.length) { cursorMessageId = ""; return }
     if (indexOfId(cursorMessageId) >= 0) return
@@ -95,8 +61,6 @@ FocusScope {
     cursorMessageId = next || String(rows[rows.length - 1].id || "")
   }
 
-  // Nearest id to `id` in `oldIds` (later first, then earlier) that is still
-  // present in `rows`; "" when none.
   function neighbourId(oldIds, id) {
     if (!Array.isArray(oldIds) || !id) return ""
     var at = oldIds.indexOf(id)
@@ -110,7 +74,6 @@ FocusScope {
     return ""
   }
 
-  // --- internals ---
   readonly property color foreground: Color.foreground
   readonly property color muted: Api.secondaryColor(Color.muted, Color.foreground, Color.background)
   readonly property color accent: Color.accent
@@ -119,7 +82,6 @@ FocusScope {
   readonly property int historyThreshold: Style.space(120)
   readonly property int doubleTapMs: 400
 
-  // Mirror of `messages` that is only swapped together with idModel.
   property var rows: []
   property var ids: []
   property bool pinned: true
@@ -134,8 +96,6 @@ FocusScope {
   readonly property string newestId: rows.length
     ? String(rows[rows.length - 1].id || "") : ""
 
-  // Index of the first row after the last-read message, when a later message
-  // from someone else exists; -1 otherwise.
   readonly property int unreadIndex: {
     if (!lastReadMessageId || !rows.length) return -1
     var k = indexOfId(lastReadMessageId)
@@ -147,8 +107,6 @@ FocusScope {
     return -1
   }
 
-  // id -> { message, day, unread, grouped }. Rebuilt on every change of
-  // rows / lastReadMessageId / selfId; O(n), n is the loaded window.
   readonly property var entries: {
     var map = ({})
     var list = rows
@@ -196,7 +154,6 @@ FocusScope {
     return Qt.formatDate(d, "dddd d MMMM yyyy")
   }
 
-  // --- model sync ---
   function idRows(list, from, to) {
     var out = []
     for (var i = from; i < to; i++) out.push({ mid: list[i] })
@@ -213,11 +170,6 @@ FocusScope {
     var nextIds = []
     for (var i = 0; i < next.length; i++) nextIds.push(String(next[i] && next[i].id || ""))
     var oldIds = ids
-    // Capture from the old layout before anything moves; restoreAnchor()
-    // runs after the ListView has applied the change (bottom when pinned,
-    // else the first visible message body back at its previous offset). A
-    // ListView sitting exactly at its start shows inserted rows instead of
-    // holding position, so the insert path needs the restore too.
     captureAnchor()
     adjusting = true
     rows = next
@@ -225,7 +177,6 @@ FocusScope {
     var fast = oldIds.length > 0 && nextIds.length > 0
     var k = fast ? nextIds.indexOf(oldIds[0]) : -1
     if (fast && k >= 0 && k + oldIds.length <= nextIds.length && sameSlice(nextIds, k, oldIds)) {
-      // Prepend k, append the tail: delegates survive, indices shift.
       if (k > 0) idModel.insert(0, idRows(nextIds, 0, k))
       var tailFrom = k + oldIds.length
       if (tailFrom < nextIds.length) idModel.append(idRows(nextIds, tailFrom, nextIds.length))
@@ -238,9 +189,6 @@ FocusScope {
     Qt.callLater(restoreAnchor)
   }
 
-  // Delegate-local y of the MessageRow (below day divider / unread marker).
-  // The delegate is a Column, which positions children in polish, so force
-  // its layout first or a just-toggled divider reports a stale offset.
   function bodyOffset(item) {
     var delegate = item
     if (!delegate) return 0
@@ -258,9 +206,6 @@ FocusScope {
     anchorOffset = list.contentY - item.y - bodyOffset(item)
   }
 
-  // Applied right after a model change and again once delegate polish has
-  // settled (newly created rows above the viewport can still change height
-  // and shift everything below them).
   function restoreAnchor() {
     applyAnchor()
     settleTimer.restart()
@@ -290,7 +235,6 @@ FocusScope {
     }
   }
 
-  // --- cursor & scrolling ---
   function setCursorIndex(index) {
     if (!rows.length) return
     index = Math.max(0, Math.min(index, rows.length - 1))
@@ -317,8 +261,6 @@ FocusScope {
     requestHistoryNow(false)
   }
 
-  // First delegate index at or below content y (skips the header and row
-  // spacing); -1 when nothing is laid out there.
   function nearestIndexAt(y) {
     var step = Style.spacing.lg
     var limit = y + list.height
@@ -348,9 +290,6 @@ FocusScope {
     checkBottom()
   }
 
-  // Issue a history request for everything before the oldest loaded message.
-  // `dedupe` (scroll-triggered) suppresses repeats for the same oldest id;
-  // explicit key actions only require !loading.
   function requestHistoryNow(dedupe) {
     if (loading || !hasMore || !rows.length) return
     var beforeId = String(rows[0].id || "")
@@ -398,8 +337,6 @@ FocusScope {
     selectionOwner = item
   }
 
-  // Called from the delegate's destruction: a row scrolled out of the cache
-  // buffer must not leave the timeline believing it still holds a selection.
   function releaseSelection(item) {
     if (selectionOwner === item) selectionOwner = null
   }
@@ -409,10 +346,6 @@ FocusScope {
     selectionOwner = null
   }
 
-  // Ctrl+C. A rich-text TextEdit hands the selection back with Qt's own
-  // separators — U+2028 where the renderer emitted <br>, U+2029 at block
-  // boundaries — never "\n", so an unnormalised paste runs every line
-  // together in whatever app receives it.
   function copySelection() {
     if (!hasSelection) return
     var text = String(selectionOwner.selection).replace(/[\u2028\u2029]/g, "\n")
@@ -421,8 +354,6 @@ FocusScope {
     copied()
   }
 
-  // The clipboard wants the shareable URL, so unlike openCursorLink this
-  // never substitutes the cached local path.
   function copyLink(url) {
     var link = String(url || "")
     if (!link) return
@@ -435,9 +366,6 @@ FocusScope {
     copyLink(Markdown.firstLink(rows[cursorIndex]))
   }
 
-  // O: first link in the text, else the first attachment (opened from its
-  // cached local file when the media cache already has it, so it is instant
-  // and works offline), else the first embed URL.
   function openCursorLink() {
     var index = cursorIndex
     if (index < 0) return
@@ -463,7 +391,6 @@ FocusScope {
     revealed = next
   }
 
-  // Enter: uncover the row's spoiler images first, otherwise activate it.
   function activateCursor() {
     if (cursorIndex < 0) return
     if (hasCoveredSpoiler(rows[cursorIndex])) reveal(cursorMessageId)
@@ -480,7 +407,6 @@ FocusScope {
     if (armedDeleteId) armedDeleteId = ""
   }
 
-  // D on an own message arms; D again within the window deletes.
   function requestDelete() {
     var index = cursorIndex
     if (index < 0 || !isOwnRow(index)) return
@@ -504,9 +430,6 @@ FocusScope {
     var armed = armedDeleteId !== ""
     if (armed && text !== "D") disarmDelete()
 
-    // Ctrl+C copies the mouse selection (Y still copies the whole message).
-    // Every other Ctrl chord belongs to the panel (Ctrl+K, Ctrl+/), and so
-    // does Ctrl+C with nothing selected.
     if ((event.modifiers & Qt.ControlModifier) !== 0) {
       if (key !== Qt.Key_C || !hasSelection) return
       copySelection()
@@ -516,11 +439,7 @@ FocusScope {
 
     if (alt && key === Qt.Key_H) moveZone("left")
     else if (alt && key === Qt.Key_L) moveZone("right")
-    // Other Alt chords (Alt+Up/Down channel switching) belong to the panel.
     else if (alt) return
-    // Esc peels innermost-first and is consumed either way: the armed delete
-    // was already disarmed above, then the text selection (transient, visible
-    // and timeline-local), then the zone itself.
     else if (key === Qt.Key_Escape) {
       if (!armed) {
         if (hasSelection) clearSelection()
@@ -535,9 +454,6 @@ FocusScope {
     else if (key === Qt.Key_End || text === "G") focusNewest()
     else if (text === "g") { if (wasG) goTop(); else lastGAt = now }
     else if (key === Qt.Key_Return || key === Qt.Key_Enter) activateCursor()
-    // Message actions are the documented uppercase forms only (Keymap.js:
-    // R E D D Y O). Lowercase falls through to the panel, which keeps the
-    // "anywhere" keys honest — notably r, which reloads.
     else if (text === "Y") copyCursorMessage()
     else if (text === "O") openCursorLink()
     else if (text === "L") copyCursorLink()
@@ -599,9 +515,6 @@ FocusScope {
       anchors.fill: parent
       anchors.margins: frame.padding + Style.normalBorderWidth
       clip: true
-      // Deliberately not reused (CONVENTIONS §2 says reuseItems: true): a
-      // reused delegate re-lays out its Column/Flow in polish, so its height
-      // lands late and shifts every row below it, including the visible ones.
       reuseItems: false
       cacheBuffer: Style.space(150)
       boundsBehavior: Flickable.StopAtBounds
@@ -617,12 +530,9 @@ FocusScope {
         timeline.maybeRequestHistoryOnScroll()
       }
       onContentHeightChanged: if (timeline.pinned) Qt.callLater(timeline.stickIfPinned)
-      // The composer growing (chips, more lines) shrinks this view.
       onHeightChanged: if (timeline.pinned) Qt.callLater(timeline.stickIfPinned)
       onAtYEndChanged: timeline.checkBottom()
 
-      // Fixed height on purpose: a header that grows/shrinks with `loading`
-      // shifts every row right when history lands.
       header: Item {
         width: list.width
         height: Style.spacing.controlHeight
@@ -649,7 +559,6 @@ FocusScope {
         width: list.width
         spacing: Style.spacing.xxs
 
-        // Day divider
         Item {
           width: parent.width
           height: visible ? Style.spacing.controlHeight : 0
@@ -682,7 +591,6 @@ FocusScope {
           }
         }
 
-        // Unread marker
         Item {
           width: parent.width
           height: visible ? Style.spacing.lg + Style.spacing.xs : 0
@@ -736,9 +644,6 @@ FocusScope {
             timeline.cursorMessageId = row.mid
             timeline.copyLink(url)
           }
-          // Claiming the zone is load-bearing: a drag started while the
-          // composer owns the keyboard would otherwise send Ctrl+C to the
-          // composer's own copy. Clicking a row already does the same.
           onSelected: {
             timeline.noteSelection(messageRow)
             timeline.cursorMessageId = row.mid

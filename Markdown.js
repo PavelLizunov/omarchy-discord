@@ -1,17 +1,3 @@
-// Discord markdown -> Qt rich text. Pure functions, no QML dependencies, so
-// the same file runs under node for the unit test (components/harness/).
-//
-//   render(content, ctx)    -> HTML for Text { textFormat: Text.RichText }
-//   plainText(content, ctx) -> markup stripped, mentions resolved (previews)
-//   firstLink(message)      -> first URL in content, else first attachment /
-//                              embed URL, else ""
-//
-// ctx: { users: id->display_name, channels: id->name, roles: id->name,
-//        selfId, mentionColor, mentionBg, linkColor, codeBg, spoilerColor,
-//        mutedColor, monoFamily, fontSize, emojiSize,
-//        emojiPath(id, animated) -> local file path or "" }
-// Every field is optional. All user content is HTML-escaped before any markup
-// is applied; render() never throws (falls back to escaped plain text).
 
 var PH_OPEN = ""
 var PH_CLOSE = ""
@@ -64,7 +50,6 @@ function fmtRelative(d, now) {
   return "now"
 }
 
-// Discord <t:unix:STYLE>. Styles: t T d D f F R (default f).
 function formatTimestamp(unix, style, now) {
   var seconds = Number(unix)
   if (!isFinite(seconds)) return ""
@@ -81,7 +66,6 @@ function formatTimestamp(unix, style, now) {
   }
 }
 
-// Placeholder store: raw HTML fragments that inline formatting must not touch.
 function Stash() {
   this.items = []
 }
@@ -91,7 +75,6 @@ Stash.prototype.put = function(html) {
 }
 Stash.prototype.restore = function(text) {
   var items = this.items
-  // Stashed fragments may themselves contain placeholders (nested), so loop.
   var guard = 0
   while (text.indexOf(PH_OPEN) >= 0 && guard++ < 8) {
     text = text.replace(/(\d+)/g, function(_, n) {
@@ -113,16 +96,11 @@ function mentionHtml(ctx, label) {
   return style ? span(style, "<b>" + label + "</b>") : "<b>" + label + "</b>"
 }
 
-// The colour goes on the anchor itself: Qt's rich text gives <a> its own
-// link colour, which beats any enclosing span (and Text.linkColor).
 function linkHtml(ctx, href, label) {
   var style = ctx.linkColor ? " style=\"color:" + ctx.linkColor + "\"" : ""
   return "<a href=\"" + href + "\"" + style + ">" + label + "</a>"
 }
 
-// <img> for a custom emoji when ctx.emojiPath(id, animated) resolves to a
-// local file. The path is the only non-escaped input anywhere in the
-// renderer, so it is both escaped and restricted to a plain absolute path.
 var SAFE_PATH_RE = /^\/[^\x00-\x1f"'<>&\\]*$/
 
 function emojiImg(ctx, id, animated, name) {
@@ -142,64 +120,46 @@ function codeStyle(ctx) {
   return style
 }
 
-// Fenced code keeps its newlines and indentation, but Qt's rich text gives
-// <pre> white-space:pre, which also refuses to break an overlong token, so a
-// pasted URL runs straight off the row. pre-wrap keeps the whitespace and
-// lets the Text's wrapMode break the line. Inline <code> is a span under that
-// same wrapMode and already wraps, so codeStyle itself must not change.
 function blockCodeStyle(ctx) {
   return codeStyle(ctx) + "white-space:pre-wrap;"
 }
 
-// `|` is excluded so a spoilered link (||https://…||) keeps its cover.
 var URL_RE = /https?:\/\/[^\s<>"'()\[\]|]+[^\s<>"'()\[\]|.,;:!?]/g
-// Same pattern against escaped text (quotes already turned into &quot;).
 var URL_ESCAPED_RE = /https?:\/\/[^\s<>()\[\]&|]+(?:&amp;[^\s<>()\[\]&|]+)*/g
 
 function trimUrl(url) {
   return url.replace(/[.,;:!?]+$/, "")
 }
 
-// Protect mentions, timestamps, emoji, links, inline code in escaped text.
-// `plain` selects text-only output for plainText().
 function protectInline(text, ctx, stash, plain) {
-  // inline code (single or double backticks)
   text = text.replace(/(``|`)([^`\n]+?)\1/g, function(_, __, code) {
     return stash.put(plain ? code : "<code style=\"" + codeStyle(ctx) + "\">" + code + "</code>")
   })
-  // user mentions <@id> / <@!id>
   text = text.replace(/&lt;@!?(\d+)&gt;/g, function(_, id) {
     var name = lookup(ctx.users, id)
     var label = "@" + (name || (id === str(ctx.selfId) ? "you" : id))
     return stash.put(plain ? label : mentionHtml(ctx, escapeHtml(label)))
   })
-  // role mentions <@&id>
   text = text.replace(/&lt;@&amp;(\d+)&gt;/g, function(_, id) {
     var label = "@" + (lookup(ctx.roles, id) || "role")
     return stash.put(plain ? label : mentionHtml(ctx, escapeHtml(label)))
   })
-  // channel mentions <#id>
   text = text.replace(/&lt;#(\d+)&gt;/g, function(_, id) {
     var label = "#" + (lookup(ctx.channels, id) || id)
     return stash.put(plain ? label : mentionHtml(ctx, escapeHtml(label)))
   })
-  // custom emoji <:name:id> / <a:name:id> -> inline image from the media
-  // cache (ctx.emojiPath), else :name:
   text = text.replace(/&lt;(a?):(\w+):(\d+)&gt;/g, function(_, animated, name, id) {
     var img = plain ? "" : emojiImg(ctx, id, animated === "a", name)
     return stash.put(img || ":" + name + ":")
   })
-  // timestamps <t:unix> / <t:unix:STYLE>
   text = text.replace(/&lt;t:(-?\d+)(?::([tTdDfFR]))?&gt;/g, function(_, unix, style) {
     var label = formatTimestamp(unix, style || "f", ctx.now)
     if (!label) return stash.put("")
     return stash.put(plain ? label : "<u>" + escapeHtml(label) + "</u>")
   })
-  // masked links [text](url)
   text = text.replace(/\[([^\]\n]+)\]\((https?:\/\/(?:[^\s()]|\([^\s()]*\))+)\)/g, function(_, label, url) {
     return stash.put(plain ? label : linkHtml(ctx, url, label))
   })
-  // bare urls
   text = text.replace(URL_ESCAPED_RE, function(url) {
     var clean = trimUrl(url)
     var tail = url.slice(clean.length)
@@ -208,9 +168,6 @@ function protectInline(text, ctx, stash, plain) {
   return text
 }
 
-// Force the spoiler colour onto every styled fragment inside a spoiler
-// (mentions, links, inline code carry their own color/background-color,
-// which would otherwise show through the cover).
 function forceSpoilerColor(html, color) {
   return html.replace(/style="([^"]*)"/g, function(_, style) {
     var kept = style.replace(/(?:background-)?color:[^;"]*;?/g, "")
@@ -235,8 +192,6 @@ function formatInline(text, ctx, stash, plain) {
     : ""
   text = text.replace(/\|\|([\s\S]+?)\|\|/g, function(_, inner) {
     if (!spoiler) return "<s>" + inner + "</s>"
-    // Restore what the spoiler wraps now so its colours can be overridden,
-    // then stash the whole cover so later inline passes leave it alone.
     var covered = forceSpoilerColor(stash.restore(formatMarks(inner)), ctx.spoilerColor)
     return stash.put(span(spoiler, covered))
   })
@@ -259,10 +214,7 @@ function headerPx(ctx, level) {
   return Math.round(base * scale)
 }
 
-// Block-level pass: code fences, headers, quotes, lists. Returns text with
-// block markup replaced by placeholders, ready for inline formatting.
 function blocks(text, ctx, stash, plain) {
-  // Fenced code: ```lang\n...``` or ```...```
   text = text.replace(/```(?:([A-Za-z0-9_+#.-]{0,20})\n)?([\s\S]*?)```/g, function(_, lang, code) {
     code = code.replace(/\n$/, "")
     if (plain) return stash.put(code)
@@ -346,8 +298,6 @@ function plainText(content, ctx) {
   }
 }
 
-// First URL worth opening with `o`: a link in the content, then the first
-// attachment, then the first embed URL.
 function firstLink(message) {
   try {
     if (!message || typeof message !== "object") return ""
@@ -381,7 +331,6 @@ function formatSize(bytes) {
   return (n / (1024 * 1024 * 1024)).toFixed(2) + " GB"
 }
 
-// Node test hook; harmless under QML (no `module` there).
 if (typeof module !== "undefined" && module.exports) {
   module.exports = { render: render, plainText: plainText, firstLink: firstLink,
     escapeHtml: escapeHtml, formatTimestamp: formatTimestamp, formatSize: formatSize }

@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Developer install: validate, set up the backend, copy this checkout into the
-# Omarchy user-plugin directory, and enable the widget.
 set -euo pipefail
 
 source_root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
@@ -42,14 +40,8 @@ for command_name in omarchy omarchy-shell rsync jq; do
   }
 done
 
-omarchy plugin validate "$source_root"
-"$source_root/scripts/setup.sh"
-# Pick up a rebuilt backend: only restarts when the unit is already active.
-systemctl --user try-restart omarchy-discord.service 2>/dev/null || true
-
 plugins_root="${XDG_CONFIG_HOME:-"$HOME/.config"}/omarchy/plugins"
 target="$plugins_root/$plugin_id"
-install -d -m 700 -- "$plugins_root"
 
 if [[ -L $target ]]; then
   echo "install-local.sh: $target is a symlink; remove it first (omarchy plugin validate refuses symlinks)" >&2
@@ -64,8 +56,11 @@ if [[ -d $target && ! -f $target/manifest.json ]]; then
   exit 1
 fi
 
-# Every write inside the plugins dir reloads the shell's plugin system; rsync
-# only touches changed files, and --delete keeps the copy an exact mirror.
+omarchy plugin validate "$source_root"
+"$source_root/scripts/setup.sh"
+systemctl --user try-restart omarchy-discord.service 2>/dev/null || true
+install -d -m 700 -- "$plugins_root"
+
 rsync -a --delete --exclude='.git' --exclude='.claude' --exclude='backend/target' \
   -- "$source_root/" "$target/"
 echo "Synced plugin copy: $target"

@@ -9,12 +9,7 @@ import (
 	"github.com/mattcalayo/omarchy-discord/backend/internal/socket"
 )
 
-// installMessageHandlers wires gateway message/typing events into routed
-// socket events. Handlers are sync on ningen's handler, so the cabinet already
-// reflects the event when they run; every lookup goes through Offline().
 func (m *Manager) installMessageHandlers(n *ningen.State) {
-	// live reports whether n is still the session being served; message events
-	// from a replaced session are dropped.
 	live := func() bool {
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -48,8 +43,6 @@ func (m *Manager) installMessageHandlers(n *ningen.State) {
 		off := n.Offline()
 		msg, err := off.Cabinet.Message(ev.ChannelID, ev.ID)
 		if err != nil {
-			// Partial updates (embed resolution) for uncached messages carry no
-			// author; only a full object is worth forwarding.
 			if !ev.Author.ID.IsValid() {
 				return
 			}
@@ -85,9 +78,6 @@ func (m *Manager) installMessageHandlers(n *ningen.State) {
 		if !live() {
 			return
 		}
-		// arikawa clears reactions by setting the slice to nil, which its own
-		// DiffMessage merge then ignores, so the cache still shows them. Write
-		// an empty (non-nil) slice back before reading.
 		if msg, err := n.Cabinet.Message(ev.ChannelID, ev.MessageID); err == nil && len(msg.Reactions) > 0 {
 			cpy := *msg
 			cpy.Reactions = []discord.Reaction{}
@@ -112,8 +102,6 @@ func (m *Manager) installMessageHandlers(n *ningen.State) {
 	})
 }
 
-// typerName resolves the display name of a typing user from the event's
-// member, the member cache, or the DM recipient list; "" when unknown.
 func typerName(n *ningen.State, ev *gateway.TypingStartEvent) string {
 	if ev.Member != nil {
 		if ev.Member.Nick != "" {
