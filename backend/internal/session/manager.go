@@ -505,6 +505,8 @@ func (m *Manager) Handle(ctx context.Context, req *protocol.Request) (any, *prot
 			return nil, e
 		}
 		return protocol.EmptyResult{}, nil
+	case "guild_stats", "guild_settings", "set_guild_mute", "leave_guild", "mark_guild_read":
+		return m.guildAction(ctx, req)
 	case "list_guilds":
 		n, e := m.cachedSession()
 		if e != nil {

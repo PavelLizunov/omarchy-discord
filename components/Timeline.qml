@@ -685,34 +685,45 @@ FocusScope {
       Keys.onEscapePressed: { timeline.disarmDelete(); timeline.forceActiveFocus() }
       readonly property bool available: timeline.cursorIndex >= 0 && !timeline.rows[timeline.cursorIndex].pending
       Button {
+        iconOnly: true
         text: "Reply"
+        iconName: "reply"
         enabled: actions.available
         focusable: true
         tooltipText: "Reply to selected message (R)"
         onClicked: timeline.replyRequested(timeline.cursorMessageId)
       }
       Button {
+        iconOnly: true
         text: "React"
+        iconName: "react"
         enabled: actions.available
         focusable: true
         tooltipText: "React to selected message (E)"
         onClicked: timeline.reactRequested(timeline.cursorMessageId)
       }
       Button {
+        iconOnly: true
         text: "Copy"
+        iconName: "copy"
         enabled: actions.available
         focusable: true
         tooltipText: "Copy selected message (Y)"
         onClicked: timeline.copyCursorMessage()
       }
       Button {
+        iconOnly: true
+        tooltipText: "Edit selected message"
         text: "Edit"
+        iconName: "edit"
         visible: timeline.isOwnRow(timeline.cursorIndex)
         focusable: true
         onClicked: timeline.editRequested(timeline.cursorMessageId)
       }
       Button {
+        iconOnly: !timeline.armedDeleteId
         text: timeline.armedDeleteId ? "Confirm delete" : "Delete"
+        iconName: "delete"
         visible: timeline.isOwnRow(timeline.cursorIndex)
         focusable: true
         foreground: Color.urgent

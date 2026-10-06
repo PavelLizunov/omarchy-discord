@@ -7,6 +7,7 @@ import "../../ui"
 TestCase {
   id: tests
   name: "TextClient"
+  visible: true
   width: 1040
   height: 680
   when: windowShown
@@ -76,6 +77,29 @@ TestCase {
     compare(preview.model.lastCall("editMessage"),"Fixture edit")
     verify(!preview.client.composer.editing)
   }
+  function test_error_can_be_dismissed_and_reported_again() {
+    preview.client.open("{}")
+    var message = "refusing to open a DM with no history: send a message from the official client first"
+    preview.model.lastError = message
+    preview.model.voice = {status:"connected",guildId:"1",channelId:"9002",muted:false,deafened:false}
+    preview.client.composer.setText("Keep my draft")
+    var banner=findChild(preview.client,"error-banner"), close=findChild(preview.client,"dismiss-error")
+    wait(30);verify(banner.visible,"banner hidden: "+preview.client.errorText);verify(close.visible,"dismiss button hidden")
+    compare(findChild(preview.client,"error-message").text,message)
+    mouseClick(close,close.width/2,close.height/2);wait(30)
+    compare(preview.model.lastError,"");verify(!banner.visible)
+    compare(preview.client.composer.text,"Keep my draft");compare(preview.model.voice.status,"connected")
+    compare(preview.model.callCount("voiceJoin"),0);compare(preview.model.callCount("voiceLeave"),0)
+    preview.model.lastError=message;wait(30);verify(banner.visible)
+    close.forceActiveFocus();keyClick(Qt.Key_Return);wait(30);verify(!banner.visible)
+    preview.model.lastError="Long error "+Array(500).join("details ");wait(30)
+    verify(banner.height<=100);verify(preview.client.timeline.height>100)
+    preview.client.zone="composer";preview.client.focusZone()
+    var found=false
+    for(var i=0;i<30;i++){preview.client.cycleFocus(1);if(close.activeFocus){found=true;break}}
+    verify(found);keyClick(Qt.Key_Space);wait(30);compare(preview.model.lastError,"")
+    preview.client.composer.setText("");preview.model.voice={status:"idle"}
+  }
   function test_voice_chords() {
     verify(press(Qt.Key_M,"",Qt.ControlModifier | Qt.ShiftModifier))
     compare(preview.model.callCount("toggleMute"),1)
@@ -85,6 +109,7 @@ TestCase {
     compare(preview.model.callCount("voiceLeave"),1)
   }
   function test_members_and_close() {
+    preview.model.membersWanted = false
     preview.client.toggleMembers()
     verify(preview.model.membersWanted)
     preview.client.toggleMembers()

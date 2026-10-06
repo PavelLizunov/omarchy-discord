@@ -10,6 +10,9 @@ FocusScope {
 
   property var service: null
   property var list: null
+  property bool voiceMode: false
+  property string headingText: ""
+  property var voiceUsers: []
   property bool loading: false
   property bool timedOut: false
   property bool active: false
@@ -22,13 +25,16 @@ FocusScope {
   signal copied()
   signal copyRequested(string text)
 
-  readonly property var rows: Api.memberRows(list)
+  readonly property var rows: voiceMode
+    ? voiceUsers.map(function(user) { return {kind:"member", id:String(user.id || ""), user:user, status:"voice", activity:""} })
+    : Api.memberRows(list)
   property string cursorId: ""
   readonly property int cursor: indexOfId(rows, cursorId)
   readonly property color foreground: Color.popups.text
   readonly property color muted: Api.secondaryColor(Color.muted, Color.popups.text, Color.popups.background)
   readonly property string fontFamily: Style.font.family
-  readonly property int avatarSize: Style.space(24)
+  readonly property bool dense: width < Style.space(170)
+  readonly property int avatarSize: Style.space(dense ? 18 : 24)
 
   function indexOfId(list_, id) {
     if (!id) return -1
@@ -127,17 +133,29 @@ FocusScope {
 
       PanelSectionHeader {
         width: parent.width
-        text: root.dismissible ? "Members · Esc closes" : "Members"
+        objectName: "people-heading"
+        text: root.headingText || (root.voiceMode ? "In voice" :  (root.dismissible ? "Members · Esc closes" : "Members"))
         foreground: root.foreground
       }
 
+      Text {
+        id: voiceHeading
+        width: parent.width
+        visible: root.voiceMode
+        text: root.channelName
+        textFormat: Text.PlainText
+        wrapMode: Text.Wrap
+        maximumLineCount: 2
+        elide: Text.ElideRight
+        color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall
+      }
       Text {
         width: parent.width
         visible: !root.rows.length
         wrapMode: Text.WordWrap
         leftPadding: Style.spacing.rowPaddingX
-        text: root.timedOut ? "No member list for this channel."
-          : (root.loading ? "Loading members…" : "No channel open.")
+        text: root.voiceMode ? "Voice participants unavailable." : root.timedOut ? "No member list for this channel."
+          : (root.loading ? "Loading members…" : (root.channelName ? "Members unavailable for this channel." : "No channel open."))
         color: root.muted
         font.family: root.fontFamily
         font.pixelSize: Style.font.body
@@ -147,6 +165,7 @@ FocusScope {
         id: listView
         width: parent.width
         height: parent.height - Style.spacing.controlHeight
+          - (voiceHeading.visible ? voiceHeading.height + Style.spacing.xs : 0)
           - (root.dismissible ? Style.spacing.controlHeight + Style.spacing.sm : 0)
         visible: root.rows.length > 0
         clip: true
@@ -166,9 +185,10 @@ FocusScope {
           readonly property bool hasCursor: root.active && index === root.cursor && !header
           readonly property string displayName: Api.userLabel(user, root.service ? root.service.knownUsers : null)
           readonly property string activity: String(row.activity || "")
+          readonly property bool talking: root.voiceMode && !!(root.service && root.service.speaking[String(user.id || "")])
           width: listView.width
           height: header ? Style.spacing.controlHeight
-            : (activity ? Style.spacing.popupRowHeight + Style.font.caption * 1.4 : Style.spacing.popupRowHeight)
+            : Math.max(Style.spacing.popupRowHeight, identity.implicitHeight + Style.spacing.sm * 2)
 
           PanelSectionHeader {
             visible: memberRow.header
@@ -199,6 +219,7 @@ FocusScope {
               service: root.service
               url: memberRow.header ? "" : String(memberRow.user.avatar_url || "")
               name: memberRow.displayName
+              objectName: root.voiceMode && !memberRow.header ? "voice-person-" + String(memberRow.user.id || "") : ""
               foreground: root.foreground
               fontFamily: root.fontFamily
 
@@ -215,12 +236,13 @@ FocusScope {
                   width: Style.spacing.lg
                   height: width
                   radius: width / 2
-                  color: root.statusColor(memberRow.row.status)
+                  color: root.voiceMode ? (memberRow.talking ? Color.accent : root.muted) : root.statusColor(memberRow.row.status)
                 }
               }
             }
 
             Column {
+              id: identity
               anchors.left: avatar.right
               anchors.right: parent.right
               anchors.leftMargin: Style.spacing.sm
@@ -231,15 +253,19 @@ FocusScope {
               Text {
                 width: parent.width
                 text: memberRow.displayName + (memberRow.user.bot ? "  BOT" : "")
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+                maximumLineCount: 2
                 elide: Text.ElideRight
                 color: memberRow.row.status === "offline" ? root.muted : root.foreground
                 font.family: root.fontFamily
-                font.pixelSize: Style.font.body
+                font.pixelSize: root.dense ? Style.font.bodySmall : Style.font.body
               }
               Text {
                 width: parent.width
-                visible: memberRow.activity !== ""
+                visible: memberRow.activity !== "" && !root.dense
                 text: memberRow.activity
+                textFormat: Text.PlainText
                 elide: Text.ElideRight
                 color: root.muted
                 font.family: root.fontFamily
@@ -258,7 +284,8 @@ FocusScope {
             }
             PanelToolTip {
               visible: rowMouse.containsMouse || memberRow.hasCursor
-              text: memberRow.displayName + "\n@" + String(memberRow.user.username || "")
+              text: memberRow.displayName + (memberRow.user.username ? "\n@" + String(memberRow.user.username) : "")
+                + (root.voiceMode ? (memberRow.talking ? "\nSpeaking" : "\nIn voice") : "")
                 + (memberRow.activity ? "\n" + memberRow.activity : "")
             }
           }

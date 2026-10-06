@@ -28,23 +28,53 @@ TestCase {
     preview.client.cheatsheet.shown=false; preview.client.picker.shown=false
     preview.client.composer.cancelEdit(); preview.client.composer.cancelReply()
     preview.client.composer.setText("")
+    preview.client.compactMode=false;preview.client.navigationShown=false
     preview.client.open("{}"); preview.client.zone="timeline"
+    preview.model.membersWanted=false
     preview.client.timeline.focusNewest(); preview.client.focusZone()
     wait(80)
   }
   function test_attachments_bounded_and_focus_scrolled() {
     tests.width=640; tests.height=420; wait(40)
+    var controls=preview.client.controls
+    var controlsX=controls.mapToItem(preview.client,0,0).x
+    verify(controlsX>=0)
+    verify(controlsX+controls.width<=preview.client.width)
     var files=[]
     for(var i=0;i<10;i++) files.push({path:"/inert/"+i,filename:"fixture-"+i+".png",size:12345})
     preview.model.staged={"9000":files}; wait(60)
     verify(preview.client.timeline.height>=140)
     verify(preview.client.composer.attachmentViewport.height<=80)
     var hint=findChild(preview.client,"shortcut-hint")
+    verify(!hint.visible)
+    preview.client.zone="composer"; preview.client.composer.focusInput(); wait(30)
+    compare(hint.text,"Enter to send · Shift+Enter for a new line")
     verify(hint.contentWidth<=hint.width)
     preview.client.composer.focusChip(9); wait(60)
     verify(preview.client.composer.attachmentViewport.contentY>0)
     verify(preview.client.composer.attachmentViewport.contentY+preview.client.composer.attachmentViewport.height
       >= preview.client.composer.attachmentViewport.contentHeight-1)
+  }
+  function test_servers_display_names_and_keep_selection() {
+    var label=findChild(preview.client,"server-name-1")
+    verify(label!==null)
+    compare(label.text,"Fixture server")
+    var dm=findChild(preview.client,"server-name-dms")
+    verify(dm!==null)
+    compare(dm.text,"Direct Messages")
+    mouseClick(dm,dm.width/2,dm.height/2);wait(40)
+    compare(preview.model.selectedGuildId,"dms")
+    preview.client.leaveChannels();preview.client.setGuildCursor(1)
+    preview.client.enterChannels();wait(40)
+    compare(preview.model.selectedGuildId,"1")
+    tests.width=640;tests.height=420;wait(40)
+    verify(preview.client.timeline.width>200)
+    verify(findChild(preview.client,"server-rail").width>=140)
+    preview.model.guilds=[{id:"1",name:"Community with a deliberately long server name",unread:"mentioned",mention_count:12}]
+    wait(40)
+    label=findChild(preview.client,"server-name-1")
+    compare(label.text,"Community with a deliberately long server name")
+    verify(label.height<=48)
   }
   function test_send_edit_and_disabled_controls() {
     verify(!preview.client.composer.sendControl.enabled)
@@ -70,12 +100,14 @@ TestCase {
     compare(preview.client.composer.text,"Draft remains")
     verify(preview.client.composer.inputFocused)
   }
-  function test_compact_members_overlay_and_dismiss() {
+  function test_narrow_members_beside_chat_and_dismiss() {
     tests.width=640;tests.height=420;wait(40)
     var before=preview.client.timeline.width
     click(control("Members"));tryCompare(preview.model,"membersWanted",true)
-    compare(preview.client.timeline.width,before)
-    verify(preview.client.members.width>=300)
+    verify(preview.client.timeline.width<before)
+    verify(preview.client.members.width>=120)
+    var chat=findChild(preview.client,"chat-column")
+    verify(chat.x+chat.width<=preview.client.members.x)
     compare(preview.client.zone,"members")
     keyClick(Qt.Key_Escape);tryCompare(preview.model,"membersWanted",false)
     compare(preview.client.zone,"composer")

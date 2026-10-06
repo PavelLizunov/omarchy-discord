@@ -1,10 +1,13 @@
 import QtQuick
 import Quickshell
 import Quickshell.Wayland
+import qs.Commons as Host
 
 Item {
   id: root
   property var service: null
+  readonly property alias content: view
+  ThemeSync { hostColor: Host.Color; hostStyle: Host.Style }
   readonly property bool opened: view.opened
   property bool focusPrimed: false
   function open() { return view.open() }

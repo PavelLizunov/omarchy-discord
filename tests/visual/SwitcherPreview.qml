@@ -9,6 +9,7 @@ Rectangle {
   height: 600
   color: Color.background
   property bool ready: false
+  property bool lightTheme: false
   Harness.MockService {
     id: model
     property bool ready: true
@@ -19,6 +20,12 @@ Rectangle {
     function openPanel(payload) { note("openPanel", payload.channel_id) }
   }
   Discord.SwitcherView { id: switcher; anchors.fill: parent; service: model }
-  Component.onCompleted: { switcher.open(); settle.start() }
+  Component.onCompleted: {
+    if (lightTheme) {
+      Color.background = "#f5f4f0"; Color.foreground = "#242424"
+      Color.muted = "#565656"; Color.accent = "#235a81"; Color.urgent = "#a02030"
+    }
+    switcher.open(); settle.start()
+  }
   Timer { id: settle; interval: 120; onTriggered: root.ready = true }
 }

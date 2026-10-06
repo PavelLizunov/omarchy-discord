@@ -51,7 +51,7 @@ Item {
     if (!entries.length) return query ? "No channel matches “" + query + "”." : "Nothing unread and nothing recent."
     return ""
   }
-  readonly property string footerText: Keymap.footer("switcher")
+  readonly property string footerText: "Select a channel to open it · Esc closes"
 
   function open() {
     if (!opened) {

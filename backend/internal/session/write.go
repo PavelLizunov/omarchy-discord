@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -29,13 +30,17 @@ const (
 )
 
 type restOps struct {
-	send      func(ctx context.Context, n *ningen.State, chID discord.ChannelID, data api.SendMessageData) (*discord.Message, error)
-	edit      func(ctx context.Context, n *ningen.State, chID discord.ChannelID, msgID discord.MessageID, content string) error
-	delete    func(ctx context.Context, n *ningen.State, chID discord.ChannelID, msgID discord.MessageID) error
-	react     func(ctx context.Context, n *ningen.State, chID discord.ChannelID, msgID discord.MessageID, emoji discord.APIEmoji) error
-	unreact   func(ctx context.Context, n *ningen.State, chID discord.ChannelID, msgID discord.MessageID, emoji discord.APIEmoji) error
-	typing    func(ctx context.Context, n *ningen.State, chID discord.ChannelID) error
-	setStatus func(n *ningen.State, status discord.Status) error
+	send       func(ctx context.Context, n *ningen.State, chID discord.ChannelID, data api.SendMessageData) (*discord.Message, error)
+	edit       func(ctx context.Context, n *ningen.State, chID discord.ChannelID, msgID discord.MessageID, content string) error
+	delete     func(ctx context.Context, n *ningen.State, chID discord.ChannelID, msgID discord.MessageID) error
+	react      func(ctx context.Context, n *ningen.State, chID discord.ChannelID, msgID discord.MessageID, emoji discord.APIEmoji) error
+	unreact    func(ctx context.Context, n *ningen.State, chID discord.ChannelID, msgID discord.MessageID, emoji discord.APIEmoji) error
+	typing     func(ctx context.Context, n *ningen.State, chID discord.ChannelID) error
+	setStatus  func(n *ningen.State, status discord.Status) error
+	guildStats func(context.Context, *ningen.State, discord.GuildID) (*guildCounts, error)
+	leaveGuild func(context.Context, *ningen.State, discord.GuildID) error
+	ackChannel func(context.Context, *ningen.State, discord.ChannelID, discord.MessageID) error
+	muteGuild  func(context.Context, *ningen.State, discord.GuildID, bool) error
 }
 
 func liveREST() restOps {
@@ -65,6 +70,32 @@ func liveREST() restOps {
 		},
 		setStatus: func(n *ningen.State, status discord.Status) error {
 			return n.SetStatus(status, nil)
+		},
+		muteGuild: func(ctx context.Context, n *ningen.State, id discord.GuildID, muted bool) error {
+			c := n.Client.WithContext(ctx)
+			c.Retries = 1
+			return c.FastRequest("PATCH", api.EndpointMe+"/guilds/"+id.String()+"/settings", httputil.WithJSONBody(struct {
+				Muted      bool `json:"muted"`
+				MuteConfig any  `json:"mute_config"`
+			}{Muted: muted, MuteConfig: nil}))
+		},
+		guildStats: func(ctx context.Context, n *ningen.State, id discord.GuildID) (*guildCounts, error) {
+			c := n.Client.WithContext(ctx)
+			c.Retries = 1
+			var result *guildCounts
+			err := c.RequestJSON(&result, "GET", api.EndpointGuilds+id.String(),
+				httputil.WithSchema(c, url.Values{"with_counts": {"true"}}))
+			return result, err
+		},
+		leaveGuild: func(ctx context.Context, n *ningen.State, id discord.GuildID) error {
+			c := n.Client.WithContext(ctx)
+			c.Retries = 1
+			return c.LeaveGuild(id)
+		},
+		ackChannel: func(ctx context.Context, n *ningen.State, ch discord.ChannelID, msg discord.MessageID) error {
+			c := n.Client.WithContext(ctx)
+			c.Retries = 1
+			return c.Ack(ch, msg, &api.Ack{})
 		},
 	}
 }

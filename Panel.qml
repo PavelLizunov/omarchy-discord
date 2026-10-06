@@ -9,12 +9,31 @@ Item {
   property var shell: null
   property var manifest: null
   property var service: null
+  readonly property alias client: view
   readonly property string pluginId: manifest && manifest.id ? String(manifest.id) : "quickshell.discord"
   readonly property bool persistent: !!(service && service.persistentWindow)
   readonly property bool opened: persistent ? window.visible && view.windowActive : view.opened
   property bool persistentVisible: true
   property string parkWorkspace: ""
   property bool pendingFocus: false
+  property bool restoreTiling: false
+  function applyLayoutMode(compact) {
+    var target = 'window = "title:^(Omarchy Discord)$"'
+    Hyprland.refreshToplevels()
+    if (compact) {
+      var ipc = toplevel ? toplevel.lastIpcObject : null
+      restoreTiling = !ipc || ipc.floating !== true
+      Hyprland.dispatch('hl.dsp.window.float({ ' + target + ', action = "on" })')
+      Hyprland.dispatch('hl.dsp.window.resize({ ' + target + ', x = ' + Math.round(Style.space(520))
+        + ', y = ' + Math.round(Style.space(560)) + ', relative = false })')
+    } else if (restoreTiling) {
+      Hyprland.dispatch('hl.dsp.window.float({ ' + target + ', action = "off" })')
+      restoreTiling = false
+    } else {
+      Hyprland.dispatch('hl.dsp.window.resize({ ' + target + ', x = ' + Math.round(Style.space(1040))
+        + ', y = ' + Math.round(Style.space(680)) + ', relative = false })')
+    }
+  }
   readonly property var toplevel: {
     var list = Hyprland.toplevels.values
     for (var i = 0; i < list.length; i++)
@@ -22,34 +41,7 @@ Item {
     return null
   }
 
-  function syncTheme() {
-    Color.foreground = Host.Color.foreground
-    Color.background = Host.Color.background
-    Color.accent = Host.Color.accent
-    Color.urgent = Host.Color.urgent
-    Color.muted = Host.Color.muted
-    Color.shellValues = Host.Color.shellValues
-    Style.cornerRadius = Host.Style.cornerRadius
-    Style.gapsOut = Host.Style.gapsOut
-    Style.resolvedFontFamily = Host.Style.font.family
-    Style.fontFamily = Host.Style.font.family
-    Style.applyShellValues(Host.Color.shellValues)
-  }
-  Connections {
-    target: Host.Color
-    function onForegroundChanged() { root.syncTheme() }
-    function onBackgroundChanged() { root.syncTheme() }
-    function onAccentChanged() { root.syncTheme() }
-    function onUrgentChanged() { root.syncTheme() }
-    function onMutedChanged() { root.syncTheme() }
-    function onShellValuesChanged() { root.syncTheme() }
-  }
-  Connections {
-    target: Host.Style
-    function onCornerRadiusChanged() { root.syncTheme() }
-    function onGapsOutChanged() { root.syncTheme() }
-    function onResolvedFontFamilyChanged() { root.syncTheme() }
-  }
+  ThemeSync { hostColor: Host.Color; hostStyle: Host.Style }
   function moveWindow(workspace, follow) {
     Hyprland.dispatch("hl.dsp.window.move({ window = \"title:^(Omarchy Discord)$\", workspace = \""
       + workspace + "\"" + (follow ? "" : ", follow = false") + " })")
@@ -80,7 +72,6 @@ Item {
     view.close()
   }
   Component.onCompleted: {
-    syncTheme()
     if (persistent) Hyprland.refreshToplevels()
   }
   onPersistentChanged: if (persistent) Hyprland.refreshToplevels()
@@ -104,9 +95,9 @@ Item {
     title: "Omarchy Discord"
     visible: root.persistent ? root.persistentVisible : view.opened
     color: Color.background
-    implicitWidth: Style.space(1040)
-    implicitHeight: Style.space(680)
-    minimumSize: Qt.size(Style.space(640), Style.space(420))
+    implicitWidth: Style.space(view.compactMode ? 520 : 1040)
+    implicitHeight: Style.space(view.compactMode ? 560 : 680)
+    minimumSize: Qt.size(Style.space(view.compactMode ? 420 : 640), Style.space(420))
     onVisibleChanged: if (!visible) {
       if (root.persistent) root.persistentVisible = false
       else view.close()
@@ -119,6 +110,11 @@ Item {
       mapped: window.visible
       windowActive: Window.active
       screenName: window.screen ? String(window.screen.name || "") : ""
+      onLayoutModeChanged: function(compact) {
+        window.implicitWidth = Style.space(compact ? 520 : 1040)
+        window.implicitHeight = Style.space(compact ? 560 : 680)
+        Qt.callLater(function() { root.applyLayoutMode(compact) })
+      }
       onCloseRequested: {
         if (root.shell && typeof root.shell.hide === "function") root.shell.hide(root.pluginId)
         else root.close()

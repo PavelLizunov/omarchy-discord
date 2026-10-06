@@ -6,6 +6,7 @@ import "ui"
 
 import "Api.js" as Api
 import "Keymap.js" as Keymap
+import "ServerList.js" as ServerList
 import "components" as Components
 
 Item {
@@ -14,6 +15,16 @@ Item {
   property var shell: null
   property var manifest: null
   property var service: null
+  property bool compactMode: false
+  readonly property bool compactView: compactMode
+  signal layoutModeChanged(bool compact)
+  function setCompactMode(value) {
+    compactMode = value
+    navigationShown = false
+    if (compactView && zone === "sidebar") zone = currentChannelId ? "composer" : "sidebar"
+    layoutModeChanged(value)
+    Qt.callLater(focusZone)
+  }
   property bool hostOpened: false
   readonly property bool opened: hostOpened
   property bool windowActive: false
@@ -31,8 +42,11 @@ Item {
   readonly property alias controls: headerControls
   readonly property bool qrImageReady: qrImage.status === Image.Ready
   readonly property alias logoutConfirmation: logoutConfirm
-  readonly property bool overlayShown: cheatsheetView.shown || pickerView.shown || logoutConfirm.shown
-  readonly property bool compactMembers: width < Style.space(900)
+  readonly property alias serverMenu: serverMenu
+  readonly property bool overlayShown: cheatsheetView.shown || pickerView.shown || logoutConfirm.shown || serverMenu.shown
+  readonly property bool compactMembers: false
+  readonly property bool narrowLayout: compactView || width < Style.space(900)
+  property bool navigationShown: false
 
   readonly property string pluginId: manifest && manifest.id
     ? String(manifest.id) : "quickshell.discord"
@@ -47,17 +61,18 @@ Item {
     Math.max(1, Style.normalBorderWidth))
   readonly property real controlsRowHeight: Math.max(Style.spacing.controlHeight, headerControls.height)
   readonly property real controlButtonsWidth:
-    (currentChannelId !== "" ? membersButton.width + Style.spacing.controlGap : 0)
-    + searchButton.width + helpButton.width + Style.spacing.controlGap * 2
-    + logoutButton.width + Style.spacing.controlGap
-    + closeButton.width
+    (ready && currentChannelId !== "" ? membersButton.width + Style.spacing.controlGap : 0)
+    + (ready ? searchButton.width + Style.spacing.controlGap : 0)
+    + (!compactView ? helpButton.width + Style.spacing.controlGap : 0)
+    + (!compactView && ready ? logoutButton.width + Style.spacing.controlGap : 0)
+    + navigationButton.width + Style.spacing.controlGap + modeButton.width + Style.spacing.controlGap + closeButton.width
   readonly property real channelHeaderRoom: channelHeader.width - Style.spacing.sm * 2
     - Style.spacing.controlGap
   readonly property real channelTitleFloor: Style.space(120)
-  readonly property bool controlsInHeader: ready
-    && channelHeaderRoom - controlButtonsWidth >= channelTitleFloor
+  readonly property bool controlsInHeader: false
   readonly property real statusWidthBudget: {
-    if (!controlsInHeader) return Style.space(200)
+    if (!controlsInHeader) return Math.max(0, Math.min(Style.space(200),
+      root.width - Style.spacing.panelPadding * 2 - controlButtonsWidth - Style.spacing.controlGap))
     var room = channelHeaderRoom - controlButtonsWidth - channelTitleFloor
       - Style.spacing.controlGap
     return room >= Style.space(80) ? Math.min(Style.space(200), room) : 0
@@ -69,6 +84,10 @@ Item {
   readonly property bool showLogin: connected
     && (lifecycle === "logged_out" || lifecycle === "reauth_needed" || lifecycle === "qr_pending")
   readonly property string errorText: service ? Api.redact(service.lastError) : ""
+  function dismissError() {
+    if (service) service.lastError = ""
+    Qt.callLater(focusZone)
+  }
   readonly property var qr: service ? service.qr : null
   readonly property string qrStage: qr ? String(qr.stage || "") : ""
   readonly property bool qrView: showLogin && (lifecycle === "qr_pending"
@@ -79,9 +98,9 @@ Item {
 
   property string zone: "sidebar"
   property string column: "rail"
-  readonly property bool buttonFocused: logoutButton.activeFocus || closeButton.activeFocus
+  readonly property bool buttonFocused: navigationButton.activeFocus || logoutButton.activeFocus || closeButton.activeFocus || modeButton.activeFocus
     || membersButton.activeFocus || searchButton.activeFocus || helpButton.activeFocus
-    || startBackendButton.activeFocus || callBarFocused
+    || startBackendButton.activeFocus || dismissErrorButton.activeFocus || callBarFocused
   readonly property bool callBarFocused: callBar.visible && callBar.activeFocus
   readonly property string activeVoiceChannelId: {
     if (!service || !service.voice) return ""
@@ -89,7 +108,13 @@ Item {
     if (status !== "connected" && status !== "connecting") return ""
     return String(service.voice.channelId || "")
   }
-  readonly property bool membersVisible: !!(service && service.membersWanted) && currentChannelId !== "" && ready
+  readonly property bool voicePeopleMode: false
+  readonly property bool voicePanelPinned: narrowLayout && !!(service && service.voice && String(service.voice.status || "idle") !== "idle")
+  readonly property real voicePanelWidth: voicePanelPinned ? Math.min(Style.space(210), Math.max(Style.space(155), body.width * 0.35)) : 0
+  readonly property var activeVoicePeople: service && activeVoiceChannelId
+    ? service.voiceUsers(String(service.voice.guildId || ""), activeVoiceChannelId) : []
+  readonly property bool membersVisible: ready && !voicePanelPinned
+    && !!(service && service.membersWanted) && currentChannelId !== ""
   property var expandedThreads: ({})
   readonly property bool canToggleCurrentThreads: currentThreadParent() !== null
   readonly property string focusedZone: buttonFocused ? "" : zone
@@ -104,11 +129,23 @@ Item {
   readonly property var currentMessages: currentEntry && Array.isArray(currentEntry.messages)
     ? currentEntry.messages : []
 
+  property bool serverToolsShown: false
+  property string serverQuery: ""
+  property string serverFilter: "all"
+  property string serverSort: "position"
+  property var serverActionsOverride: null
+  readonly property var serverActions: serverActionsOverride || defaultServerActions
+  Components.ServerActions { id: defaultServerActions; service: root.service }
+  readonly property var filteredGuilds: ServerList.rows(service && service.guilds ? service.guilds : [],
+    serverQuery, serverFilter, serverSort, serverActions.guildStats)
+  function showServerMenu(row, x, y) {
+    if (!row || String(row.id) === "dms") return
+    serverMenu.show(row, x, y)
+  }
   readonly property var guildRows: {
     var rows = [{ kind: "dms", id: "dms", name: "Direct Messages",
       mention_count: dmMentionCount(), unread: dmUnread() }]
-    var guilds = service && Array.isArray(service.guilds) ? service.guilds : []
-    for (var i = 0; i < guilds.length; i++) rows.push(guilds[i])
+    for (var i = 0; i < filteredGuilds.length; i++) rows.push(filteredGuilds[i])
     return rows
   }
   readonly property bool dmsSelected: selectedGuildId === "dms"
@@ -135,8 +172,10 @@ Item {
   readonly property bool channelsLoading: !!(service && selectedGuildId
     && !dmsSelected && service.isLoadingChannels(selectedGuildId))
   readonly property string selectedGuildName: {
-    for (var i = 0; i < guildRows.length; i++)
-      if (String(guildRows[i].id) === selectedGuildId) return String(guildRows[i].name || "")
+    if (selectedGuildId === "dms") return "Direct Messages"
+    var list = service && service.guilds ? service.guilds : []
+    for (var i = 0; i < list.length; i++)
+      if (String(list[i].id) === selectedGuildId) return String(list[i].name || "")
     return ""
   }
   readonly property var currentChannel: {
@@ -193,7 +232,8 @@ Item {
   }
 
   function textInputFocused() {
-    return tokenField.activeFocus || composerView.inputFocused
+    return tokenField.activeFocus || composerView.inputFocused || serverSearch.activeFocus
+      || serverFilterControl.activeFocus || serverSortControl.activeFocus
   }
 
   function openSwitcher() {
@@ -243,7 +283,9 @@ Item {
   }
 
   function loginStops() {
-    return qrView ? [qrActionButton, closeButton] : [scanQrButton, tokenField, loginButton, closeButton]
+    var stops = qrView ? [qrActionButton, closeButton] : [scanQrButton, tokenField, loginButton, closeButton]
+    if (errorText) stops.push(dismissErrorButton)
+    return stops
   }
 
   function focusLogin() {
@@ -319,7 +361,7 @@ Item {
     try { payload = JSON.parse(String(payloadJson || "{}")) || ({}) } catch (e) {}
     var requested = String(payload.channel_id || payload.channel || "")
     hostOpened = true
-    if (service) service.refresh()
+    if (service) { service.refresh(); service.setMembersWanted(true) }
     restoreView()
     if (requested && service) {
       service.showChannel(requested, guildIdForChannel(requested))
@@ -329,6 +371,7 @@ Item {
 
   function close() {
     logoutConfirm.shown = false
+    serverMenu.shown = false
     tokenField.clear()
     cheatsheetView.shown = false
     pickerView.shown = false
@@ -549,11 +592,12 @@ Item {
   }
 
   function toggleMembers() {
+    if (voicePeopleMode) { enterMembers(); return }
     if (!service) return
     if (!currentChannelId) { hint = "Open a channel first"; return }
     service.setMembersWanted(!service.membersWanted)
     hint = ""
-    if (service.membersWanted && compactMembers) enterMembers()
+    if (service.membersWanted && narrowLayout) enterMembers()
     if (!service.membersWanted && zone === "members") { zone = "composer"; focusZone() }
   }
 
@@ -565,7 +609,7 @@ Item {
   }
 
   function leaveMembers() {
-    if (compactMembers && service) service.setMembersWanted(false)
+    if (narrowLayout && !voicePeopleMode && service) service.setMembersWanted(false)
     zone = "composer"
     focusZone()
   }
@@ -632,6 +676,7 @@ Item {
   }
 
   function focusZone() {
+    if (narrowLayout && zone === "sidebar" && !navigationShown && currentChannelId) zone = "composer"
     if (zone === "members" && !membersVisible) zone = "composer"
     if ((zone === "timeline" || zone === "composer") && !currentChannelId) {
       zone = "sidebar"
@@ -639,16 +684,21 @@ Item {
     }
     if (zone === "members") membersView.forceActiveFocus()
     else if (zone === "composer") composerView.focusInput()
-    else if (zone === "timeline") timelineView.forceActiveFocus()
+    else if (zone === "timeline") {
+      var actions = timelineView.messageActions.children
+      for (var i = 0; i < actions.length; i++) actions[i].focus = false
+      timelineView.forceActiveFocus()
+    }
     else sidebarFocus.forceActiveFocus()
   }
 
   function cycleFocus(delta) {
-    var stops = ["rail", "channels", "timeline", "composer", "callbar", "members", "startBackend",
-      "search", "help", "membersButton", "logout", "close"]
-    var current = callBarFocused ? "callbar"
+    var stops = ["rail", "serverTools", "serverSearch", "serverFilter", "serverSort", "serverRefresh", "channels", "timeline", "composer", "callbar", "members", "startBackend",
+      "navigation", "search", "help", "membersButton", "logout", "mode", "close", "dismissError"]
+    var current = dismissErrorButton.activeFocus ? "dismissError" : navigationButton.activeFocus ? "navigation" : serverToolsButton.activeFocus ? "serverTools" : serverSearch.activeFocus ? "serverSearch" : serverFilterControl.activeFocus ? "serverFilter"
+      : serverSortControl.activeFocus ? "serverSort" : serverRefresh.activeFocus ? "serverRefresh" : callBarFocused ? "callbar"
       : (buttonFocused
-        ? (closeButton.activeFocus ? "close" : searchButton.activeFocus ? "search" : helpButton.activeFocus ? "help"
+        ? (modeButton.activeFocus ? "mode" : closeButton.activeFocus ? "close" : searchButton.activeFocus ? "search" : helpButton.activeFocus ? "help"
           : (membersButton.activeFocus ? "membersButton"
             : (startBackendButton.activeFocus ? "startBackend" : "logout")))
         : (zone === "sidebar" ? column : zone))
@@ -656,22 +706,36 @@ Item {
     for (var step = 0; step < stops.length; step++) {
       index = clampCursor(index + delta, stops.length)
       var stop = stops[index]
-      if ((stop === "rail" || stop === "channels") && !ready) continue
+      if ((stop === "rail" || stop === "channels" || stop === "serverSearch" || stop === "serverFilter" || stop === "serverSort") && !ready) continue
       if ((stop === "timeline" || stop === "composer") && !currentChannelId) continue
+      if (narrowLayout && !navigationShown && ["rail", "channels", "serverTools", "serverSearch", "serverFilter", "serverSort", "serverRefresh"].indexOf(stop) >= 0) continue
+      if (["serverSearch", "serverFilter", "serverSort"].indexOf(stop) >= 0 && !serverToolsShown) continue
+      if (stop === "serverRefresh" && !serverRefresh.visible) continue
       if (stop === "callbar" && !(ready && callBar.visible)) continue
       if (stop === "members" && !membersVisible) continue
       if (stop === "startBackend" && !startBackendButton.visible) continue
       if (stop === "membersButton" && !membersButton.visible) continue
+      if (stop === "navigation" && !navigationButton.visible) continue
       if (stop === "search" && !searchButton.visible) continue
       if (stop === "help" && !helpButton.visible) continue
       if (stop === "logout" && !logoutButton.visible) continue
-      focusStop(stop, delta)
+      if (stop === "dismissError") {
+        if (!dismissErrorButton.visible) continue
+        dismissErrorButton.forceActiveFocus()
+      } else focusStop(stop, delta)
       return
     }
   }
 
   function focusStop(stop, delta) {
     hint = ""
+    if (stop === "navigation") { navigationButton.forceActiveFocus(); return }
+    if (stop === "serverTools") { serverToolsButton.forceActiveFocus(); return }
+    if (stop === "serverSearch") { serverSearch.forceActiveFocus(); return }
+    if (stop === "serverFilter") { serverFilterControl.forceActiveFocus(); return }
+    if (stop === "serverSort") { serverSortControl.forceActiveFocus(); return }
+    if (stop === "serverRefresh") { serverRefresh.forceActiveFocus(); return }
+    if (stop === "mode") { modeButton.forceActiveFocus(); return }
     if (stop === "search") { searchButton.forceActiveFocus(); return }
     if (stop === "help") { helpButton.forceActiveFocus(); return }
     if (stop === "logout") { logoutButton.forceActiveFocus(); return }
@@ -719,6 +783,7 @@ Item {
     var alt = (event.modifiers & Qt.AltModifier) !== 0
     var shift = (event.modifiers & Qt.ShiftModifier) !== 0
     if (overlayShown) return
+    if (navigationShown && key === Qt.Key_Escape) { navigationShown = false; event.accepted = true; return }
     if (handleGlobalKey(event)) return
     if (showLogin) {
       if (key === Qt.Key_Tab || key === Qt.Key_Backtab) cycleLoginFocus(key === Qt.Key_Backtab || shift ? -1 : 1)
@@ -727,7 +792,13 @@ Item {
       event.accepted = true
       return
     }
-    if (tokenField.activeFocus) return
+    if (textInputFocused() && !composerFocused) return
+    if (key === Qt.Key_Menu || (shift && key === Qt.Key_F10)) {
+      var row = guildRows[guildCursor]
+      if (row && String(row.id) !== "dms") showServerMenu(row, Style.space(160), Style.space(90))
+      event.accepted = true
+      return
+    }
     if (!ready) {
       if (key === Qt.Key_Tab || key === Qt.Key_Backtab) cycleFocus(key === Qt.Key_Backtab || shift ? -1 : 1)
       else if (key === Qt.Key_Escape) root.requestClose()
@@ -824,6 +895,7 @@ Item {
   }
   onMembersVisibleChanged: if (!membersVisible && zone === "members" && opened) { zone = "composer"; focusZone() }
   onSelectedGuildIdChanged: expandedThreads = ({})
+  onCurrentChannelIdChanged: navigationShown = false
 
   Component.onDestruction: {
     tokenField.clear()
@@ -872,6 +944,7 @@ Item {
 
       Row {
         id: headerControls
+        objectName: "header-controls"
         parent: root.controlsInHeader ? channelControlsSlot : topControlsSlot
         spacing: Style.spacing.controlGap
 
@@ -889,10 +962,24 @@ Item {
         }
 
         Button {
+          id: navigationButton
+          objectName: "navigation-button"
+          iconOnly: true
+          iconName: "navigation"
+          text: "Servers and channels"
+          tooltipText: "Servers and channels"
+          visible: root.ready && root.narrowLayout
+          active: root.navigationShown
+          focusable: true
+          onClicked: root.navigationShown = !root.navigationShown
+        }
+        Button {
           id: searchButton
           objectName: "search-button"
           visible: root.ready
+          iconOnly: true
           text: "Search"
+          iconName: "search"
           focusable: true
           activeFocusOnTab: false
           tooltipText: "Find a channel or direct message (Ctrl+K)"
@@ -901,7 +988,10 @@ Item {
         Button {
           id: helpButton
           objectName: "help-button"
+          iconOnly: true
           text: "Help"
+          visible: !root.compactView
+          iconName: "help"
           focusable: true
           activeFocusOnTab: false
           tooltipText: "Keyboard shortcuts (Ctrl+/)"
@@ -909,27 +999,47 @@ Item {
         }
         Button {
           id: membersButton
-          visible: root.ready && root.currentChannelId !== ""
-          text: "Members"
+          objectName: "members-button"
+          visible: root.ready && (root.currentChannelId !== "" || root.voicePeopleMode)
+          iconOnly: true
+          text: root.voicePeopleMode ? "Voice participants" : "Members"
+          iconName: "members"
           active: root.membersVisible
           focusable: true
           activeFocusOnTab: false
           foreground: root.foreground
-          tooltipText: "Show / hide the member list (m)"
+          tooltipText: root.voicePeopleMode ? "People in the current voice channel (m)" : "Show / hide the member list (m)"
           onClicked: root.toggleMembers()
         }
         Button {
           id: logoutButton
-          visible: root.ready
+          visible: root.ready && !root.compactView
+          iconOnly: true
+          tooltipText: "Log out"
           text: "Log out"
+          iconName: "logout"
           focusable: true
           activeFocusOnTab: false
           foreground: root.foreground
           onClicked: logoutConfirm.show()
         }
         Button {
+          id: modeButton
+          objectName: "layout-mode-button"
+          iconOnly: true
+          iconName: root.compactView ? "expand" : "compact"
+          tooltipText: root.compactView ? "Full layout" : "Compact layout"
+          text: root.compactView ? "Full" : "Compact"
+          focusable: true
+          activeFocusOnTab: false
+          onClicked: root.setCompactMode(!root.compactView)
+        }
+        Button {
           id: closeButton
+          iconOnly: true
+          tooltipText: "Close window"
           text: "Close"
+          iconName: "close"
           focusable: true
           activeFocusOnTab: false
           foreground: root.foreground
@@ -945,6 +1055,14 @@ Item {
           var at = root.indexOfId(root.channelRows, channelId)
           if (at >= 0) root.setChannelCursor(at)
         }
+      }
+
+      Components.ServerMenu {
+        id: serverMenu
+        anchors.fill: parent
+        z: 25
+        service: root.serverActions
+        onDismissed: Qt.callLater(root.focusZone)
       }
 
       Components.LogoutConfirm {
@@ -1233,16 +1351,36 @@ Item {
             }
           }
 
-          Row {
+          BorderSurface {
+            id: navigationDrawer
+            objectName: "navigation-drawer"
+            anchors.fill: parent
+            anchors.leftMargin: root.voicePanelPinned ? root.voicePanelWidth + conversationRow.spacing : 0
+            z: 12
+            visible: root.narrowLayout && root.navigationShown && root.ready
+            color: Color.popups.background
+            borderSpec: root.panelBorderSpec
+            MouseArea { anchors.fill: parent }
+            Item {
+              id: navigationRow
+              anchors.fill: parent
+              readonly property real spacing: Style.spacing.panelGap
+            }
+          }
+          Item {
             id: conversationRow
             anchors.fill: parent
             visible: root.ready
-            spacing: Style.spacing.panelGap
+            readonly property real spacing: Style.spacing.panelGap
 
             BorderSurface {
               id: railPane
+              parent: root.narrowLayout ? navigationRow : conversationRow
               objectName: "server-rail"
-              width: Style.space(64)
+              x: 0
+              visible: !root.narrowLayout || root.navigationShown
+              width: root.narrowLayout ? Math.min(Style.space(180), navigationRow.width * 0.48)
+                : Math.min(Style.space(180), Math.max(Style.space(140), body.width * 0.16))
               height: parent.height
               radius: Style.cornerRadius
               color: Color.popups.background
@@ -1251,9 +1389,84 @@ Item {
                 : root.panelBorderSpec
               padding: Style.spacing.sm
 
+              Column {
+                id: serverControls
+                objectName: "server-list-controls"
+                anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                anchors.margins: Style.spacing.sm
+                spacing: Style.spacing.xs
+                Row {
+                  width: parent.width
+                  Text {
+                    width: parent.width - serverToolsButton.width
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Servers"; color: root.foreground
+                    font.family: root.fontFamily; font.pixelSize: Style.font.body; font.bold: true
+                  }
+                  Button {
+                    id: serverToolsButton; objectName: "server-tools-button"
+                    iconOnly: true; iconName: "settings"; text: "Filter and sort servers"
+                    tooltipText: "Filter and sort servers"; active: root.serverToolsShown
+                    focusable: true
+                    onClicked: root.serverToolsShown = !root.serverToolsShown
+                  }
+                }
+                TextField {
+                  id: serverSearch; objectName: "server-search"
+                  visible: root.serverToolsShown
+                  width: parent.width; placeholderText: "Find server"
+                  text: root.serverQuery
+                  onTextEdited: root.serverQuery = text
+                  Keys.onTabPressed: root.cycleFocus(1)
+                  Keys.onBacktabPressed: root.cycleFocus(-1)
+                  Keys.onEscapePressed: { root.serverQuery = ""; root.focusZone() }
+                }
+                Select {
+                  id: serverFilterControl; objectName: "server-filter"
+                  visible: root.serverToolsShown
+                  width: parent.width
+                  model: ["All servers", "Unread", "Mentions"]
+                  currentIndex: ["all", "unread", "mentions"].indexOf(root.serverFilter)
+                  font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall
+                  onActivated: function(index) { root.serverFilter = ["all", "unread", "mentions"][index] }
+                  Keys.onTabPressed: root.cycleFocus(1)
+                  Keys.onBacktabPressed: root.cycleFocus(-1)
+                }
+                Select {
+                  id: serverSortControl; objectName: "server-sort"
+                  visible: root.serverToolsShown
+                  width: parent.width
+                  model: ["Discord order", "Name", "Most mentions", "Most online"]
+                  currentIndex: ["position", "name", "mentions", "online"].indexOf(root.serverSort)
+                  Keys.onTabPressed: root.cycleFocus(1)
+                  Keys.onBacktabPressed: root.cycleFocus(-1)
+                  font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall
+                  onActivated: function(index) {
+                    root.serverSort = ["position", "name", "mentions", "online"][index]
+                    if (root.serverSort === "online") root.serverActions.fetchGuildStats()
+                  }
+                }
+                Button {
+                  id: serverRefresh
+                  objectName: "server-count-refresh"
+                  Keys.onTabPressed: root.cycleFocus(1)
+                  Keys.onBacktabPressed: root.cycleFocus(-1)
+                  width: parent.width; visible: root.serverToolsShown && root.serverSort === "online"; focusable: true
+                  enabled: !root.serverActions.guildStatsBusy
+                  text: enabled ? "Refresh counts" : "Loading counts…"
+                  onClicked: root.serverActions.fetchGuildStats()
+                }
+                Text {
+                  width: parent.width; wrapMode: Text.WordWrap
+                  visible: root.serverToolsShown && root.serverSort === "online"
+                  text: "Approximate online · last fetch"
+                  color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.caption
+                }
+              }
               ListView {
                 id: guildList
-                anchors.fill: parent
+                anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+                anchors.top: serverControls.bottom
                 anchors.margins: Style.spacing.sm
                 clip: true
                 reuseItems: true
@@ -1261,6 +1474,12 @@ Item {
                 boundsBehavior: Flickable.StopAtBounds
                 spacing: Style.spacing.sm
                 model: root.guildRows.length
+                footer: Text {
+                  width: guildList.width; wrapMode: Text.WordWrap
+                  visible: root.filteredGuilds.length === 0
+                  text: "No matching servers"
+                  color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall
+                }
                 ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
                 delegate: Item {
@@ -1274,7 +1493,7 @@ Item {
                   readonly property int mentions: Number(row.mention_count) || 0
                   readonly property bool unread: Api.isUnread(row)
                   width: guildList.width
-                  height: Style.space(48)
+                  height: Style.space(!isDms && root.serverSort === "online" ? 64 : 48)
 
                   Rectangle {
                     anchors.left: parent.left
@@ -1290,8 +1509,8 @@ Item {
                   BorderSurface {
                     id: guildTile
                     anchors.centerIn: parent
-                    width: Style.space(40)
-                    height: width
+                    width: parent.width - Style.spacing.sm
+                    height: parent.height
                     radius: Style.cornerRadius
                     color: guildRow.hasCursor
                       ? Style.hoverFillFor(root.foreground, root.accent)
@@ -1304,21 +1523,39 @@ Item {
                     Behavior on radius { NumberAnimation { duration: 120 } }
 
                     Text {
-                      anchors.centerIn: parent
-                      text: guildRow.isDms ? "@" : Api.initials(guildRow.row.name)
+                      objectName: "server-name-" + String(guildRow.row.id || "")
+                      anchors.left: parent.left
+                      anchors.right: parent.right
+                      anchors.verticalCenter: parent.verticalCenter
+                      anchors.verticalCenterOffset: !guildRow.isDms && root.serverSort === "online" ? -Style.space(9) : 0
+                      anchors.leftMargin: Style.spacing.sm
+                      anchors.rightMargin: guildRow.mentions > 0 ? guildMentionBadge.width + Style.spacing.sm * 2 : Style.spacing.sm
+                      text: String(guildRow.row.name || "Unnamed server")
+                      textFormat: Text.PlainText
+                      wrapMode: Text.Wrap
+                      maximumLineCount: 2
+                      elide: Text.ElideRight
                       color: guildRow.unread || guildRow.selected ? root.foreground : root.muted
                       font.family: root.fontFamily
-                      font.pixelSize: guildRow.isDms ? Style.font.title : Style.font.bodySmall
-                      font.bold: guildRow.unread
+                      font.pixelSize: Style.font.bodySmall
+                      font.bold: guildRow.unread || guildRow.selected
                     }
-
+                    Text {
+                      anchors.left: parent.left; anchors.bottom: parent.bottom
+                      anchors.margins: Style.spacing.sm
+                      visible: !guildRow.isDms && root.serverSort === "online"
+                      readonly property var count: ServerList.knownCount(root.serverActions.guildStats, guildRow.row.id)
+                      text: count === null ? "No data" : "≈ " + count + " online"
+                      color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.caption
+                    }
                   }
 
                   Rectangle {
+                    id: guildMentionBadge
                     visible: guildRow.mentions > 0
                     anchors.right: guildTile.right
-                    anchors.bottom: guildTile.bottom
-                    anchors.margins: -Style.spacing.xxs
+                    anchors.verticalCenter: guildTile.verticalCenter
+                    anchors.rightMargin: Style.spacing.xs
                     width: Math.max(height, guildBadge.implicitWidth + Style.spacing.sm * 2)
                     height: Style.space(16)
                     radius: height / 2
@@ -1339,7 +1576,13 @@ Item {
                     id: guildMouse
                     anchors.fill: parent
                     hoverEnabled: true
-                    onClicked: {
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    onClicked: function(mouse) {
+                      if (mouse.button === Qt.RightButton) {
+                        var pos = guildMouse.mapToItem(serverMenu, mouse.x, mouse.y)
+                        root.showServerMenu(guildRow.row, pos.x, pos.y)
+                        return
+                      }
                       root.zone = "sidebar"
                       root.column = "rail"
                       root.setGuildCursor(guildRow.index)
@@ -1348,18 +1591,18 @@ Item {
                     }
                   }
 
-                  PanelToolTip {
-                    text: String(guildRow.row.name || "")
-                    visible: guildMouse.containsMouse
-                  }
                 }
               }
             }
 
             BorderSurface {
               id: channelPane
+              parent: root.narrowLayout ? navigationRow : conversationRow
               objectName: "channel-pane"
-              width: Math.min(Style.space(230), Math.max(Style.space(150), body.width * 0.23))
+              x: railPane.width + conversationRow.spacing
+              visible: !root.narrowLayout || root.navigationShown
+              width: root.narrowLayout ? Math.max(0, navigationRow.width - railPane.width - navigationRow.spacing)
+                : Math.min(Style.space(210), Math.max(Style.space(140), body.width * 0.19))
               height: parent.height
               radius: Style.cornerRadius
               color: Color.popups.background
@@ -1385,7 +1628,7 @@ Item {
                   width: parent.width
                   visible: !root.channelRows.length
                   wrapMode: Text.WordWrap
-                  text: !root.selectedGuildId ? "Pick a server with Enter or l."
+                  text: !root.selectedGuildId ? "Select a server."
                     : (root.channelsLoading ? "Loading channels"
                       : (root.dmsSelected ? "No direct messages." : "No text channels."))
                   color: root.muted
@@ -1609,12 +1852,16 @@ Item {
 
               Components.CallBar {
                 id: callBar
+                objectName: "call-bar"
+                parent: root.narrowLayout ? body : channelPane
+                expanded: true
+                z: root.voicePanelPinned ? 13 : 0
                 anchors.left: parent.left
-                anchors.right: parent.right
                 anchors.bottom: parent.bottom
-                anchors.leftMargin: Style.spacing.sm
-                anchors.rightMargin: Style.spacing.sm
-                anchors.bottomMargin: Style.spacing.sm
+                width: root.narrowLayout ? root.voicePanelWidth : parent.width - Style.spacing.sm * 2
+                height: root.voicePanelPinned ? parent.height : Math.min(Style.space(320), parent.height * 0.55)
+                anchors.leftMargin: root.narrowLayout ? 0 : Style.spacing.sm
+                anchors.bottomMargin: root.narrowLayout ? 0 : Style.spacing.sm
                 service: root.service
                 channelName: root.service && root.service.voice
                   ? String(root.service.channelNames[String(root.service.voice.channelId || "")] || "")
@@ -1628,8 +1875,11 @@ Item {
             }
 
             Column {
-              width: parent.width - railPane.width - channelPane.width - parent.spacing * 2
-                - (root.membersVisible && !root.compactMembers ? membersView.width + parent.spacing : 0)
+              id: chatColumn
+              objectName: "chat-column"
+              x: root.narrowLayout ? (root.voicePanelPinned ? root.voicePanelWidth + conversationRow.spacing : 0) : railPane.width + channelPane.width + conversationRow.spacing * 2
+              width: Math.max(0, parent.width - (root.narrowLayout ? (root.voicePanelPinned ? root.voicePanelWidth + parent.spacing : 0) : railPane.width + channelPane.width + parent.spacing * 2)
+                - (root.membersVisible ? membersView.width + parent.spacing : 0))
               height: parent.height
               spacing: Style.spacing.xs
 
@@ -1648,7 +1898,7 @@ Item {
                     - Style.spacing.sm * 2 - channelControlsSlot.width
                     - Style.spacing.controlGap))
                   elide: Text.ElideRight
-                  text: root.currentChannelTitle || "No channel open"
+                  text: root.currentChannelTitle || (root.compactView ? "Search to open a conversation" : "No channel open")
                   color: root.currentChannelId ? root.foreground : root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.title
@@ -1683,6 +1933,7 @@ Item {
                 width: parent.width
                 height: parent.height - channelHeader.height - typingLine.height
                   - composerView.height - parent.spacing * 3
+
                 messages: root.currentMessages
                 hasMore: !!(root.currentEntry && root.currentEntry.hasMore)
                 loading: !!(root.currentEntry && root.currentEntry.loading)
@@ -1717,6 +1968,11 @@ Item {
                 onReactionToggled: function(messageId, emoji) { root.applyReaction(messageId, emoji) }
               }
 
+              Item {
+                width: parent.width
+                height: 0
+                visible: false
+              }
               Text {
                 id: typingLine
                 width: parent.width
@@ -1757,16 +2013,18 @@ Item {
             Components.MemberList {
               id: membersView
               objectName: "members"
-              parent: root.compactMembers ? body : conversationRow
+              parent: conversationRow
+              x: body.width - width
               visible: root.membersVisible
-              z: root.compactMembers ? 5 : 0
-              x: root.compactMembers ? body.width - width : 0
-              width: root.compactMembers ? Math.min(Style.space(320), body.width * 0.65)
-                : Math.min(Style.space(220), body.width * 0.22)
+              width: Math.min(Style.space(210), Math.max(Style.space(120), body.width * (root.narrowLayout ? 0.30 : 0.19)))
               height: parent.height
               dismissible: root.compactMembers
               onCloseRequested: { root.toggleMembers(); root.focusZone() }
               service: root.service
+              voiceMode: root.voicePeopleMode
+              voiceUsers: root.activeVoicePeople
+              channelName: root.voicePeopleMode && root.service
+                ? String(root.service.channelNames[root.activeVoiceChannelId] || "Voice channel") : root.currentChannelId
               list: root.service && root.service.memberList
                 && String(root.service.memberList.channel_id || "") === root.currentChannelId
                 ? root.service.memberList : null
@@ -1788,14 +2046,45 @@ Item {
           width: parent.width
           spacing: Style.spacing.xs
 
-          Text {
+          Item {
+            objectName: "error-banner"
             width: parent.width
             visible: root.errorText !== ""
-            wrapMode: Text.WordWrap
-            text: root.errorText
-            color: Color.urgent
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
+            height: visible ? Math.max(dismissErrorButton.height, Math.min(errorLabel.implicitHeight, Style.space(100))) : 0
+            Flickable {
+              id: errorScroll
+              anchors.left: parent.left
+              anchors.right: dismissErrorButton.left
+              anchors.rightMargin: Style.spacing.sm
+              height: parent.height
+              contentWidth: width
+              contentHeight: errorLabel.implicitHeight
+              clip: true
+              boundsBehavior: Flickable.StopAtBounds
+              ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+              Text {
+                id: errorLabel
+                objectName: "error-message"
+                width: errorScroll.width
+                wrapMode: Text.WordWrap
+                textFormat: Text.PlainText
+                text: root.errorText
+                color: Color.urgent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+            }
+            Button {
+              id: dismissErrorButton
+              objectName: "dismiss-error"
+              anchors.right: parent.right
+              text: "Dismiss error"
+              tooltipText: "Dismiss this message without retrying the failed action"
+              iconName: "close"
+              iconOnly: true
+              focusable: true
+              onClicked: root.dismissError()
+            }
           }
           Text {
             width: parent.width
@@ -1826,42 +2115,8 @@ Item {
             width: parent.width
             objectName: "shortcut-hint"
             elide: Text.ElideRight
-            text: {
-              if (!root.ready) {
-                if (root.qrView) {
-                  if (root.qrMissing) return Keymap.footer("qrMissing")
-                  return Keymap.footer(root.qrCancelable ? "qrRunning" : "qrDone")
-                }
-                return Keymap.footer(root.showLogin ? "login" : "down")
-              }
-              if (root.width < Style.space(900)) {
-                if (root.callBarFocused) return "Mute · Deafen · Leave · Help for keys"
-                if (root.buttonFocused) return "Enter activates · Esc returns · Help for keys"
-                if (root.zone === "composer" && root.composer.chipFocused) return "←/→ move · Delete removes · Esc returns"
-                if (root.zone === "composer") return root.composer.editing
-                  ? "Enter saves · Esc cancels · Help for keys"
-                  : "Enter sends · Shift+Enter newline · Help for keys"
-                if (root.zone === "members") return "↑/↓ move · Y copies name · Esc closes"
-                if (root.zone === "timeline") return "↑/↓ move · R reply · E react · Help for keys"
-                return "↑/↓ move · Enter opens · Help for keys"
-              }
-              if (root.callBarFocused) return Keymap.footer("voice")
-              if (root.buttonFocused) {
-                var back = (root.zone === "timeline" || root.zone === "composer" || root.zone === "members") && !root.currentChannelId ? "sidebar"
-                  : (root.zone === "composer" ? "the composer" : (root.zone === "members" ? "the member list" : root.zone))
-                return Keymap.footer("global.activate", "global.tabCycle", { id: "global.escBack", hint: "back to " + back })
-              }
-              if (root.zone === "composer") {
-                if (root.composer.chipFocused) return Keymap.footer("chips")
-                if (root.composer.editing) return Keymap.footer("composerEdit")
-                return "Enter sends · Shift+Enter newline · Ctrl+V pastes · Help for all keys"
-              }
-              if (root.zone === "members") return Keymap.footer("members")
-              if (root.zone === "timeline")
-                return "↑/↓ move · R reply · E react · Y copy · Help for all keys"
-              if (root.column === "rail") return "↑/↓ move · Enter opens channels · Ctrl+K search · Help for all keys"
-              return "↑/↓ move · Enter opens · Ctrl+K search · Help for all keys"
-            }
+            visible: root.ready && root.zone === "composer" && !root.composer.chipFocused
+            text: "Enter to send · Shift+Enter for a new line"
             color: root.muted
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption

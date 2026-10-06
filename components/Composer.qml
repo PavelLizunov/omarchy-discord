@@ -331,7 +331,9 @@ FocusScope {
       Button {
         id: sendButton
         objectName: "send-button"
+        iconOnly: true
         text: composer.editing ? "Save" : "Send"
+        iconName: composer.editing ? "save" : "send"
         enabled: composer.canSubmit
         focusable: true
         tooltipText: composer.editing ? "Save edit (Enter)" : "Send message (Enter)"
