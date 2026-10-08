@@ -1,5 +1,6 @@
 import QtQuick
 import "../Api.js" as Api
+import "../ServerList.js" as ServerList
 
 QtObject {
   id: root
@@ -8,10 +9,58 @@ QtObject {
   readonly property var guilds: service && service.guilds ? service.guilds : []
   property var guildStats: ({})
   property var guildMute: ({})
+  property var archivedGuilds: ({})
+  readonly property int archivedCount: ServerList.archivedCount(guilds, archivedGuilds)
   property bool guildStatsBusy: false
   property bool guildActionBusy: false
   property string settingsError: ""
   property string actionError: ""
+
+  onReadyChanged: {
+    if (!ready) {
+      guildActionBusy = false
+      guildStatsBusy = false
+    } else {
+      loadArchived()
+    }
+  }
+  onServiceChanged: if (ready) loadArchived()
+
+  function isArchived(id) {
+    return !!archivedGuilds[String(id)]
+  }
+
+  function loadArchived() {
+    if (!service) return
+    var entry = typeof service.configuredEntry === "function" ? service.configuredEntry() : null
+    var raw = entry && entry.archivedGuilds !== undefined ? entry.archivedGuilds : null
+    var list = []
+    if (typeof raw === "string") {
+      try { list = JSON.parse(raw) } catch (e) { list = [] }
+    } else if (Array.isArray(raw)) {
+      list = raw
+    }
+    var map = {}
+    if (Array.isArray(list)) {
+      for (var i = 0; i < list.length; i++) {
+        var gid = String(list[i] || "")
+        if (gid) map[gid] = true
+      }
+    }
+    archivedGuilds = map
+  }
+
+  function toggleArchive(id, archived) {
+    var next = Api.shallowCopy(archivedGuilds)
+    var gid = String(id || "")
+    if (!gid) return
+    if (archived) next[gid] = true
+    else delete next[gid]
+    archivedGuilds = next
+    if (service && typeof service.persistOpaque === "function") {
+      service.persistOpaque("archivedGuilds", JSON.stringify(Object.keys(next)))
+    }
+  }
 
   function fetchGuildStats(callback) {
     if (!ready || guildStatsBusy) return false
@@ -73,6 +122,9 @@ QtObject {
         if (entry && entry.channel && String(entry.channel.guild_id) === String(id)) {
           service.closeChannel(service.currentChannelId)
           service.currentChannelId = ""
+        }
+        if (service.voice && String(service.voice.guildId || "") === String(id)) {
+          service.voiceLeave()
         }
         if (service.selectedGuildId === String(id)) service.selectedGuildId = "dms"
         service.refreshStructure()

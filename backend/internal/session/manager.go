@@ -51,6 +51,7 @@ type Manager struct {
 	events chan any
 
 	opMu       sync.Mutex
+	readAckMu  sync.Mutex
 	forwarding atomic.Bool
 
 	runLoop      func(ctx context.Context, n *ningen.State, done chan struct{})
@@ -551,7 +552,7 @@ func (m *Manager) Handle(ctx context.Context, req *protocol.Request) (any, *prot
 	case "history":
 		return m.history(ctx, req)
 	case "ack":
-		return m.ack(req)
+		return m.ack(ctx, req)
 	case "send":
 		return m.send(ctx, req)
 	case "edit":

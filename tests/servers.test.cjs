@@ -22,3 +22,22 @@ test('online sort puts unknown after genuine zero and handles ties',()=>{
  assert.equal(ctx.knownCount({'1':{online_count:-1}},'1'),null);
  assert.deepEqual(ids(ctx.rows(rows,'','all','online',{'1':{online_count:9},'2':{online_count:9}})),['1','2','3']);
 });
+test('archived servers are hidden from regular views and isolated in archive filter',()=>{
+ const archivedMap={'2':true};
+ assert.deepEqual(ids(ctx.rows(rows,'','all','position',{},archivedMap)),['1','3']);
+ assert.deepEqual(ids(ctx.rows(rows,'','unread','position',{},archivedMap)),['1']);
+ assert.deepEqual(ids(ctx.rows(rows,'','mentions','position',{},archivedMap)),[]);
+ assert.deepEqual(ids(ctx.rows(rows,'','archive','position',{},archivedMap)),['2']);
+ assert.equal(ctx.archivedCount(rows,archivedMap),1);
+ assert.equal(ctx.archivedCount(rows,{}),0);
+});
+test('voice filter and count helpers use available voice and unread data',()=>{
+ const voiceMap = {'3': [{channel_id: '99', users: [{id: 'u1'}]}], '1': [{channel_id: '98', users: []}]};
+ assert.deepEqual(ids(ctx.rows(rows,'','voice','position',{},{},voiceMap)),['3']);
+ assert.equal(ctx.hasVoiceUsers(voiceMap, '3'), true);
+ assert.equal(ctx.hasVoiceUsers(voiceMap, '1'), false);
+ assert.equal(ctx.hasVoiceUsers(voiceMap, '2'), false);
+ assert.equal(ctx.unreadCount(rows, {}), 2);
+ assert.equal(ctx.mentionsCount(rows, {}), 1);
+ assert.equal(ctx.voiceGuildsCount(rows, {}, voiceMap), 1);
+});

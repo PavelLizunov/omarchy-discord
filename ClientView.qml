@@ -8,6 +8,7 @@ import "Api.js" as Api
 import "Keymap.js" as Keymap
 import "ServerList.js" as ServerList
 import "components" as Components
+import "ui/Icons.js" as Icons
 
 Item {
   id: root
@@ -17,11 +18,13 @@ Item {
   property var service: null
   property bool compactMode: false
   readonly property bool compactView: compactMode
+  property bool compactChatOpen: false
   signal layoutModeChanged(bool compact)
   function setCompactMode(value) {
+    var chatWasVisible = !!currentChannelId && (!narrowLayout || compactChatOpen)
     compactMode = value
+    compactChatOpen = chatWasVisible
     navigationShown = false
-    if (compactView && zone === "sidebar") zone = currentChannelId ? "composer" : "sidebar"
     layoutModeChanged(value)
     Qt.callLater(focusZone)
   }
@@ -43,7 +46,11 @@ Item {
   readonly property bool qrImageReady: qrImage.status === Image.Ready
   readonly property alias logoutConfirmation: logoutConfirm
   readonly property alias serverMenu: serverMenu
-  readonly property bool overlayShown: cheatsheetView.shown || pickerView.shown || logoutConfirm.shown || serverMenu.shown
+  readonly property alias optionsMenu: optionsMenu
+  readonly property alias helpButton: optionsHelp
+  readonly property alias logoutButton: optionsLogout
+  readonly property alias optionsButton: optionsButton
+  readonly property bool overlayShown: cheatsheetView.shown || pickerView.shown || logoutConfirm.shown || serverMenu.shown || optionsMenu.shown
   readonly property bool compactMembers: false
   readonly property bool narrowLayout: compactView || width < Style.space(900)
   property bool navigationShown: false
@@ -51,7 +58,8 @@ Item {
   readonly property string pluginId: manifest && manifest.id
     ? String(manifest.id) : "quickshell.discord"
   readonly property color foreground: Color.foreground
-  readonly property color muted: Api.secondaryColor(Color.muted, Color.foreground, Color.background)
+  readonly property color muted: Api.secondaryColor(Color.muted, Color.foreground,
+    Api.blend(Style.selectedFillFor(Color.foreground, Color.accent), Color.popups.background, Style.selectedFillAlpha))
   readonly property color background: Color.background
   readonly property color accent: Color.accent
   readonly property string fontFamily: Style.font.family
@@ -63,8 +71,7 @@ Item {
   readonly property real controlButtonsWidth:
     (ready && currentChannelId !== "" ? membersButton.width + Style.spacing.controlGap : 0)
     + (ready ? searchButton.width + Style.spacing.controlGap : 0)
-    + (!compactView ? helpButton.width + Style.spacing.controlGap : 0)
-    + (!compactView && ready ? logoutButton.width + Style.spacing.controlGap : 0)
+    + (ready ? optionsButton.width + Style.spacing.controlGap : 0)
     + navigationButton.width + Style.spacing.controlGap + modeButton.width + Style.spacing.controlGap + closeButton.width
   readonly property real channelHeaderRoom: channelHeader.width - Style.spacing.sm * 2
     - Style.spacing.controlGap
@@ -98,9 +105,11 @@ Item {
 
   property string zone: "sidebar"
   property string column: "rail"
-  readonly property bool buttonFocused: navigationButton.activeFocus || logoutButton.activeFocus || closeButton.activeFocus || modeButton.activeFocus
-    || membersButton.activeFocus || searchButton.activeFocus || helpButton.activeFocus
-    || startBackendButton.activeFocus || dismissErrorButton.activeFocus || callBarFocused
+  readonly property bool buttonFocused: navigationButton.activeFocus || optionsButton.activeFocus || closeButton.activeFocus || modeButton.activeFocus
+    || membersButton.activeFocus || searchButton.activeFocus || optionsHelp.activeFocus || optionsLogout.activeFocus
+    || startBackendButton.activeFocus || dismissErrorButton.activeFocus || joinVoiceButton.activeFocus || callBarFocused
+    || filterButtons(serverFilterChips).some(function(button) { return button.activeFocus })
+    || filterButtons(channelFilterChips).some(function(button) { return button.activeFocus })
   readonly property bool callBarFocused: callBar.visible && callBar.activeFocus
   readonly property string activeVoiceChannelId: {
     if (!service || !service.voice) return ""
@@ -110,10 +119,13 @@ Item {
   }
   readonly property bool voicePeopleMode: false
   readonly property bool voicePanelPinned: narrowLayout && !!(service && service.voice && String(service.voice.status || "idle") !== "idle")
-  readonly property real voicePanelWidth: voicePanelPinned ? Math.min(Style.space(210), Math.max(Style.space(155), body.width * 0.35)) : 0
+  readonly property bool voiceRoomVisible: !!(service && service.voice && String(service.voice.status || "idle") !== "idle")
+  readonly property bool voiceNavigation: narrowLayout && !compactChatOpen && voiceRoomVisible
+  readonly property real voicePanelWidth: voiceRoomVisible ? Style.space(narrowLayout ? 155 : 180) : 0
   readonly property var activeVoicePeople: service && activeVoiceChannelId
     ? service.voiceUsers(String(service.voice.guildId || ""), activeVoiceChannelId) : []
-  readonly property bool membersVisible: ready && !voicePanelPinned
+  readonly property bool membersVisible: ready && !voiceRoomVisible
+    && (!narrowLayout || compactChatOpen)
     && !!(service && service.membersWanted) && currentChannelId !== ""
   property var expandedThreads: ({})
   readonly property bool canToggleCurrentThreads: currentThreadParent() !== null
@@ -133,18 +145,42 @@ Item {
   property string serverQuery: ""
   property string serverFilter: "all"
   property string serverSort: "position"
+  property string channelFilter: "all"
   property var serverActionsOverride: null
   readonly property var serverActions: serverActionsOverride || defaultServerActions
   Components.ServerActions { id: defaultServerActions; service: root.service }
+  readonly property int unreadServersCount: ServerList.unreadCount(service ? service.guilds : [], serverActions.archivedGuilds)
+  readonly property int mentionedServersCount: ServerList.mentionsCount(service ? service.guilds : [], serverActions.archivedGuilds)
+  readonly property int voiceServersCount: ServerList.voiceGuildsCount(service ? service.guilds : [], serverActions.archivedGuilds, service ? service.voiceMembers : null)
   readonly property var filteredGuilds: ServerList.rows(service && service.guilds ? service.guilds : [],
-    serverQuery, serverFilter, serverSort, serverActions.guildStats)
+    serverQuery, serverFilter, serverSort, serverActions.guildStats, serverActions.archivedGuilds, service ? service.voiceMembers : null)
   function showServerMenu(row, x, y) {
-    if (!row || String(row.id) === "dms") return
+    if (!row || String(row.id) === "dms" || row.kind === "archive_entry" || row.kind === "archive_back") return
     serverMenu.show(row, x, y)
   }
   readonly property var guildRows: {
-    var rows = [{ kind: "dms", id: "dms", name: "Direct Messages",
-      mention_count: dmMentionCount(), unread: dmUnread() }]
+    var rows = []
+    if (serverFilter === "all") {
+      rows.push({ kind: "dms", id: "dms", name: "Direct Messages",
+        mention_count: dmMentionCount(), unread: dmUnread() })
+      if (serverActions.archivedCount > 0) {
+        rows.push({ kind: "archive_entry", id: "archive", name: "Archived servers (" + serverActions.archivedCount + ")",
+          mention_count: 0, unread: false })
+      }
+    } else if (serverFilter === "unread") {
+      if (dmUnread()) {
+        rows.push({ kind: "dms", id: "dms", name: "Direct Messages",
+          mention_count: dmMentionCount(), unread: dmUnread() })
+      }
+    } else if (serverFilter === "mentions") {
+      if (dmMentionCount() > 0) {
+        rows.push({ kind: "dms", id: "dms", name: "Direct Messages",
+          mention_count: dmMentionCount(), unread: dmUnread() })
+      }
+    } else if (serverFilter === "archive") {
+      rows.push({ kind: "archive_back", id: "archive_back", name: "All servers",
+        mention_count: 0, unread: false })
+    }
     for (var i = 0; i < filteredGuilds.length; i++) rows.push(filteredGuilds[i])
     return rows
   }
@@ -167,8 +203,9 @@ Item {
     }
     return out
   }
+  readonly property var filteredChannelRows: dmsSelected ? channelRows : Api.filterChannels(channelRows, channelFilter)
   readonly property int guildCursor: indexOfId(guildRows, guildCursorId)
-  readonly property int channelCursor: indexOfId(channelRows, channelCursorId)
+  readonly property int channelCursor: indexOfId(filteredChannelRows, channelCursorId)
   readonly property bool channelsLoading: !!(service && selectedGuildId
     && !dmsSelected && service.isLoadingChannels(selectedGuildId))
   readonly property string selectedGuildName: {
@@ -370,6 +407,7 @@ Item {
   }
 
   function close() {
+    optionsMenu.shown = false
     logoutConfirm.shown = false
     serverMenu.shown = false
     tokenField.clear()
@@ -398,7 +436,8 @@ Item {
   function restoreView() {
     guildCursorId = selectedGuildId || "dms"
     channelCursorId = currentChannelId
-    if (currentChannelId) {
+    compactChatOpen = false
+    if (currentChannelId && !narrowLayout) {
       zone = "composer"
       column = "channels"
     } else {
@@ -446,18 +485,18 @@ Item {
   }
 
   function setChannelCursor(index) {
-    if (index < 0 || index >= channelRows.length) return
-    channelCursorId = String(channelRows[index].id || "")
+    if (index < 0 || index >= filteredChannelRows.length) return
+    channelCursorId = String(filteredChannelRows[index].id || "")
     channelList.positionViewAtIndex(index, ListView.Contain)
   }
 
   function findChannel(from, delta, accept) {
-    var count = channelRows.length
+    var count = filteredChannelRows.length
     if (!count) return -1
     var index = from
     for (var step = 0; step < count; step++) {
       index = clampCursor(index + delta, count)
-      if (accept(channelRows[index])) return index
+      if (accept(filteredChannelRows[index])) return index
     }
     return -1
   }
@@ -471,8 +510,8 @@ Item {
 
   function ensureCursors() {
     if (guildCursor < 0) guildCursorId = "dms"
-    if (channelCursor >= 0 && Api.isSelectableChannel(channelRows[channelCursor])) return
-    var at = indexOfId(channelRows, currentChannelId)
+    if (channelCursor >= 0 && Api.isSelectableChannel(filteredChannelRows[channelCursor])) return
+    var at = indexOfId(filteredChannelRows, currentChannelId)
     if (at < 0) at = findChannel(-1, 1, Api.isSelectableChannel)
     if (at >= 0) setChannelCursor(at)
     else channelCursorId = ""
@@ -481,24 +520,36 @@ Item {
   function selectGuild(index) {
     if (index < 0 || index >= guildRows.length || !service) return
     setGuildCursor(index)
-    var id = String(guildRows[index].id || "")
-    if (service.selectedGuildId !== id) {
-      service.selectedGuildId = id
-      channelCursorId = ""
+    var row = guildRows[index]
+    var id = String(row.id || "")
+    if (row.kind === "archive_entry" || id === "archive") {
+      serverFilter = "archive"
+      setGuildCursor(0)
+      return
     }
-    if (id !== "dms") service.loadChannels(id)
+    if (row.kind === "archive_back" || id === "archive_back") {
+      serverFilter = "all"
+      setGuildCursor(0)
+      return
+    }
+    compactChatOpen = false
+    channelCursorId = ""
+    channelFilter = "all"
+    Api.browseGuild(service, id)
   }
 
   function enterChannels() {
     var index = guildCursor < 0 ? 0 : guildCursor
-    var target = index >= 0 && index < guildRows.length ? String(guildRows[index].id || "") : ""
-    var owned = target !== "" && target === selectedGuildId && currentChannelId !== ""
+    var row = index >= 0 && index < guildRows.length ? guildRows[index] : null
+    if (row && (row.kind === "archive_entry" || row.kind === "archive_back")) {
+      selectGuild(index)
+      return
+    }
     selectGuild(index)
     zone = "sidebar"
     column = "channels"
     hint = ""
-    if (!owned && service) service.enterGuild(target)
-    if (currentChannelId && indexOfId(channelRows, currentChannelId) >= 0)
+    if (currentChannelId && indexOfId(filteredChannelRows, currentChannelId) >= 0)
       channelCursorId = currentChannelId
     ensureCursors()
     focusZone()
@@ -510,14 +561,15 @@ Item {
   }
 
   function activateChannel(index, origin) {
-    var row = channelRows[index]
+    var row = filteredChannelRows[index]
     if (!row || !service) return
     if (String(row.type || "") === "forum") { toggleThreads(index); return }
-    if (String(row.type || "") === "voice") { joinVoice(index); return }
-    if (!Api.isOpenableChannel(row)) return
+    setChannelCursor(indexOfId(filteredChannelRows, row.id))
+    if (String(row.type || "") !== "voice" && !Api.isOpenableChannel(row)) return
     hint = ""
-    setChannelCursor(index)
     service.showChannel(String(row.id || ""), selectedGuildId)
+    if (narrowLayout) compactChatOpen = true
+    navigationShown = false
     timelineView.focusNewest()
     if (origin === "timeline") enterTimeline()
     else if (origin === "members" && membersVisible) enterMembers()
@@ -525,11 +577,17 @@ Item {
   }
 
   function joinVoice(index) {
-    var row = channelRows[index]
-    if (!row || !service) return
-    hint = ""
+    var row = filteredChannelRows[index]
+    if (!row) return
     setChannelCursor(index)
+    joinVoiceChannel(row)
+  }
+
+  function joinVoiceChannel(row) {
+    if (!row || String(row.type || "") !== "voice" || !service) return
+    hint = ""
     var id = String(row.id || "")
+    if (!id) return
     if (activeVoiceChannelId && activeVoiceChannelId === id) { focusCallBar(); return }
     service.voiceJoin(String(row.guild_id || selectedGuildId), id)
   }
@@ -547,7 +605,7 @@ Item {
   }
 
   function toggleThreads(index) {
-    var row = channelRows[index]
+    var row = filteredChannelRows[index]
     if (!row || !service || dmsSelected) return
     var id = String(row.id || "")
     if (String(row.type || "") === "thread") id = String(row.parent_id || "")
@@ -595,6 +653,7 @@ Item {
     if (voicePeopleMode) { enterMembers(); return }
     if (!service) return
     if (!currentChannelId) { hint = "Open a channel first"; return }
+    if (narrowLayout) compactChatOpen = true
     service.setMembersWanted(!service.membersWanted)
     hint = ""
     if (service.membersWanted && narrowLayout) enterMembers()
@@ -602,6 +661,7 @@ Item {
   }
 
   function enterMembers() {
+    if (narrowLayout) compactChatOpen = true
     if (!membersVisible) return
     zone = "members"
     hint = ""
@@ -616,22 +676,25 @@ Item {
 
   function enterTimeline() {
     if (!currentChannelId) return
+    if (narrowLayout) compactChatOpen = true
     zone = "timeline"
     timelineView.focusNewest()
     focusZone()
   }
 
   function leaveTimeline(markRead) {
+    if (narrowLayout) compactChatOpen = false
     if (markRead && service && currentChannelId) service.markChannelRead(currentChannelId)
     zone = "sidebar"
     column = "channels"
-    if (currentChannelId && indexOfId(channelRows, currentChannelId) >= 0)
+    if (currentChannelId && indexOfId(filteredChannelRows, currentChannelId) >= 0)
       channelCursorId = currentChannelId
     focusZone()
   }
 
   function enterComposer() {
     if (!currentChannelId) return
+    if (narrowLayout) compactChatOpen = true
     zone = "composer"
     hint = ""
     focusZone()
@@ -665,7 +728,7 @@ Item {
   }
 
   function stepChannel(delta, unreadOnly) {
-    var from = indexOfId(channelRows, currentChannelId)
+    var from = indexOfId(filteredChannelRows, currentChannelId)
     if (from < 0) from = channelCursor >= 0 ? channelCursor - delta : (delta > 0 ? -1 : 0)
     var accept = unreadOnly
       ? function(row) { return Api.isOpenableChannel(row) && Api.isUnread(row) }
@@ -676,7 +739,10 @@ Item {
   }
 
   function focusZone() {
-    if (narrowLayout && zone === "sidebar" && !navigationShown && currentChannelId) zone = "composer"
+    if (narrowLayout && !compactChatOpen && (zone === "timeline" || zone === "composer")) {
+      zone = "sidebar"
+      column = "channels"
+    }
     if (zone === "members" && !membersVisible) zone = "composer"
     if ((zone === "timeline" || zone === "composer") && !currentChannelId) {
       zone = "sidebar"
@@ -692,23 +758,41 @@ Item {
     else sidebarFocus.forceActiveFocus()
   }
 
+  function filterButtons(group) {
+    return group.children.filter(function(item) { return item.visible && typeof item.focusable === "boolean" })
+  }
+
   function cycleFocus(delta) {
-    var stops = ["rail", "serverTools", "serverSearch", "serverFilter", "serverSort", "serverRefresh", "channels", "timeline", "composer", "callbar", "members", "startBackend",
-      "navigation", "search", "help", "membersButton", "logout", "mode", "close", "dismissError"]
-    var current = dismissErrorButton.activeFocus ? "dismissError" : navigationButton.activeFocus ? "navigation" : serverToolsButton.activeFocus ? "serverTools" : serverSearch.activeFocus ? "serverSearch" : serverFilterControl.activeFocus ? "serverFilter"
+    var groups = [serverFilterChips, channelFilterChips]
+    var groupNames = ["serverChips", "channelChips"]
+    var focusedGroup = ""
+    for (var g = 0; g < groups.length; g++) {
+      var buttons = filterButtons(groups[g])
+      for (var b = 0; b < buttons.length; b++) if (buttons[b].activeFocus) {
+        if (b + delta >= 0 && b + delta < buttons.length) { buttons[b + delta].forceActiveFocus(); return }
+        focusedGroup = groupNames[g]
+      }
+    }
+    var stops = ["rail", "serverChips", "serverTools", "serverSearch", "serverFilter", "serverSort", "serverRefresh", "channels", "channelChips", "timeline", "composer", "joinVoice", "callbar", "members", "startBackend",
+      "navigation", "search", "membersButton", "options", "mode", "close", "dismissError"]
+    var current = focusedGroup || (joinVoiceButton.activeFocus ? "joinVoice" : dismissErrorButton.activeFocus ? "dismissError" : navigationButton.activeFocus ? "navigation" : serverToolsButton.activeFocus ? "serverTools" : serverSearch.activeFocus ? "serverSearch" : serverFilterControl.activeFocus ? "serverFilter"
       : serverSortControl.activeFocus ? "serverSort" : serverRefresh.activeFocus ? "serverRefresh" : callBarFocused ? "callbar"
       : (buttonFocused
-        ? (modeButton.activeFocus ? "mode" : closeButton.activeFocus ? "close" : searchButton.activeFocus ? "search" : helpButton.activeFocus ? "help"
+        ? (modeButton.activeFocus ? "mode" : closeButton.activeFocus ? "close" : searchButton.activeFocus ? "search" : optionsButton.activeFocus ? "options"
           : (membersButton.activeFocus ? "membersButton"
-            : (startBackendButton.activeFocus ? "startBackend" : "logout")))
-        : (zone === "sidebar" ? column : zone))
+            : (startBackendButton.activeFocus ? "startBackend" : "options")))
+        : (zone === "sidebar" ? column : zone)))
     var index = stops.indexOf(current)
     for (var step = 0; step < stops.length; step++) {
       index = clampCursor(index + delta, stops.length)
       var stop = stops[index]
+      if (stop === "joinVoice" && (!joinVoiceButton.visible || !chatColumn.visible)) continue
+      if (stop === "serverChips" && (!railPane.visible || !filterButtons(serverFilterChips).length)) continue
+      if (stop === "channelChips" && (!channelPane.visible || !channelFilterChips.visible || !filterButtons(channelFilterChips).length)) continue
       if ((stop === "rail" || stop === "channels" || stop === "serverSearch" || stop === "serverFilter" || stop === "serverSort") && !ready) continue
       if ((stop === "timeline" || stop === "composer") && !currentChannelId) continue
-      if (narrowLayout && !navigationShown && ["rail", "channels", "serverTools", "serverSearch", "serverFilter", "serverSort", "serverRefresh"].indexOf(stop) >= 0) continue
+      if (narrowLayout && !compactChatOpen && (stop === "timeline" || stop === "composer" || stop === "members")) continue
+      if (narrowLayout && compactChatOpen && (stop === "rail" || stop === "channels" || stop === "serverTools" || stop === "serverSearch" || stop === "serverFilter" || stop === "serverSort" || stop === "serverRefresh")) continue
       if (["serverSearch", "serverFilter", "serverSort"].indexOf(stop) >= 0 && !serverToolsShown) continue
       if (stop === "serverRefresh" && !serverRefresh.visible) continue
       if (stop === "callbar" && !(ready && callBar.visible)) continue
@@ -717,8 +801,9 @@ Item {
       if (stop === "membersButton" && !membersButton.visible) continue
       if (stop === "navigation" && !navigationButton.visible) continue
       if (stop === "search" && !searchButton.visible) continue
-      if (stop === "help" && !helpButton.visible) continue
-      if (stop === "logout" && !logoutButton.visible) continue
+      if (stop === "options" && !optionsButton.visible) continue
+      if (stop === "mode" && !modeButton.visible) continue
+      if (stop === "close" && !closeButton.visible) continue
       if (stop === "dismissError") {
         if (!dismissErrorButton.visible) continue
         dismissErrorButton.forceActiveFocus()
@@ -729,6 +814,12 @@ Item {
 
   function focusStop(stop, delta) {
     hint = ""
+    if (stop === "serverChips" || stop === "channelChips") {
+      var buttons = filterButtons(stop === "serverChips" ? serverFilterChips : channelFilterChips)
+      if (buttons.length) buttons[delta < 0 ? buttons.length - 1 : 0].forceActiveFocus()
+      return
+    }
+    if (stop === "joinVoice") { joinVoiceButton.forceActiveFocus(); return }
     if (stop === "navigation") { navigationButton.forceActiveFocus(); return }
     if (stop === "serverTools") { serverToolsButton.forceActiveFocus(); return }
     if (stop === "serverSearch") { serverSearch.forceActiveFocus(); return }
@@ -737,8 +828,7 @@ Item {
     if (stop === "serverRefresh") { serverRefresh.forceActiveFocus(); return }
     if (stop === "mode") { modeButton.forceActiveFocus(); return }
     if (stop === "search") { searchButton.forceActiveFocus(); return }
-    if (stop === "help") { helpButton.forceActiveFocus(); return }
-    if (stop === "logout") { logoutButton.forceActiveFocus(); return }
+    if (stop === "options") { optionsButton.forceActiveFocus(); return }
     if (stop === "close") { closeButton.forceActiveFocus(); return }
     if (stop === "membersButton") { membersButton.forceActiveFocus(); return }
     if (stop === "startBackend") { startBackendButton.forceActiveFocus(); return }
@@ -783,6 +873,14 @@ Item {
     var alt = (event.modifiers & Qt.AltModifier) !== 0
     var shift = (event.modifiers & Qt.ShiftModifier) !== 0
     if (overlayShown) return
+    if (narrowLayout && compactChatOpen && key === Qt.Key_Escape) {
+      compactChatOpen = false
+      zone = "sidebar"
+      column = "channels"
+      focusZone()
+      event.accepted = true
+      return
+    }
     if (navigationShown && key === Qt.Key_Escape) { navigationShown = false; event.accepted = true; return }
     if (handleGlobalKey(event)) return
     if (showLogin) {
@@ -860,6 +958,11 @@ Item {
   }
 
   function dispatchKey(event) {
+    if (optionsMenu.shown) {
+      if (event.key === Qt.Key_Escape) optionsMenu.hide()
+      event.accepted = true
+      return true
+    }
     if (logoutConfirm.shown) {
       if (event.key === Qt.Key_Escape) logoutConfirm.hide()
       event.accepted = true
@@ -877,7 +980,7 @@ Item {
   }
 
   onGuildRowsChanged: ensureCursors()
-  onChannelRowsChanged: ensureCursors()
+  onFilteredChannelRowsChanged: ensureCursors()
   onShowLoginChanged: if (showLogin && opened) Qt.callLater(focusLogin)
   onQrViewChanged: if (showLogin && opened) Qt.callLater(focusLogin)
   onWindowActiveChanged: publishActive()
@@ -893,9 +996,14 @@ Item {
     if (!ready) { zone = "sidebar"; column = "rail" }
     if (opened) focusZone()
   }
-  onMembersVisibleChanged: if (!membersVisible && zone === "members" && opened) { zone = "composer"; focusZone() }
+  onMembersVisibleChanged: {
+    if (!membersVisible && zone === "members" && opened) { zone = "composer"; focusZone() }
+  }
   onSelectedGuildIdChanged: expandedThreads = ({})
-  onCurrentChannelIdChanged: navigationShown = false
+  onCurrentChannelIdChanged: {
+    navigationShown = false
+    if (currentChannelId) compactChatOpen = true
+  }
 
   Component.onDestruction: {
     tokenField.clear()
@@ -965,13 +1073,24 @@ Item {
           id: navigationButton
           objectName: "navigation-button"
           iconOnly: true
-          iconName: "navigation"
-          text: "Servers and channels"
-          tooltipText: "Servers and channels"
-          visible: root.ready && root.narrowLayout
-          active: root.navigationShown
+          iconName: root.compactChatOpen ? "back" : "navigation"
+          text: root.compactChatOpen ? "Channels" : "Servers and channels"
+          tooltipText: root.compactChatOpen ? "Back to servers & channels (Esc)" : "Servers and channels"
+          visible: root.ready && root.narrowLayout && (root.compactChatOpen || root.currentChannelId !== "")
+          active: !root.compactChatOpen
           focusable: true
-          onClicked: root.navigationShown = !root.navigationShown
+          onClicked: {
+            if (root.compactChatOpen) {
+              root.compactChatOpen = false
+              root.zone = "sidebar"
+              root.column = "channels"
+              root.focusZone()
+            } else if (root.currentChannelId !== "") {
+              root.compactChatOpen = true
+              root.zone = "composer"
+              root.focusZone()
+            }
+          }
         }
         Button {
           id: searchButton
@@ -984,18 +1103,6 @@ Item {
           activeFocusOnTab: false
           tooltipText: "Find a channel or direct message (Ctrl+K)"
           onClicked: root.openSwitcher()
-        }
-        Button {
-          id: helpButton
-          objectName: "help-button"
-          iconOnly: true
-          text: "Help"
-          visible: !root.compactView
-          iconName: "help"
-          focusable: true
-          activeFocusOnTab: false
-          tooltipText: "Keyboard shortcuts (Ctrl+/)"
-          onClicked: root.toggleCheatsheet()
         }
         Button {
           id: membersButton
@@ -1012,16 +1119,17 @@ Item {
           onClicked: root.toggleMembers()
         }
         Button {
-          id: logoutButton
-          visible: root.ready && !root.compactView
+          id: optionsButton
+          objectName: "options-button"
+          visible: root.ready
           iconOnly: true
-          tooltipText: "Log out"
-          text: "Log out"
-          iconName: "logout"
+          text: "Settings"
+          iconName: "settings"
+          active: optionsMenu.shown
           focusable: true
           activeFocusOnTab: false
           foreground: root.foreground
-          onClicked: logoutConfirm.show()
+          onClicked: optionsMenu.toggle("top-right")
         }
         Button {
           id: modeButton
@@ -1052,7 +1160,7 @@ Item {
         ignoreUnknownSignals: true
         function onGuildEntered(guildId, channelId) {
           if (guildId !== root.selectedGuildId) return
-          var at = root.indexOfId(root.channelRows, channelId)
+          var at = root.indexOfId(root.filteredChannelRows, channelId)
           if (at >= 0) root.setChannelCursor(at)
         }
       }
@@ -1063,6 +1171,166 @@ Item {
         z: 25
         service: root.serverActions
         onDismissed: Qt.callLater(root.focusZone)
+      }
+
+      Rectangle {
+        id: optionsBackdrop
+        anchors.fill: parent
+        z: 21
+        color: Color.menu.scrim
+        opacity: optionsMenu.shown ? 1 : 0
+        visible: optionsMenu.shown
+        Behavior on opacity { NumberAnimation { duration: 140 } }
+        MouseArea {
+          anchors.fill: parent
+          onClicked: optionsMenu.hide()
+        }
+      }
+
+      BorderSurface {
+        id: optionsMenu
+        objectName: "options-menu"
+        property bool shown: false
+        property string anchorCorner: "top-right"
+        visible: shown
+        z: 22
+        Keys.onEscapePressed: hide()
+        x: anchorCorner === "bottom-left" ? Style.spacing.panelPadding : (parent.width - width - Style.spacing.panelPadding)
+        y: anchorCorner === "bottom-left"
+          ? Math.max(Style.spacing.panelPadding, parent.height - height - Style.space(50))
+          : (root.controlsRowHeight + Style.spacing.panelPadding + Style.spacing.xs)
+        width: Math.min(Style.space(260), parent.width - Style.spacing.panelPadding * 2)
+        height: optionsBody.implicitHeight + Style.spacing.md * 2
+        radius: Style.cornerRadius
+        color: Color.popups.background
+        borderSpec: Border.flat(Color.popups.border, Math.max(1, Style.normalBorderWidth))
+        function toggle(corner) { if (shown) hide(); else showAt(corner || "top-right") }
+        function show() { showAt("top-right") }
+        function showAt(corner) {
+          anchorCorner = corner || "top-right"
+          shown = true
+          Qt.callLater(function() { optionsHelp.forceActiveFocus() })
+        }
+        function hide() {
+          shown = false
+          Qt.callLater(function() {
+            if (anchorCorner === "bottom-left") userBarSettingsBtn.forceActiveFocus()
+            else optionsButton.forceActiveFocus()
+          })
+        }
+        MouseArea { anchors.fill: parent }
+
+        Column {
+          id: optionsBody
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.top: parent.top
+          anchors.margins: Style.spacing.md
+          spacing: Style.spacing.xs
+
+          Row {
+            width: parent.width
+            spacing: Style.spacing.sm
+            Components.Avatar {
+              anchors.verticalCenter: parent.verticalCenter
+              width: Style.space(28); height: Style.space(28)
+              name: root.service && root.service.user ? (root.service.user.display_name || root.service.user.username || "") : ""
+              service: root.service
+            }
+            Column {
+              anchors.verticalCenter: parent.verticalCenter
+              width: parent.width - Style.space(36)
+              Text {
+                width: parent.width; elide: Text.ElideRight
+                text: root.service && root.service.user ? String(root.service.user.display_name || root.service.user.username || "Discord user") : "Discord user"
+                color: Color.popups.text
+                font.family: root.fontFamily; font.pixelSize: Style.font.body; font.bold: true
+              }
+              Text {
+                width: parent.width; elide: Text.ElideRight
+                text: root.service && root.service.user && root.service.user.username ? "@" + String(root.service.user.username) : (root.service ? root.service.statusText : "")
+                color: root.muted
+                font.family: root.fontFamily; font.pixelSize: Style.font.caption
+              }
+            }
+          }
+
+          Rectangle { width: parent.width; height: 1; color: Color.popups.border; opacity: 0.4 }
+
+          Button {
+            id: optionsNotifs
+            objectName: "menu-notifications"
+            width: parent.width
+            leftAlign: true
+            iconName: "settings"
+            readonly property string currentVal: root.service && root.service.settings ? String(root.service.settings.notifications || "Mentions and DMs") : "Mentions and DMs"
+            text: "Notifications: " + (currentVal === "All" ? "All" : (currentVal === "Off" ? "Off" : "Mentions"))
+            focusable: true
+            onClicked: {
+              if (!root.service || typeof root.service.persistSettings !== "function") return
+              var cycle = ["All", "Mentions and DMs", "Off"]
+              var idx = cycle.indexOf(currentVal)
+              var next = cycle[(idx + 1) % cycle.length]
+              root.service.persistSettings({ notifications: next })
+            }
+          }
+
+          Button {
+            id: optionsStayConnected
+            objectName: "menu-stay-connected"
+            width: parent.width
+            leftAlign: true
+            iconName: "reconnect"
+            readonly property bool isStay: root.service && root.service.settings ? root.service.settings.stayConnected !== "Off" : true
+            text: "Stay connected: " + (isStay ? "On" : "Off")
+            focusable: true
+            onClicked: {
+              if (!root.service || typeof root.service.persistSettings !== "function") return
+              root.service.persistSettings({ stayConnected: isStay ? "Off" : "On" })
+            }
+          }
+
+          Button {
+            id: optionsArchive
+            objectName: "menu-archive"
+            width: parent.width
+            leftAlign: true
+            iconName: "archive"
+            visible: root.serverActions.archivedCount > 0
+            text: "Archived servers (" + root.serverActions.archivedCount + ")"
+            focusable: true
+            onClicked: {
+              optionsMenu.hide()
+              root.serverFilter = "archive"
+              root.setGuildCursor(0)
+            }
+          }
+
+          Rectangle { width: parent.width; height: 1; color: Color.popups.border; opacity: 0.4 }
+
+          Button {
+            id: optionsHelp
+            objectName: "menu-help"
+            width: parent.width
+            leftAlign: true
+            iconName: "help"
+            text: "Keyboard shortcuts"
+            focusable: true
+            onClicked: { optionsMenu.hide(); root.toggleCheatsheet() }
+          }
+
+          Button {
+            id: optionsLogout
+            objectName: "menu-logout"
+            width: parent.width
+            leftAlign: true
+            iconName: "logout"
+            text: "Log out…"
+            foreground: Color.urgent
+            focusable: true
+            onClicked: { optionsMenu.hide(); logoutConfirm.show() }
+          }
+        }
       }
 
       Components.LogoutConfirm {
@@ -1315,7 +1583,7 @@ Item {
               Text {
                 width: parent.width
                 wrapMode: Text.WordWrap
-                text: "Or paste a user token and press Enter. It goes straight to the backend and into the keyring; it is never written to disk or shown here."
+                text: "Or paste a user token and press Enter. The backend stores it in your system keyring. Omacord does not keep a plaintext token file."
                 color: root.muted
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
@@ -1351,35 +1619,27 @@ Item {
             }
           }
 
-          BorderSurface {
+          Item {
             id: navigationDrawer
             objectName: "navigation-drawer"
-            anchors.fill: parent
-            anchors.leftMargin: root.voicePanelPinned ? root.voicePanelWidth + conversationRow.spacing : 0
-            z: 12
-            visible: root.narrowLayout && root.navigationShown && root.ready
-            color: Color.popups.background
-            borderSpec: root.panelBorderSpec
-            MouseArea { anchors.fill: parent }
-            Item {
-              id: navigationRow
-              anchors.fill: parent
-              readonly property real spacing: Style.spacing.panelGap
-            }
+            visible: false
+            width: 0; height: 0
+            x: 0
           }
           Item {
             id: conversationRow
             anchors.fill: parent
+            anchors.leftMargin: 0
             visible: root.ready
             readonly property real spacing: Style.spacing.panelGap
 
             BorderSurface {
               id: railPane
-              parent: root.narrowLayout ? navigationRow : conversationRow
+              parent: conversationRow
               objectName: "server-rail"
               x: 0
-              visible: !root.narrowLayout || root.navigationShown
-              width: root.narrowLayout ? Math.min(Style.space(180), navigationRow.width * 0.48)
+              visible: !root.narrowLayout || !root.compactChatOpen
+              width: root.narrowLayout ? Math.min(Style.space(180), Math.max(Style.space(160), conversationRow.width * 0.38))
                 : Math.min(Style.space(180), Math.max(Style.space(140), body.width * 0.16))
               height: parent.height
               radius: Style.cornerRadius
@@ -1389,26 +1649,120 @@ Item {
                 : root.panelBorderSpec
               padding: Style.spacing.sm
 
-              Column {
-                id: serverControls
-                objectName: "server-list-controls"
+              Flickable {
+                id: serverControlsViewport
+                objectName: "server-controls-viewport"
                 anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
                 anchors.margins: Style.spacing.sm
+                height: Math.min(serverControls.implicitHeight, Math.max(0, railPane.height - userBar.height - Style.space(170)))
+                contentWidth: width
+                contentHeight: serverControls.implicitHeight
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                readonly property var focusedItem: Window.window ? Window.window.activeFocusItem : null
+                onFocusedItemChanged: Qt.callLater(revealFocusedControl)
+                function revealFocusedControl() {
+                  var item = focusedItem
+                  if (!item) return
+                  var node = item
+                  while (node && node !== serverControls) node = node.parent
+                  if (!node) return
+                  var y = item.mapToItem(serverControls, 0, 0).y
+                  if (y < contentY) contentY = y
+                  else if (y + item.height > contentY + height) contentY = y + item.height - height
+                }
+                Column {
+                id: serverControls
+                objectName: "server-list-controls"
+                width: serverControlsViewport.width
                 spacing: Style.spacing.xs
                 Row {
                   width: parent.width
                   Text {
                     width: parent.width - serverToolsButton.width
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "Servers"; color: root.foreground
+                    text: "Browse"; color: root.foreground
                     font.family: root.fontFamily; font.pixelSize: Style.font.body; font.bold: true
                   }
                   Button {
                     id: serverToolsButton; objectName: "server-tools-button"
-                    iconOnly: true; iconName: "settings"; text: "Filter and sort servers"
+                    Keys.onTabPressed: root.cycleFocus(1)
+                    Keys.onBacktabPressed: root.cycleFocus(-1)
+                    iconOnly: true; iconName: "sliders"; text: "Filter and sort servers"
                     tooltipText: "Filter and sort servers"; active: root.serverToolsShown
                     focusable: true
                     onClicked: root.serverToolsShown = !root.serverToolsShown
+                  }
+                }
+                Flow {
+                  id: serverFilterChips
+                  objectName: "server-filter-chips"
+                  width: parent.width
+                  spacing: Style.spacing.xxs
+
+                  Button {
+                    iconName: "all"
+                    text: "All"
+                    tooltipText: "All active servers"
+                    focusable: true
+                    Keys.onTabPressed: root.cycleFocus(1)
+                    Keys.onBacktabPressed: root.cycleFocus(-1)
+                    active: root.serverFilter === "all"
+                    fontSize: Style.font.caption
+                    horizontalPadding: Style.spacing.xs
+                    onClicked: root.serverFilter = "all"
+                  }
+                  Button {
+                    iconName: "unread"
+                    text: root.unreadServersCount > 0 ? String(root.unreadServersCount) : "Unread"
+                    tooltipText: "Servers with unread messages"
+                    focusable: true
+                    Keys.onTabPressed: root.cycleFocus(1)
+                    Keys.onBacktabPressed: root.cycleFocus(-1)
+                    active: root.serverFilter === "unread"
+                    fontSize: Style.font.caption
+                    horizontalPadding: Style.spacing.xs
+                    foreground: root.unreadServersCount > 0 ? root.accent : root.muted
+                    onClicked: root.serverFilter = "unread"
+                  }
+                  Button {
+                    iconName: "mention"
+                    text: root.mentionedServersCount > 0 ? String(root.mentionedServersCount) : "Mentions"
+                    tooltipText: "Servers with unread mention counts"
+                    focusable: true
+                    Keys.onTabPressed: root.cycleFocus(1)
+                    Keys.onBacktabPressed: root.cycleFocus(-1)
+                    active: root.serverFilter === "mentions"
+                    fontSize: Style.font.caption
+                    horizontalPadding: Style.spacing.xs
+                    foreground: root.mentionedServersCount > 0 ? Color.urgent : root.muted
+                    onClicked: root.serverFilter = "mentions"
+                  }
+                  Button {
+                    iconName: "headphones"
+                    text: root.voiceServersCount > 0 ? String(root.voiceServersCount) : "Voice"
+                    tooltipText: "Servers with active voice rooms"
+                    focusable: true
+                    Keys.onTabPressed: root.cycleFocus(1)
+                    Keys.onBacktabPressed: root.cycleFocus(-1)
+                    active: root.serverFilter === "voice"
+                    fontSize: Style.font.caption
+                    horizontalPadding: Style.spacing.xs
+                    onClicked: root.serverFilter = "voice"
+                  }
+                  Button {
+                    iconName: "archive"
+                    text: root.serverActions.archivedCount > 0 ? String(root.serverActions.archivedCount) : "Archive"
+                    tooltipText: "Archived servers"
+                    focusable: true
+                    Keys.onTabPressed: root.cycleFocus(1)
+                    Keys.onBacktabPressed: root.cycleFocus(-1)
+                    active: root.serverFilter === "archive"
+                    fontSize: Style.font.caption
+                    horizontalPadding: Style.spacing.xs
+                    visible: root.serverActions.archivedCount > 0 || root.serverFilter === "archive"
+                    onClicked: root.serverFilter = (root.serverFilter === "archive" ? "all" : "archive")
                   }
                 }
                 TextField {
@@ -1425,10 +1779,10 @@ Item {
                   id: serverFilterControl; objectName: "server-filter"
                   visible: root.serverToolsShown
                   width: parent.width
-                  model: ["All servers", "Unread", "Mentions"]
-                  currentIndex: ["all", "unread", "mentions"].indexOf(root.serverFilter)
+                  model: ["All servers", "Unread", "Mentions", "Archived (" + root.serverActions.archivedCount + ")"]
+                  currentIndex: Math.max(0, ["all", "unread", "mentions", "archive"].indexOf(root.serverFilter))
                   font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall
-                  onActivated: function(index) { root.serverFilter = ["all", "unread", "mentions"][index] }
+                  onActivated: function(index) { root.serverFilter = ["all", "unread", "mentions", "archive"][index] }
                   Keys.onTabPressed: root.cycleFocus(1)
                   Keys.onBacktabPressed: root.cycleFocus(-1)
                 }
@@ -1463,10 +1817,13 @@ Item {
                   color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.caption
                 }
               }
+              }
               ListView {
                 id: guildList
-                anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
-                anchors.top: serverControls.bottom
+                objectName: "server-results"
+                anchors.left: parent.left; anchors.right: parent.right
+                anchors.bottom: userBar.top
+                anchors.top: serverControlsViewport.bottom
                 anchors.margins: Style.spacing.sm
                 clip: true
                 reuseItems: true
@@ -1477,8 +1834,14 @@ Item {
                 footer: Text {
                   width: guildList.width; wrapMode: Text.WordWrap
                   visible: root.filteredGuilds.length === 0
-                  text: "No matching servers"
+                  text: root.serverFilter === "unread" ? "No unread servers."
+                    : (root.serverFilter === "mentions" ? "No server mentions."
+                      : (root.serverFilter === "voice" ? "No active voice rooms."
+                        : (root.serverFilter === "archive" ? "Archive is empty."
+                          : "No matching servers.")))
                   color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall
+                  horizontalAlignment: Text.AlignHCenter
+                  topPadding: Style.spacing.md
                 }
                 ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
@@ -1487,52 +1850,87 @@ Item {
                   required property int index
                   readonly property var row: root.guildRows[index] || ({})
                   readonly property bool isDms: String(row.id) === "dms"
+                  readonly property bool navigationEntry: isDms || row.kind === "archive_entry" || row.kind === "archive_back"
+                  readonly property bool startsServers: !navigationEntry && (index === 0
+                    || ["dms", "archive_entry", "archive_back"].indexOf(String(root.guildRows[index - 1].kind || "")) >= 0)
+                  readonly property real sectionHeight: startsServers ? Style.space(28) : 0
+                  objectName: (navigationEntry ? "navigation-entry-" : "guild-entry-") + String(row.id || "")
                   readonly property bool hasCursor: root.focusedZone === "sidebar" && root.column === "rail"
                     && index === root.guildCursor
                   readonly property bool selected: String(row.id) === root.selectedGuildId
                   readonly property int mentions: Number(row.mention_count) || 0
                   readonly property bool unread: Api.isUnread(row)
                   width: guildList.width
-                  height: Style.space(!isDms && root.serverSort === "online" ? 64 : 48)
+                  height: sectionHeight + Style.space(navigationEntry ? 40 : root.serverSort === "online" ? 64 : 48)
+
+                  Item {
+                    visible: guildRow.startsServers
+                    width: parent.width
+                    height: guildRow.sectionHeight
+                    Rectangle {
+                      anchors.left: parent.left; anchors.right: parent.right
+                      height: 1; color: Color.popups.border
+                    }
+                    Text {
+                      objectName: "guild-section-heading"
+                      anchors.left: parent.left; anchors.leftMargin: Style.spacing.sm
+                      anchors.bottom: parent.bottom; anchors.bottomMargin: Style.spacing.xs
+                      text: root.serverFilter === "archive" ? "Archived servers" : "Servers"
+                      color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.caption
+                    }
+                  }
 
                   Rectangle {
                     anchors.left: parent.left
-                    anchors.verticalCenter: parent.verticalCenter
+                    y: guildRow.sectionHeight + (parent.height - guildRow.sectionHeight - height) / 2
                     width: Style.spacing.xs
                     height: guildRow.selected ? Style.space(28) : (guildRow.unread ? Style.spacing.lg : 0)
                     radius: width / 2
                     color: guildRow.selected ? root.accent : root.foreground
-                    visible: height > 0
+                    visible: height > 0 && !guildRow.navigationEntry
                     Behavior on height { NumberAnimation { duration: 120 } }
                   }
 
                   BorderSurface {
                     id: guildTile
-                    anchors.centerIn: parent
+                    objectName: "guild-tile-" + String(guildRow.row.id || "")
+                    x: Style.spacing.sm / 2
+                    y: guildRow.sectionHeight
                     width: parent.width - Style.spacing.sm
-                    height: parent.height
+                    height: parent.height - guildRow.sectionHeight
                     radius: Style.cornerRadius
                     color: guildRow.hasCursor
                       ? Style.hoverFillFor(root.foreground, root.accent)
                       : (guildRow.selected ? Style.selectedFillFor(root.foreground, root.accent)
                         : (guildMouse.containsMouse ? Style.hoverFillFor(root.foreground, root.accent)
-                          : Style.normalFillFor(root.foreground, root.accent)))
+                          : guildRow.navigationEntry ? "transparent" : Style.normalFillFor(root.foreground, root.accent)))
                     borderSpec: guildRow.hasCursor
                       ? Border.controlSpec("hover-cursor", root.foreground, root.accent)
                       : Border.none()
                     Behavior on radius { NumberAnimation { duration: 120 } }
+                    Behavior on color { ColorAnimation { duration: 120 } }
+
+                    Image {
+                      id: archiveIcon
+                      visible: guildRow.navigationEntry
+                      anchors.left: parent.left
+                      anchors.leftMargin: Style.spacing.sm
+                      anchors.verticalCenter: parent.verticalCenter
+                      width: Style.space(16); height: Style.space(16)
+                      source: Icons.source(guildRow.isDms ? "user" : guildRow.row.kind === "archive_back" ? "back" : "archive", root.foreground)
+                    }
 
                     Text {
                       objectName: "server-name-" + String(guildRow.row.id || "")
-                      anchors.left: parent.left
+                      anchors.left: archiveIcon.visible ? archiveIcon.right : parent.left
+                      anchors.leftMargin: archiveIcon.visible ? Style.spacing.xs : Style.spacing.sm
                       anchors.right: parent.right
                       anchors.verticalCenter: parent.verticalCenter
-                      anchors.verticalCenterOffset: !guildRow.isDms && root.serverSort === "online" ? -Style.space(9) : 0
-                      anchors.leftMargin: Style.spacing.sm
+                      anchors.verticalCenterOffset: !guildRow.navigationEntry && root.serverSort === "online" ? -Style.space(9) : 0
                       anchors.rightMargin: guildRow.mentions > 0 ? guildMentionBadge.width + Style.spacing.sm * 2 : Style.spacing.sm
                       text: String(guildRow.row.name || "Unnamed server")
                       textFormat: Text.PlainText
-                      wrapMode: Text.Wrap
+                      wrapMode: Text.WordWrap
                       maximumLineCount: 2
                       elide: Text.ElideRight
                       color: guildRow.unread || guildRow.selected ? root.foreground : root.muted
@@ -1543,7 +1941,7 @@ Item {
                     Text {
                       anchors.left: parent.left; anchors.bottom: parent.bottom
                       anchors.margins: Style.spacing.sm
-                      visible: !guildRow.isDms && root.serverSort === "online"
+                      visible: !guildRow.navigationEntry && root.serverSort === "online"
                       readonly property var count: ServerList.knownCount(root.serverActions.guildStats, guildRow.row.id)
                       text: count === null ? "No data" : "≈ " + count + " online"
                       color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.caption
@@ -1574,7 +1972,8 @@ Item {
 
                   MouseArea {
                     id: guildMouse
-                    anchors.fill: parent
+                    x: 0; y: guildRow.sectionHeight
+                    width: parent.width; height: parent.height - y
                     hoverEnabled: true
                     acceptedButtons: Qt.LeftButton | Qt.RightButton
                     onClicked: function(mouse) {
@@ -1593,17 +1992,101 @@ Item {
 
                 }
               }
+
+              BorderSurface {
+                id: userBar
+                objectName: "user-bar"
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.margins: Style.spacing.xxs
+                height: Style.space(42)
+                radius: Style.cornerRadius
+                color: userBarMouse.containsMouse || (optionsMenu.shown && optionsMenu.anchorCorner === "bottom-left")
+                  ? Style.hoverFillFor(root.foreground, root.accent)
+                  : "transparent"
+                borderSpec: Border.none()
+
+                Row {
+                  anchors.fill: parent
+                  anchors.leftMargin: Style.spacing.xs
+                  anchors.rightMargin: Style.spacing.xs
+                  spacing: Style.spacing.xs
+
+                  Components.Avatar {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Style.space(26); height: Style.space(26)
+                    name: root.service && root.service.user ? (root.service.user.display_name || root.service.user.username || "") : ""
+                    service: root.service
+
+                    Rectangle {
+                      anchors.right: parent.right
+                      anchors.bottom: parent.bottom
+                      width: Style.spacing.sm + 2; height: width
+                      radius: width / 2
+                      color: Color.popups.background
+                      Rectangle {
+                        anchors.centerIn: parent
+                        width: Style.spacing.sm; height: width
+                        radius: width / 2
+                        color: root.connected ? Color.accent : Color.urgent
+                      }
+                    }
+                  }
+
+                  Column {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Math.max(0, parent.width - Style.space(26) - userBarSettingsBtn.width - parent.spacing * 2)
+                    spacing: 0
+
+                    Text {
+                      width: parent.width; elide: Text.ElideRight
+                      text: root.service && root.service.user ? String(root.service.user.display_name || root.service.user.username || "User") : "Discord"
+                      color: root.foreground
+                      font.family: root.fontFamily; font.pixelSize: Style.font.caption; font.bold: true
+                    }
+                    Text {
+                      width: parent.width; elide: Text.ElideRight
+                      text: root.service && root.service.user && root.service.user.username ? "@" + String(root.service.user.username) : (root.connected ? "Online" : "Offline")
+                      color: root.muted
+                      font.family: root.fontFamily; font.pixelSize: Style.font.caption
+                    }
+                  }
+
+                  Button {
+                    id: userBarSettingsBtn
+                    objectName: "user-bar-settings"
+                    z: 2
+                    anchors.verticalCenter: parent.verticalCenter
+                    iconOnly: true
+                    iconName: "settings"
+                    text: "Settings"
+                    focusable: true
+                    activeFocusOnTab: false
+                    onClicked: optionsMenu.toggle("bottom-left")
+                  }
+                }
+
+                MouseArea {
+                  id: userBarMouse
+                  anchors.fill: parent
+                  z: 1
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: optionsMenu.toggle("bottom-left")
+                }
+              }
             }
 
             BorderSurface {
               id: channelPane
-              parent: root.narrowLayout ? navigationRow : conversationRow
+              parent: conversationRow
               objectName: "channel-pane"
               x: railPane.width + conversationRow.spacing
-              visible: !root.narrowLayout || root.navigationShown
-              width: root.narrowLayout ? Math.max(0, navigationRow.width - railPane.width - navigationRow.spacing)
+              visible: !root.narrowLayout || !root.compactChatOpen
+              width: root.narrowLayout ? Math.max(0, conversationRow.width - railPane.width - conversationRow.spacing)
                 : Math.min(Style.space(210), Math.max(Style.space(140), body.width * 0.19))
-              height: parent.height
+              height: root.voiceNavigation ? parent.height - channelContent.height - conversationRow.spacing : parent.height
               radius: Style.cornerRadius
               color: Color.popups.background
               borderSpec: root.focusedZone === "sidebar" && root.column === "channels"
@@ -1615,7 +2098,6 @@ Item {
                 anchors.fill: parent
                 anchors.margins: Style.spacing.sm
                 anchors.bottomMargin: Style.spacing.sm
-                  + (callBar.visible ? callBar.height + Style.spacing.sm : 0)
                 spacing: Style.spacing.xs
 
                 PanelSectionHeader {
@@ -1624,13 +2106,77 @@ Item {
                   foreground: root.foreground
                 }
 
+                Flow {
+                  id: channelFilterChips
+                  objectName: "channel-filter-chips"
+                  width: parent.width
+                  spacing: Style.spacing.xxs
+                  visible: !root.dmsSelected && root.channelRows.length > 0
+
+                  Button {
+                    iconName: "all"
+                    text: "All"
+                    tooltipText: "All channels"
+                    iconOnly: root.voiceNavigation && body.height < Style.space(400)
+                    focusable: true
+                    Keys.onTabPressed: root.cycleFocus(1)
+                    Keys.onBacktabPressed: root.cycleFocus(-1)
+                    active: root.channelFilter === "all"
+                    fontSize: Style.font.caption
+                    horizontalPadding: Style.spacing.xs
+                    onClicked: root.channelFilter = "all"
+                  }
+                  Button {
+                    iconName: "textChannel"
+                    text: "Text"
+                    tooltipText: "Text & announcement channels"
+                    iconOnly: root.voiceNavigation && body.height < Style.space(400)
+                    focusable: true
+                    Keys.onTabPressed: root.cycleFocus(1)
+                    Keys.onBacktabPressed: root.cycleFocus(-1)
+                    active: root.channelFilter === "text"
+                    fontSize: Style.font.caption
+                    horizontalPadding: Style.spacing.xs
+                    onClicked: root.channelFilter = "text"
+                  }
+                  Button {
+                    iconName: "headphones"
+                    text: "Voice"
+                    tooltipText: "Voice channels"
+                    iconOnly: root.voiceNavigation && body.height < Style.space(400)
+                    focusable: true
+                    Keys.onTabPressed: root.cycleFocus(1)
+                    Keys.onBacktabPressed: root.cycleFocus(-1)
+                    active: root.channelFilter === "voice"
+                    fontSize: Style.font.caption
+                    horizontalPadding: Style.spacing.xs
+                    onClicked: root.channelFilter = "voice"
+                  }
+                  Button {
+                    iconName: "unread"
+                    text: "Unread"
+                    tooltipText: "Unread channels"
+                    iconOnly: root.voiceNavigation && body.height < Style.space(400)
+                    focusable: true
+                    Keys.onTabPressed: root.cycleFocus(1)
+                    Keys.onBacktabPressed: root.cycleFocus(-1)
+                    active: root.channelFilter === "unread"
+                    fontSize: Style.font.caption
+                    horizontalPadding: Style.spacing.xs
+                    onClicked: root.channelFilter = "unread"
+                  }
+                }
+
                 Text {
                   width: parent.width
-                  visible: !root.channelRows.length
+                  visible: !root.filteredChannelRows.length
                   wrapMode: Text.WordWrap
                   text: !root.selectedGuildId ? "Select a server."
-                    : (root.channelsLoading ? "Loading channels"
-                      : (root.dmsSelected ? "No direct messages." : "No text channels."))
+                    : (root.channelsLoading ? "Loading channels…"
+                      : (root.dmsSelected ? "No direct messages."
+                        : (root.channelFilter === "voice" ? "No voice channels in this server."
+                          : (root.channelFilter === "unread" ? "No unread channels in this server."
+                            : (root.channelFilter === "text" ? "No text channels in this server." : "No channels.")))))
                   color: root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
@@ -1639,21 +2185,22 @@ Item {
 
                 ListView {
                   id: channelList
+                  objectName: "channel-results"
                   width: parent.width
-                  height: parent.height - Style.spacing.controlHeight
-                  visible: root.channelRows.length > 0
+                  height: parent.height - Style.spacing.controlHeight - (channelFilterChips.visible ? channelFilterChips.height + parent.spacing : 0)
+                  visible: root.filteredChannelRows.length > 0
                   clip: true
                   reuseItems: true
                   cacheBuffer: Style.space(150)
                   boundsBehavior: Flickable.StopAtBounds
                   spacing: Style.spacing.xxs
-                  model: root.channelRows.length
+                  model: root.filteredChannelRows.length
                   ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
                   delegate: Item {
                     id: channelRow
                     required property int index
-                    readonly property var row: root.channelRows[index] || ({})
+                    readonly property var row: root.filteredChannelRows[index] || ({})
                     readonly property string type: String(row.type || "")
                     readonly property bool category: type === "category"
                     readonly property bool hasCursor: root.focusedZone === "sidebar" && root.column === "channels"
@@ -1774,6 +2321,7 @@ Item {
                       }
                       MouseArea {
                         id: channelMouse
+                        objectName: "open-channel-" + String(channelRow.row.id || "")
                         anchors.fill: parent
                         hoverEnabled: true
                         onClicked: {
@@ -1853,16 +2401,18 @@ Item {
               Components.CallBar {
                 id: callBar
                 objectName: "call-bar"
-                parent: root.narrowLayout ? body : channelPane
+                parent: channelContent
                 expanded: true
-                z: root.voicePanelPinned ? 13 : 0
+                compactRosterHeader: root.voiceNavigation
+                z: 0
                 anchors.left: parent.left
                 anchors.bottom: parent.bottom
-                width: root.narrowLayout ? root.voicePanelWidth : parent.width - Style.spacing.sm * 2
-                height: root.voicePanelPinned ? parent.height : Math.min(Style.space(320), parent.height * 0.55)
-                anchors.leftMargin: root.narrowLayout ? 0 : Style.spacing.sm
-                anchors.bottomMargin: root.narrowLayout ? 0 : Style.spacing.sm
+                width: root.voiceNavigation ? parent.width : root.voicePanelWidth
+                height: parent.height
+                anchors.leftMargin: 0
+                anchors.bottomMargin: 0
                 service: root.service
+                onChatRequested: root.enterComposer()
                 channelName: root.service && root.service.voice
                   ? String(root.service.channelNames[String(root.service.voice.channelId || "")] || "")
                   : ""
@@ -1874,12 +2424,23 @@ Item {
               }
             }
 
+            Item {
+              id: channelContent
+              objectName: "selected-channel-content"
+              x: root.narrowLayout ? (root.compactChatOpen ? 0 : railPane.width + conversationRow.spacing)
+                : railPane.width + channelPane.width + conversationRow.spacing * 2
+              y: root.voiceNavigation ? parent.height - height : 0
+              width: Math.max(0, parent.width - x)
+              height: root.voiceNavigation ? Math.min(Style.space(210), parent.height * 0.55) : parent.height
+            }
             Column {
               id: chatColumn
+              parent: channelContent
               objectName: "chat-column"
-              x: root.narrowLayout ? (root.voicePanelPinned ? root.voicePanelWidth + conversationRow.spacing : 0) : railPane.width + channelPane.width + conversationRow.spacing * 2
-              width: Math.max(0, parent.width - (root.narrowLayout ? (root.voicePanelPinned ? root.voicePanelWidth + parent.spacing : 0) : railPane.width + channelPane.width + parent.spacing * 2)
-                - (root.membersVisible ? membersView.width + parent.spacing : 0))
+              visible: !root.narrowLayout || root.compactChatOpen
+              x: root.voiceRoomVisible ? callBar.width + conversationRow.spacing : 0
+              width: Math.max(0, parent.width - x
+                - (root.membersVisible ? membersView.width + conversationRow.spacing : 0))
               height: parent.height
               spacing: Style.spacing.xs
 
@@ -1889,12 +2450,33 @@ Item {
                 height: root.controlsRowHeight
                 clip: true
 
-                Text {
-                  id: channelTitle
+                Button {
+                  id: backToChannelsBtn
+                  objectName: "back-to-channels"
+                  visible: root.narrowLayout && root.compactChatOpen
                   anchors.left: parent.left
                   anchors.leftMargin: Style.spacing.sm
                   anchors.verticalCenter: parent.verticalCenter
+                  iconOnly: false
+                  iconName: "back"
+                  text: "Channels"
+                  tooltipText: "Back to servers and channels (Esc)"
+                  focusable: true
+                  onClicked: {
+                    root.compactChatOpen = false
+                    root.zone = "sidebar"
+                    root.column = "channels"
+                    root.focusZone()
+                  }
+                }
+
+                Text {
+                  id: channelTitle
+                  anchors.left: backToChannelsBtn.visible ? backToChannelsBtn.right : parent.left
+                  anchors.leftMargin: Style.spacing.sm
+                  anchors.verticalCenter: parent.verticalCenter
                   width: Math.min(implicitWidth, Math.max(0, parent.width
+                    - (backToChannelsBtn.visible ? backToChannelsBtn.width + Style.spacing.sm : 0)
                     - Style.spacing.sm * 2 - channelControlsSlot.width
                     - Style.spacing.controlGap))
                   elide: Text.ElideRight
@@ -1927,12 +2509,30 @@ Item {
                 }
               }
 
+              Button {
+                id: joinVoiceButton
+                objectName: "join-channel-voice"
+                visible: !!root.currentChannel && String(root.currentChannel.type || "") === "voice"
+                iconName: "headphones"
+                text: root.activeVoiceChannelId === root.currentChannelId ? "In voice" : "Join voice"
+                tooltipText: "Connect to this voice channel"
+                bordered: true
+                backgroundColor: Style.normalFillFor(root.foreground, root.accent)
+                width: Math.min(parent.width, Math.max(Style.space(150), implicitWidth))
+                focusable: true
+                fontSize: Style.font.bodySmall
+                horizontalPadding: Style.spacing.xs
+                Keys.onTabPressed: root.cycleFocus(1)
+                Keys.onBacktabPressed: root.cycleFocus(-1)
+                onClicked: root.joinVoiceChannel(root.currentChannel)
+              }
               Components.Timeline {
                 id: timelineView
                 objectName: "timeline"
                 width: parent.width
                 height: parent.height - channelHeader.height - typingLine.height
                   - composerView.height - parent.spacing * 3
+                  - (joinVoiceButton.visible ? joinVoiceButton.height + parent.spacing : 0)
 
                 messages: root.currentMessages
                 hasMore: !!(root.currentEntry && root.currentEntry.hasMore)
@@ -1966,6 +2566,14 @@ Item {
                 }
                 onReactRequested: function(messageId) { root.openPicker(messageId) }
                 onReactionToggled: function(messageId, emoji) { root.applyReaction(messageId, emoji) }
+                onSwitcherRequested: root.openSwitcher()
+                showNavigationAction: root.narrowLayout
+                onNavigationRequested: {
+                  root.compactChatOpen = false
+                  root.zone = "sidebar"
+                  root.column = root.selectedGuildId ? "channels" : "rail"
+                  root.focusZone()
+                }
               }
 
               Item {
@@ -2013,8 +2621,8 @@ Item {
             Components.MemberList {
               id: membersView
               objectName: "members"
-              parent: conversationRow
-              x: body.width - width
+              parent: channelContent
+              x: parent.width - width
               visible: root.membersVisible
               width: Math.min(Style.space(210), Math.max(Style.space(120), body.width * (root.narrowLayout ? 0.30 : 0.19)))
               height: parent.height

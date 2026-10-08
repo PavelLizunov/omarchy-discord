@@ -11,6 +11,18 @@ function shallowCopy(source) {
   return assign({}, source)
 }
 
+// Shared by server clicks and search, including retained older service instances.
+function browseGuild(service, guildId) {
+  var id = String(guildId || "")
+  if (!service || !id) return
+  var previous = service.currentChannelId
+  service.pendingGuildEntry = ""
+  service.currentChannelId = ""
+  service.selectedGuildId = id
+  if (previous) service.closeChannel(previous)
+  if (id !== "dms") service.loadChannels(id)
+}
+
 function parseJson(text, fallback) {
   try {
     var parsed = JSON.parse(String(text || ""))
@@ -62,13 +74,35 @@ function contrastRatio(a, b) {
 var SECONDARY_MIN_CONTRAST = 4.5
 var SECONDARY_ALPHA = 0.6
 
+function textColor(preferred, foreground, background) {
+  if (!background || background.r === undefined) return preferred || foreground
+  var painted = function(color) { return blend(color, background, color.a === undefined ? 1 : color.a) }
+  if (preferred && preferred.r !== undefined && contrastRatio(painted(preferred), background) >= SECONDARY_MIN_CONTRAST) return preferred
+  if (foreground && foreground.r !== undefined && contrastRatio(painted(foreground), background) >= SECONDARY_MIN_CONTRAST) return foreground
+  var black = Qt.rgba(0, 0, 0, 1), white = Qt.rgba(1, 1, 1, 1)
+  return contrastRatio(black, background) > contrastRatio(white, background) ? black : white
+}
+
 function secondaryColor(muted, foreground, background) {
-  if (muted && background && contrastRatio(muted, background) >= SECONDARY_MIN_CONTRAST) return muted
+  if (muted && background && contrastRatio(blend(muted, background, muted.a === undefined ? 1 : muted.a), background) >= SECONDARY_MIN_CONTRAST) return muted
   if (!foreground || foreground.r === undefined) return muted
   var secondary = Qt.rgba(foreground.r, foreground.g, foreground.b, SECONDARY_ALPHA)
   if (background && contrastRatio(blend(secondary, background, secondary.a), background) < SECONDARY_MIN_CONTRAST)
-    return foreground
+    return textColor(foreground, foreground, background)
   return secondary
+}
+
+var AUTHOR_HUES_DARK = ["#68b6ef", "#5ec99b", "#e5a952", "#ba8fff", "#ef7f7f", "#4dd0e1", "#fbc02d"]
+var AUTHOR_HUES_LIGHT = ["#1565c0", "#1b5e20", "#bf360c", "#4a148c", "#880e4f", "#006064", "#556b2f"]
+
+function authorColor(userId, background, fallback) {
+  var id = String(userId || "")
+  if (!id) return fallback || "#cacccc"
+  var hash = 0
+  for (var i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0
+  var dark = luminance(background) < 0.3
+  var hues = dark ? AUTHOR_HUES_DARK : AUTHOR_HUES_LIGHT
+  return hues[hash % hues.length]
 }
 
 function blend(color, background, alpha) {
@@ -194,6 +228,37 @@ function isSelectableChannel(row) {
   if (!row) return false
   var t = String(row.type || "")
   return t !== "category" && t !== "stage"
+}
+
+function filterChannels(channels, filter) {
+  var list = Array.isArray(channels) ? channels : []
+  if (!filter || filter === "all") return list
+  var out = []
+  for (var i = 0; i < list.length; i++) {
+    var row = list[i]
+    if (!row) continue
+    var t = String(row.type || "")
+    if (t === "category") {
+      var hasChild = false
+      for (var j = i + 1; j < list.length; j++) {
+        if (String(list[j].type || "") === "category") break
+        if (channelMatchesFilter(list[j], filter)) { hasChild = true; break }
+      }
+      if (hasChild) out.push(row)
+      continue
+    }
+    if (channelMatchesFilter(row, filter)) out.push(row)
+  }
+  return out
+}
+
+function channelMatchesFilter(row, filter) {
+  if (!row) return false
+  var t = String(row.type || "")
+  if (filter === "text") return t === "text" || t === "announcement" || t === "thread" || t === "forum"
+  if (filter === "voice") return t === "voice" || t === "stage"
+  if (filter === "unread") return isUnread(row) || (Number(row.mention_count) || 0) > 0
+  return true
 }
 
 function voiceOccupants(channels, channelId) {
@@ -345,5 +410,7 @@ if (typeof module !== "undefined" && module.exports) {
     isSelectableChannel: isSelectableChannel, voiceOccupants: voiceOccupants,
     isHiddenChannelType: isHiddenChannelType, LAST_CHANNEL_CAP: LAST_CHANNEL_CAP,
     parseLastChannels: parseLastChannels, lastChannelFor: lastChannelFor,
-    bumpLastChannel: bumpLastChannel, guildEntryChannel: guildEntryChannel }
+    bumpLastChannel: bumpLastChannel, guildEntryChannel: guildEntryChannel,
+    authorColor: authorColor, contrastRatio: contrastRatio, luminance: luminance,
+    filterChannels: filterChannels }
 }

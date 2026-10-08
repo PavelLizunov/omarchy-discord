@@ -42,6 +42,9 @@ FocusScope {
   signal deleteRequested(string messageId)
   signal reactRequested(string messageId)
   signal reactionToggled(string messageId, string emoji)
+  signal switcherRequested()
+  signal navigationRequested()
+  property bool showNavigationAction: false
 
   function scrollToBottom() {
     adjusting = true
@@ -471,12 +474,12 @@ FocusScope {
     else if (key === Qt.Key_End || text === "G") focusNewest()
     else if (text === "g") { if (wasG) goTop(); else lastGAt = now }
     else if (key === Qt.Key_Return || key === Qt.Key_Enter) activateCursor()
-    else if (text === "Y") copyCursorMessage()
-    else if (text === "O") openCursorLink()
-    else if (text === "L") copyCursorLink()
-    else if (text === "R") { if (cursorIndex >= 0 && !rows[cursorIndex].pending) replyRequested(cursorMessageId) }
-    else if (text === "D") requestDelete()
-    else if (text === "E") { if (cursorIndex >= 0) reactRequested(cursorMessageId) }
+    else if (text === "Y" || text === "y") copyCursorMessage()
+    else if (text === "O" || text === "o") openCursorLink()
+    else if (text === "L" || text === "l") copyCursorLink()
+    else if (text === "R" || text === "r") { if (cursorIndex >= 0 && !rows[cursorIndex].pending) replyRequested(cursorMessageId) }
+    else if (text === "D" || text === "d") requestDelete()
+    else if (text === "E" || text === "e") { if (cursorIndex >= 0) reactRequested(cursorMessageId) }
     else return
     event.accepted = true
   }
@@ -732,13 +735,63 @@ FocusScope {
       }
     }
 
-    Text {
+    Item {
       anchors.centerIn: parent
       visible: !timeline.rows.length && !timeline.loading
-      text: timeline.channelId ? "No messages yet." : "Pick a channel."
-      color: timeline.muted
-      font.family: timeline.fontFamily
-      font.pixelSize: Style.font.body
+      width: Math.min(Style.space(320), parent.width - Style.spacing.md * 2)
+      height: emptyCol.implicitHeight
+
+      Column {
+        id: emptyCol
+        anchors.fill: parent
+        spacing: Style.spacing.sm
+
+        Text {
+          width: parent.width
+          horizontalAlignment: Text.AlignHCenter
+          text: timeline.channelId ? "No messages yet." : "No channel selected"
+          color: timeline.foreground
+          font.family: timeline.fontFamily
+          font.pixelSize: Style.font.title
+          font.bold: true
+        }
+
+        Text {
+          width: parent.width
+          horizontalAlignment: Text.AlignHCenter
+          wrapMode: Text.WordWrap
+          text: timeline.channelId ? "Send a message to start the conversation."
+            : "Choose a server and channel, or find one via search."
+          color: timeline.muted
+          font.family: timeline.fontFamily
+          font.pixelSize: Style.font.bodySmall
+        }
+
+        Row {
+          anchors.horizontalCenter: parent.horizontalCenter
+          spacing: Style.spacing.sm
+          visible: !timeline.channelId
+
+          Button {
+            id: emptyNavBtn
+            objectName: "timeline-empty-navigation"
+            visible: timeline.showNavigationAction
+            text: "Browse servers"
+            iconName: "navigation"
+            focusable: true
+            onClicked: timeline.navigationRequested()
+          }
+
+          Button {
+            id: emptySwitcherBtn
+            objectName: "timeline-empty-switcher"
+            text: "Find channel (Ctrl+K)"
+            iconName: "search"
+            focusable: true
+            onClicked: timeline.switcherRequested()
+          }
+        }
+      }
     }
   }
 }

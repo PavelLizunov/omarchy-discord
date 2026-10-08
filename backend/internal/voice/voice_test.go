@@ -2,12 +2,16 @@ package voice
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -565,6 +569,126 @@ func TestLostAudioServerFailsCall(t *testing.T) {
 	}
 	if got := h.logged(); !slices.Equal(got[len(got)-2:], []string{"close 10", "op4 10 leave"}) {
 		t.Fatalf("wire order: %v", got)
+	}
+}
+
+func TestInvalidSessionRecoversOnceAndPreservesFlags(t *testing.T) {
+	h := newHarness(t)
+	if err := h.join(10, 11, 0); err != nil {
+		t.Fatal(err)
+	}
+	_ = h.e.SetMute(context.Background(), true)
+	_ = h.e.SetDeaf(context.Background(), true)
+	countJoins := func() int {
+		n := 0
+		for _, s := range h.logged() {
+			if s == "open 10/11" {
+				n++
+			}
+		}
+		return n
+	}
+	gen := h.e.gen
+	h.e.observeClose(gen, &websocket.CloseError{Code: 4006})
+	h.wait("fresh join", func() bool { return countJoins() == 2 })
+	h.echo(10, 11)
+	h.wait("reconnected", func() bool { return h.e.State().Status == StatusConnected })
+	st := h.e.State()
+	if !st.Muted || !st.Deafened || st.ChannelID != 11 {
+		t.Fatalf("flags/room lost: %+v", st)
+	}
+	h.e.observeClose(h.e.gen, &websocket.CloseError{Code: 4006})
+	h.wait("bounded failure", func() bool { return h.e.State().Status == StatusError })
+	if countJoins() != 2 {
+		t.Fatal("recovery loop")
+	}
+}
+
+type fixtureDave struct{ godave.Session }
+
+func (fixtureDave) SetChannelID(godave.ChannelID)    {}
+func (fixtureDave) MaxSupportedProtocolVersion() int { return 0 }
+
+func TestGateway4006FreshJoinThroughActualWebsocket(t *testing.T) {
+	h := newHarness(t)
+	if err := h.join(10, 11, 0); err != nil {
+		t.Fatal(err)
+	}
+	countJoins := func() int {
+		n := 0
+		for _, s := range h.logged() {
+			if s == "open 10/11" {
+				n++
+			}
+		}
+		return n
+	}
+	closeNow := make(chan struct{})
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		// Isolate the actual close delivery from Disgo's unrelated Hello/heartbeat
+		// startup race; the full-handshake race is retained in the evidence log.
+		_ = c.WriteJSON(map[string]any{"op": 2, "s": 1, "d": map[string]any{"ssrc": 1, "ip": "127.0.0.1", "port": 9, "modes": []string{"aead_xchacha20_poly1305_rtpsize"}}})
+		<-closeNow
+		_ = c.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(4006, "fixture invalid session"))
+	}))
+	defer server.Close()
+	old := websocket.DefaultDialer
+	dialer := *old
+	dialer.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	websocket.DefaultDialer = &dialer
+	defer func() { websocket.DefaultDialer = old }()
+	g := h.e.gatewayCreate(fixtureDave{}, func(dvoice.Gateway, dvoice.Opcode, int, dvoice.GatewayMessageData) {}, nil)
+	defer g.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := g.Open(ctx, dvoice.State{Endpoint: strings.TrimPrefix(server.URL, "https://"), SessionID: "fixture", GuildID: 10, ChannelID: 11, UserID: 7}); err != nil {
+		t.Fatal(err)
+	}
+	close(closeNow)
+	h.wait("fresh join from actual gateway close", func() bool { return countJoins() == 2 })
+	h.echo(10, 11)
+	h.wait("recovered", func() bool { return h.e.State().Status == StatusConnected })
+}
+
+func TestRecoveryCancelledByLeaveAndStaleClose(t *testing.T) {
+	h := newHarness(t)
+	if err := h.join(10, 11, 0); err != nil {
+		t.Fatal(err)
+	}
+	gen := h.e.gen
+	_ = h.e.Leave(context.Background())
+	h.e.observeClose(gen, &websocket.CloseError{Code: 4006})
+	if err := h.e.join(context.Background(), 10, 11, &gen); !errors.Is(err, context.Canceled) {
+		t.Fatalf("stale recovery: %v", err)
+	}
+	if st := h.e.State(); st.Status != StatusIdle {
+		t.Fatalf("leave resurrected: %+v", st)
+	}
+	if n := len(h.logged()); n != 4 {
+		t.Fatalf("unexpected account command: %v", h.logged())
+	}
+}
+
+func TestTerminalVoiceCodesNeverRecover(t *testing.T) {
+	for _, code := range []int{4004, 4014, 4021, 4022} {
+		t.Run(fmt.Sprint(code), func(t *testing.T) {
+			h := newHarness(t)
+			if err := h.join(10, 11, 0); err != nil {
+				t.Fatal(err)
+			}
+			h.e.observeClose(h.e.gen, &websocket.CloseError{Code: code})
+			if st := h.e.State(); st.Status != StatusError {
+				t.Fatalf("terminal close: %+v", st)
+			}
+			if len(h.logged()) != 4 {
+				t.Fatalf("terminal close rejoined: %v", h.logged())
+			}
+		})
 	}
 }
 

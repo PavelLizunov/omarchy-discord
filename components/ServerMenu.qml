@@ -11,10 +11,12 @@ FocusScope {
   property real anchorY: 0
   readonly property string guildId: guild ? String(guild.id || "") : ""
   readonly property bool busy: !!(service && service.guildActionBusy)
+  readonly property bool isArchived: !!(service && typeof service.isArchived === "function" && service.isArchived(guildId))
   signal dismissed()
   function show(row, x, y) {
     guild = row; anchorX = x; anchorY = y; page = "menu"; shown = true
     if (service && service.actionError !== undefined) service.actionError = ""
+    if (service && service.settingsError !== undefined) service.settingsError = ""
     Qt.callLater(function() { settings.forceActiveFocus() })
   }
   function hide() { shown = false; dismissed() }
@@ -27,14 +29,17 @@ FocusScope {
   visible: shown
   enabled: shown
   Keys.onEscapePressed: hide()
-  Keys.onTabPressed: cycle(1)
-  Keys.onBacktabPressed: cycle(-1)
+  Keys.onTabPressed: function(event) { cycle(1); event.accepted = true }
+  Keys.onBacktabPressed: function(event) { cycle(-1); event.accepted = true }
   function cycle(delta) {
-    var items = page === "menu" ? [settings, markRead, leave, cancel]
+    var items = page === "menu" ? [settings, markRead, archiveBtn, leave, cancel]
       : (page === "settings" ? [mute, cancel] : [cancel, confirm])
+    var enabledItems = items.filter(function(it) { return it && it.visible && it.enabled })
+    if (!enabledItems.length) return
     var index = -1
-    for (var i=0;i<items.length;i++) if (items[i].activeFocus) index=i
-    items[(index + delta + items.length) % items.length].forceActiveFocus()
+    for (var i = 0; i < enabledItems.length; i++) if (enabledItems[i].activeFocus) index = i
+    var nextIndex = ((index + delta) % enabledItems.length + enabledItems.length) % enabledItems.length
+    enabledItems[nextIndex].forceActiveFocus()
   }
   MouseArea { anchors.fill: parent; onClicked: root.hide() }
   BorderSurface {
@@ -84,6 +89,19 @@ FocusScope {
         id: markRead; objectName: "server-mark-read"
         width: parent.width; visible: root.page === "menu"; text: root.busy ? "Marking read…" : "Mark all as read"; focusable: true; enabled: !root.busy
         onClicked: root.action("mark_guild_read", {})
+      }
+      Button {
+        id: archiveBtn; objectName: "server-archive"
+        width: parent.width; visible: root.page === "menu"
+        text: root.isArchived ? "Unarchive server" : "Archive server"
+        iconName: "archive"
+        focusable: true
+        onClicked: {
+          if (root.service && typeof root.service.toggleArchive === "function") {
+            root.service.toggleArchive(root.guildId, !root.isArchived)
+          }
+          root.hide()
+        }
       }
       Button {
         id: leave; objectName: "server-leave"

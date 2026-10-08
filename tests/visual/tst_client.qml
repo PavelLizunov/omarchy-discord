@@ -20,6 +20,8 @@ TestCase {
   function initTestCase() { tryCompare(preview, "ready", true) }
   function init() {
     preview.model.reset()
+    preview.client.setCompactMode(false)
+    preview.client.compactChatOpen = false
     preview.model.currentChannelId = "9000"
     preview.client.zone = "timeline"
     preview.client.timeline.focusNewest()
@@ -99,6 +101,29 @@ TestCase {
     for(var i=0;i<30;i++){preview.client.cycleFocus(1);if(close.activeFocus){found=true;break}}
     verify(found);keyClick(Qt.Key_Space);wait(30);compare(preview.model.lastError,"")
     preview.client.composer.setText("");preview.model.voice={status:"idle"}
+  }
+  function test_compact_startup_empty_channel_state_and_navigation() {
+    preview.client.setCompactMode(true)
+    preview.model.currentChannelId = ""
+    preview.client.open("{}"); wait(40)
+    var rail = findChild(preview.client, "server-rail")
+    var channels = findChild(preview.client, "channel-pane")
+    var chat = findChild(preview.client, "chat-column")
+    verify(rail !== null); verify(rail.visible)
+    verify(channels !== null); verify(channels.visible)
+    verify(!chat.visible)
+    // Select channel
+    preview.model.currentChannelId = "9000"; wait(40)
+    verify(chat.visible)
+    var backBtn = findChild(preview.client, "back-to-channels")
+    verify(backBtn !== null); verify(backBtn.visible)
+    mouseClick(backBtn, backBtn.width / 2, backBtn.height / 2); wait(40)
+    verify(!chat.visible)
+    verify(rail.visible)
+    verify(channels.visible)
+    preview.client.setCompactMode(false)
+    preview.model.currentChannelId = "9000"
+    preview.client.open("{}"); wait(40)
   }
   function test_voice_chords() {
     verify(press(Qt.Key_M,"",Qt.ControlModifier | Qt.ShiftModifier))

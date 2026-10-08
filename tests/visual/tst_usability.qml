@@ -11,6 +11,14 @@ TestCase {
   Preview { id: preview; anchors.fill: parent }
   function click(item) { wait(50); mouseClick(item, item.width / 2, item.height / 2); wait(50) }
   function control(text) {
+    if (text === "Help") {
+      preview.client.optionsMenu.show(); wait(40)
+      return preview.client.helpButton
+    }
+    if (text === "Log out") {
+      preview.client.optionsMenu.show(); wait(40)
+      return preview.client.logoutButton
+    }
     var children = preview.client.controls.children
     for (var i=0;i<children.length;i++) if (children[i].text === text) return children[i]
     fail("Missing control: " + text)
@@ -23,6 +31,7 @@ TestCase {
   function initTestCase() { tryCompare(preview, "ready", true) }
   function init() {
     tests.width=1040; tests.height=680
+    preview.model.selectedGuildId="1";preview.model.currentChannelId="9000"
     preview.model.reset(); preview.model.staged=({}); preview.model.membersWanted=false
     preview.client.logoutConfirmation.shown=false
     preview.client.cheatsheet.shown=false; preview.client.picker.shown=false

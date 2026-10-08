@@ -16,23 +16,12 @@ Item {
   property bool persistentVisible: true
   property string parkWorkspace: ""
   property bool pendingFocus: false
-  property bool restoreTiling: false
   function applyLayoutMode(compact) {
     var target = 'window = "title:^(Omarchy Discord)$"'
-    Hyprland.refreshToplevels()
-    if (compact) {
-      var ipc = toplevel ? toplevel.lastIpcObject : null
-      restoreTiling = !ipc || ipc.floating !== true
-      Hyprland.dispatch('hl.dsp.window.float({ ' + target + ', action = "on" })')
-      Hyprland.dispatch('hl.dsp.window.resize({ ' + target + ', x = ' + Math.round(Style.space(520))
-        + ', y = ' + Math.round(Style.space(560)) + ', relative = false })')
-    } else if (restoreTiling) {
-      Hyprland.dispatch('hl.dsp.window.float({ ' + target + ', action = "off" })')
-      restoreTiling = false
-    } else {
-      Hyprland.dispatch('hl.dsp.window.resize({ ' + target + ', x = ' + Math.round(Style.space(1040))
-        + ', y = ' + Math.round(Style.space(680)) + ', relative = false })')
-    }
+    // Both explicit sizes must stay floating; a restored tile may be smaller than Compact.
+    Hyprland.dispatch('hl.dsp.window.float({ ' + target + ', action = "on" })')
+    Hyprland.dispatch('hl.dsp.window.resize({ ' + target + ', x = ' + Math.round(Style.space(compact ? 520 : 1040))
+      + ', y = ' + Math.round(Style.space(compact ? 560 : 680)) + ', relative = false })')
   }
   readonly property var toplevel: {
     var list = Hyprland.toplevels.values

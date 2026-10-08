@@ -528,6 +528,7 @@ func noUnrouted(t *testing.T, m *Manager) {
 
 func TestReadStateChangedFunnel(t *testing.T) {
 	m, n := readyManager(t)
+	m.rest.ackChannel = func(context.Context, *ningen.State, discord.ChannelID, discord.MessageID) error { return nil }
 	dispatch(n, &gateway.MessageCreateEvent{Message: guildMsg(1, "x")})
 	ev := nextUnrouted(t, m)
 	rs, ok := ev.(protocol.ReadStateChangedEvent)

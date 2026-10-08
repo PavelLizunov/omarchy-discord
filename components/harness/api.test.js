@@ -130,3 +130,17 @@ test("voiceOccupants picks one channel's users", () => {
   assert.deepEqual(Api.voiceOccupants(undefined, "2"), [])
   assert.deepEqual(Api.voiceOccupants([{ channel_id: "2" }], "2"), [])
 })
+
+test("filterChannels filters by text, voice, and unread while keeping categories with matches", () => {
+  const channels = [
+    ch("cat1", "Category 1", "category"),
+    ch("1", "chat", "text"),
+    ch("2", "lounge", "voice"),
+    ch("cat2", "Category 2", "category"),
+    { id: "3", name: "announcements", type: "announcement", unread: "unread" }
+  ]
+  assert.deepEqual(Api.filterChannels(channels, "voice").map(c => c.id), ["cat1", "2"])
+  assert.deepEqual(Api.filterChannels(channels, "text").map(c => c.id), ["cat1", "1", "cat2", "3"])
+  assert.deepEqual(Api.filterChannels(channels, "unread").map(c => c.id), ["cat2", "3"])
+  assert.deepEqual(Api.filterChannels(channels, "all").map(c => c.id), ["cat1", "1", "2", "cat2", "3"])
+})

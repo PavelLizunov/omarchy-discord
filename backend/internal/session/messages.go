@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/diamondburned/arikawa/v3/discord"
+	"github.com/diamondburned/arikawa/v3/gateway"
 	"github.com/diamondburned/arikawa/v3/state/store"
 	"github.com/diamondburned/arikawa/v3/utils/httputil"
 	"github.com/diamondburned/ningen/v3"
@@ -423,7 +424,27 @@ func (m *Manager) history(ctx context.Context, req *protocol.Request) (any, *pro
 	return protocol.HistoryResult{Messages: wireMessages(off, page), HasMore: len(page) >= limit}, nil
 }
 
-func (m *Manager) ack(req *protocol.Request) (any, *protocol.Error) {
+func (m *Manager) acknowledgeRead(ctx context.Context, n *ningen.State, chID discord.ChannelID, msgID discord.MessageID) *protocol.Error {
+	m.readAckMu.Lock()
+	defer m.readAckMu.Unlock()
+	if previous := n.ReadState.ReadState(chID); previous != nil && previous.LastMessageID > msgID {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	if err := m.rest.ackChannel(ctx, n, chID, msgID); err != nil {
+		return m.restError(n, err, false)
+	}
+	// A newer gateway acknowledgement may arrive while REST is in flight.
+	if previous := n.ReadState.ReadState(chID); previous != nil && previous.LastMessageID > msgID {
+		return nil
+	}
+	// Only publish a local read boundary after Discord accepts it; do not send twice.
+	n.State.Session.Handler.Call(&gateway.MessageAckEvent{ChannelID: chID, MessageID: msgID})
+	return nil
+}
+
+func (m *Manager) ack(ctx context.Context, req *protocol.Request) (any, *protocol.Error) {
 	var p protocol.AckParams
 	if e := req.Params(&p); e != nil {
 		return nil, e
@@ -436,7 +457,7 @@ func (m *Manager) ack(req *protocol.Request) (any, *protocol.Error) {
 	if e != nil {
 		return nil, e
 	}
-	n, e := m.cachedSession()
+	n, e := m.liveSession()
 	if e != nil {
 		return nil, e
 	}
@@ -447,6 +468,8 @@ func (m *Manager) ack(req *protocol.Request) (any, *protocol.Error) {
 	if _, err := n.Cabinet.Message(chID, msgID); err != nil {
 		return nil, protocol.Errorf(protocol.CodeUnknownMessage, "message %s is not cached; open the channel first", p.MessageID)
 	}
-	n.ReadState.MarkRead(chID, msgID)
+	if e := m.acknowledgeRead(ctx, n, chID, msgID); e != nil {
+		return nil, e
+	}
 	return protocol.EmptyResult{}, nil
 }

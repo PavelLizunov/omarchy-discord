@@ -102,11 +102,9 @@ func (m *Manager) guildAction(ctx context.Context, req *protocol.Request) (any, 
 			if !ch.LastMessageID.IsValid() {
 				continue
 			}
-			if err := m.rest.ackChannel(ctx, n, ch.ID, ch.LastMessageID); err != nil {
-				return nil, m.restError(n, err, false)
+			if e := m.acknowledgeRead(ctx, n, ch.ID, ch.LastMessageID); e != nil {
+				return nil, e
 			}
-			// Update only after the remote acknowledgement succeeds, without sending again.
-			n.State.Session.Handler.Call(&gateway.MessageAckEvent{ChannelID: ch.ID, MessageID: ch.LastMessageID})
 			count++
 		}
 		return struct {

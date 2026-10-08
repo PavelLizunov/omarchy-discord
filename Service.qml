@@ -405,22 +405,12 @@ Item {
   }
 
   function enterGuild(guildId) {
-    pendingGuildEntry = String(guildId || "")
-    resolveGuildEntry()
+    Api.browseGuild(root, guildId)
   }
 
   function resolveGuildEntry() {
-    var id = pendingGuildEntry
-    if (!id) return
-    if (id !== selectedGuildId || !visibleSurfaces["full-panel"]) { pendingGuildEntry = ""; return }
-    var rows = id === "dms" ? (Array.isArray(dms) ? dms : []) : channelsFor(id)
-    var loading = id === "dms" ? structureBusy : isLoadingChannels(id)
-    if (!rows.length && loading) return
+    // Channel-list responses must never select a conversation.
     pendingGuildEntry = ""
-    var target = Api.guildEntryChannel(rows, Api.lastChannelFor(lastChannels, id), id !== "dms")
-    if (!target) return
-    if (target !== currentChannelId) showChannel(target, id)
-    guildEntered(id, target)
   }
 
   function loadChannels(guildId, force) {

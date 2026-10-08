@@ -50,6 +50,7 @@ QtObject {
   property var channelsLoading: ({})
   property string selectedGuildId: ""
   property string currentChannelId: ""
+  property string pendingGuildEntry: ""
   property var channelData: ({})
   property var channelNames: ({})
   property var typers: ({})
@@ -72,6 +73,7 @@ QtObject {
     currentChannelId = String(channelId || "")
     if (guildId) selectedGuildId = String(guildId)
   }
+  function closeChannel(channelId) { note("closeChannel", channelId) }
   function openChannel(channelId) { note("openChannel", channelId) }
   function loadHistory(channelId) { note("loadHistory", channelId) }
   function markChannelRead(channelId) { note("markChannelRead", channelId) }
@@ -110,6 +112,31 @@ QtObject {
   property bool panelMapped: false
   property string panelScreenName: ""
   property bool timelinePinned: true
+
+  property var entry: ({})
+  property var settings: ({ notifications: "Mentions and DMs", stayConnected: "On", window: "On demand" })
+  function persistSettings(values) {
+    var next = Object.assign({}, settings, values || {})
+    settings = next
+    var nextEntry = Object.assign({}, entry, values || {})
+    entry = nextEntry
+    note("persistSettings", JSON.stringify(values))
+  }
+  property var archivedGuilds: ({})
+  function isArchived(id) { return !!archivedGuilds[String(id)] }
+  function toggleArchive(id, archived) {
+    var next = Object.assign({}, archivedGuilds)
+    if (archived) next[String(id)] = true
+    else delete next[String(id)]
+    archivedGuilds = next
+  }
+  function configuredEntry() { return entry }
+  function persistOpaque(key, value) {
+    var next = Object.assign({}, entry)
+    next[key] = value
+    entry = next
+    note("persistOpaque", key + ":" + String(value))
+  }
   function setUiVisible(key, value) { note("setUiVisible", key + "=" + value) }
   function refresh() { note("refresh") }
   function succeed(message) {}

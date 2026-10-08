@@ -130,7 +130,14 @@ Rectangle {
         client.focusZone()
       }
       if (root.state.indexOf("compact-") === 0) client.setCompactMode(true)
-      if (root.state === "compact-empty") model.currentChannelId = ""
+      if (root.state === "compact-channels" || root.state === "compact-empty") {
+        model.currentChannelId = ""
+        client.restoreView()
+      }
+      if (root.state === "compact-chat") {
+        model.currentChannelId = "9000"
+        client.compactChatOpen = true
+      }
       if (root.state.indexOf("compact-voice") === 0) {
         model.voice = {status:"connected",guildId:"1",channelId:"9002",muted:false,deafened:false,error:""}
         model.voiceMembers = {"1":[{channel_id:"9002",users:[{id:"201",display_name:"Voice friend"},{id:"202"},{id:"303",display_name:"Long voice participant name"}]},{channel_id:"9003",users:[{id:"999",display_name:"Other room"}]}]}
@@ -146,7 +153,18 @@ Rectangle {
       if (root.state === "server-online") { client.serverSort = "online"; client.serverToolsShown = true }
       if (root.state === "compact-navigation") { client.navigationShown = true; client.serverToolsShown = true }
       if (root.state === "server-empty") client.serverQuery = "nothing matches"
-      if (root.state === "server-menu" || root.state === "server-leave" || root.state === "server-settings") {
+      if (root.state === "server-archive") {
+        client.serverActions.archivedGuilds = {"2":true}
+        client.serverFilter = "archive"
+      }
+      if (root.state === "options-menu") client.optionsMenu.show()
+      if (root.state === "voice-chat") {
+        model.voice = {status:"connected",guildId:"1",channelId:"9002",muted:false,deafened:false,error:""}
+        model.voiceMembers = {"1":[{channel_id:"9002",users:[{id:"201",display_name:"Voice friend"},{id:"202"}]}]}
+        model.currentChannelId = "9002"
+        model.channelData["9002"] = {channel:model.channelsByGuild["1"][2],messages:Fixtures.build(4,1080,1790800000000),loading:false,hasMore:false}
+      }
+      if (root.state === "server-menu" || root.state === "server-leave" || root.state === "server-settings" || root.state === "server-menu-archive") {
         client.showServerMenu(model.guilds[0], 160, 120)
         if (root.state === "server-leave") { client.serverMenu.page = "leave"; client.serverMenu.firstFocus() }
         if (root.state === "server-settings") client.serverMenu.page = "settings"

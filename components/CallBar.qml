@@ -7,9 +7,17 @@ import "../Api.js" as Api
 Item {
   id: root
 
+  signal chatRequested()
+  function openChat() {
+    if (!service || !voice.channelId) return
+    service.showChannel(String(voice.channelId), String(voice.guildId || ""))
+    chatRequested()
+  }
+
   property var service: null
   property string channelName: ""
   property bool expanded: false
+  property bool compactRosterHeader: false
   readonly property var roomUsers: service && voice.channelId
     ? service.voiceUsers(String(voice.guildId || ""), String(voice.channelId)) : []
   readonly property alias roster: voiceRoster
@@ -58,29 +66,57 @@ Item {
       anchors.rightMargin: Style.spacing.sm
       spacing: Style.spacing.xxs
 
-      Row {
-        id: voiceTitle
+      Item {
+        id: voiceTitleContainer
         width: parent.width
-        spacing: Style.spacing.sm
+        height: Math.max(voiceTitle.height, chatButton.height)
 
-        Text {
-          id: glyph
+        Row {
+          id: voiceTitle
+          anchors.left: parent.left
+          anchors.right: chatButton.left
+          anchors.rightMargin: Style.spacing.xs
           anchors.verticalCenter: parent.verticalCenter
-          text: Api.channelGlyph("voice")
-          color: root.failed ? Color.urgent : (root.connected ? root.accent : root.secondary)
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
+          spacing: Style.spacing.sm
+
+          Text {
+            id: glyph
+            anchors.verticalCenter: parent.verticalCenter
+            text: Api.channelGlyph("voice")
+            color: root.failed ? Color.urgent : (root.connected ? root.accent : root.secondary)
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+          }
+
+          Text {
+            anchors.verticalCenter: parent.verticalCenter
+            width: Math.max(0, parent.width - glyph.width - parent.spacing)
+            elide: Text.ElideRight
+            text: root.channelName || "Voice"
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            font.bold: true
+          }
         }
 
-        Text {
+        MouseArea {
+          anchors.fill: voiceTitle
+          cursorShape: Qt.PointingHandCursor
+          onClicked: root.openChat()
+        }
+
+        Button {
+          id: chatButton
+          objectName: "voice-chat-button"
+          anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
-          width: Math.max(0, parent.width - glyph.width - parent.spacing)
-          elide: Text.ElideRight
-          text: root.channelName || "Voice"
-          color: root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          font.bold: true
+          iconOnly: true
+          iconName: "reply"
+          text: "Chat"
+          tooltipText: "Open text chat for this voice room"
+          focusable: true
+          onClicked: root.openChat()
         }
       }
 
@@ -100,11 +136,13 @@ Item {
         objectName: "voice-roster"
         visible: root.expanded
         width: parent.width
-        height: visible ? Math.max(0, root.height - voiceTitle.height - callStatus.height - controls.height
+        height: visible ? Math.max(0, root.height - voiceTitleContainer.height - callStatus.height - controls.height
           - (reconnect.visible ? reconnect.height + content.spacing : 0) - Style.spacing.sm * 2 - content.spacing * 3) : 0
         service: root.service
         voiceMode: true
+        compactHeader: root.compactRosterHeader
         voiceUsers: root.roomUsers
+        channelName: root.channelName
         headingText: root.failed ? "People in room" : "In voice"
       }
       Button {
@@ -115,9 +153,9 @@ Item {
         text: "Reconnect"
         iconName: "reconnect"
         focusable: true
-        enabled: !!(root.service && root.service.showStructure && root.voice.guildId && root.voice.channelId)
+        enabled: !!(root.service && root.service.showStructure && root.voice.channelId)
         tooltipText: String(root.voice.error || "Voice disconnected") + " · Rejoin this voice channel"
-        onClicked: if (root.service) root.service.voiceJoin(String(root.voice.guildId), String(root.voice.channelId))
+        onClicked: if (root.service) root.service.voiceJoin(String(root.voice.guildId || ""), String(root.voice.channelId))
       }
       Row {
         id: controls

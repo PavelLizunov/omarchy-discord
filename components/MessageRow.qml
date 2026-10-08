@@ -34,10 +34,15 @@ Item {
   readonly property var reactions: Array.isArray(message.reactions) ? message.reactions : []
   readonly property bool showHeader: !grouped && !system
   readonly property color foreground: Color.foreground
-  readonly property color muted: Api.secondaryColor(Color.muted, Color.foreground, Color.background)
+  readonly property color paintedBackground: Api.blend(root.cursor || hover.hovered
+    ? Style.hoverFillFor(Color.foreground, Color.accent)
+    : root.mentionsSelf ? Util.alpha(Color.urgent, 0.08) : Qt.rgba(0, 0, 0, 0), Color.background,
+    root.cursor || hover.hovered ? Style.hoverFillAlpha : root.mentionsSelf ? 0.08 : 0)
+  readonly property color muted: Api.secondaryColor(Color.muted, Color.foreground, paintedBackground)
+  readonly property color linkColor: Api.textColor(Color.accent, Color.foreground, paintedBackground)
   readonly property string rawContent: String(message.content || "")
   readonly property string html: markdownRenderer(rawContent, Object.assign({}, ctx,
-    {linkColor:String(Color.accent),emojiPath:undefined}))
+    {linkColor:String(root.linkColor),emojiPath:undefined}))
   readonly property date when: new Date(String(message.timestamp || ""))
   readonly property string timeText: isNaN(when.getTime()) ? "" : Qt.formatTime(when, "HH:mm")
   readonly property string fullTimeText: isNaN(when.getTime()) ? "" : Qt.formatDateTime(when, "dddd d MMMM yyyy HH:mm:ss")
@@ -60,27 +65,78 @@ Item {
     anchors.margins: Style.spacing.sm
     spacing: Style.spacing.xxs
     opacity: root.pending ? 0.55 : 1
-    Text {
+    Row {
       width: parent.width
       visible: !!root.replyTo
-      textFormat: Text.PlainText
-      text: root.replyTo ? "↳ " + String(root.replyTo.author_display_name || "unknown") + ": " + String(root.replyTo.preview || "(message unavailable)") : ""
-      elide: Text.ElideRight
-      color: root.muted
-      font.family: Style.font.family
-      font.pixelSize: Style.font.caption
+      spacing: Style.spacing.xxs
+
+      Text {
+        text: "↳ "
+        color: root.muted
+        font.family: Style.font.family
+        font.pixelSize: Style.font.caption
+      }
+      Text {
+        text: root.replyTo ? String(root.replyTo.author_display_name || root.replyTo.author_username || "unknown") : ""
+        color: Api.authorColor(root.replyTo ? root.replyTo.author_id : "", root.paintedBackground, root.foreground)
+        font.family: Style.font.family
+        font.pixelSize: Style.font.caption
+        font.bold: true
+      }
+      Text {
+        width: Math.max(0, body.width - x)
+        elide: Text.ElideRight
+        text: root.replyTo ? ": " + String(root.replyTo.preview || "(message unavailable)") : ""
+        color: root.muted
+        font.family: Style.font.family
+        font.pixelSize: Style.font.caption
+      }
     }
-    Text {
+    Row {
+      id: headerRow
       width: parent.width
       visible: root.showHeader
-      textFormat: Text.PlainText
-      text: String(root.author.display_name || root.author.username || "unknown")
-        + (root.author.bot ? " [BOT]" : "") + "  " + root.timeText
-      elide: Text.ElideRight
-      color: root.foreground
-      font.family: Style.font.family
-      font.pixelSize: Style.font.body
-      font.bold: true
+      spacing: Style.spacing.xs
+
+      Text {
+        id: authorLabel
+        text: String(root.author.display_name || root.author.username || "unknown")
+        textFormat: Text.PlainText
+        elide: Text.ElideRight
+        color: Api.authorColor(root.author.id, root.paintedBackground, Color.foreground)
+        font.family: Style.font.family
+        font.pixelSize: Style.font.body
+        font.bold: true
+      }
+
+      Rectangle {
+        id: botBadge
+        visible: !!root.author.bot
+        anchors.verticalCenter: parent.verticalCenter
+        height: Style.space(14)
+        width: botText.implicitWidth + Style.spacing.xs * 2
+        radius: Style.space(3)
+        color: Util.alpha(Color.accent, 0.2)
+        Text {
+          id: botText
+          anchors.centerIn: parent
+          text: "BOT"
+          color: Api.textColor(Color.accent, Color.foreground, Api.blend(Color.accent, root.paintedBackground, 0.2))
+          font.family: Style.font.family
+          font.pixelSize: Style.font.caption
+          font.bold: true
+        }
+      }
+
+      Text {
+        id: timeLabel
+        anchors.verticalCenter: parent.verticalCenter
+        text: root.timeText
+        textFormat: Text.PlainText
+        color: root.muted
+        font.family: Style.font.family
+        font.pixelSize: Style.font.caption
+      }
     }
     TextEdit {
       id: content
@@ -120,11 +176,11 @@ Item {
         wrapMode: Text.Wrap
         readonly property bool covered: !!modelData.spoiler && !root.spoilersRevealed
         text: covered ? "[spoiler attachment — Enter to reveal]"
-          : '<a style="color:' + Color.accent + '" href="' + Markdown.escapeHtml(String(modelData.url || "")) + '">'
+          : '<a style="color:' + root.linkColor + '" href="' + Markdown.escapeHtml(String(modelData.url || "")) + '">'
             + Markdown.escapeHtml(String(modelData.filename || "attachment")) + '</a>  '
             + Markdown.formatSize(modelData.size)
-        color: Color.accent
-        linkColor: Color.accent
+        color: root.linkColor
+        linkColor: root.linkColor
         font.family: Style.font.family
         font.pixelSize: Style.font.bodySmall
         onLinkActivated: function(url) { root.linkActivated(url) }
@@ -138,12 +194,12 @@ Item {
         width: body.width
         textFormat: Text.RichText
         wrapMode: Text.Wrap
-        text: (modelData.url ? '<a style="color:' + Color.accent + '" href="' + Markdown.escapeHtml(String(modelData.url)) + '">' : "")
+        text: (modelData.url ? '<a style="color:' + root.linkColor + '" href="' + Markdown.escapeHtml(String(modelData.url)) + '">' : "")
           + Markdown.escapeHtml(String(modelData.title || modelData.url || "Link"))
           + (modelData.url ? "</a>" : "")
           + (modelData.description ? "<br>" + Markdown.escapeHtml(Markdown.plainText(String(modelData.description), root.ctx)) : "")
         color: root.muted
-        linkColor: Color.accent
+        linkColor: root.linkColor
         font.family: Style.font.family
         font.pixelSize: Style.font.bodySmall
         onLinkActivated: function(url) { root.linkActivated(url) }

@@ -2,7 +2,15 @@
 
 // Original 24-unit action drawings; no external assets or runtime requests.
 var paths = {
-  settings: '<path d="M3 6h18M3 12h18M3 18h18"/><circle cx="8" cy="6" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="10" cy="18" r="2"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"/>',
+  back: '<path d="m15 18-6-6 6-6"/>',
+  all: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>',
+  mention: '<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/>',
+  unread: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9m7.7 13a2 2 0 0 1-3.4 0"/>',
+  textChannel: '<path d="M4 9h16M4 15h16M10 3 8 21m8-18-2 18"/>',
+  sliders: '<path d="M3 6h18M3 12h18M3 18h18"/><circle cx="8" cy="6" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="10" cy="18" r="2"/>',
+  user: '<circle cx="12" cy="7" r="4"/><path d="M6 21v-2a6 6 0 0 1 12 0v2"/>',
+  archive: '<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8m-9 4h4"/>',
   reconnect: '<path d="M20 9a8 8 0 1 0 0 6M20 3v6h-6"/>',
   navigation: '<path d="M3 5h18M3 12h18M3 19h18"/>',
   compact: '<rect x="4" y="5" width="16" height="14" rx="1"/><path d="M14 5v14"/>',
@@ -26,12 +34,19 @@ var paths = {
 
 function svg(name, color) {
   if (!Object.prototype.hasOwnProperty.call(paths, name)) return ""
-  var red = Math.round(color.r * 255)
-  var green = Math.round(color.g * 255)
-  var blue = Math.round(color.b * 255)
+  if (!color) color = "#ffffff"
+  var strokeStr = ""
+  if (typeof color === "object" && typeof color.r === "number") {
+    var red = Math.round(color.r * 255)
+    var green = Math.round(color.g * 255)
+    var blue = Math.round(color.b * 255)
+    var opacity = typeof color.a === "number" ? color.a : 1
+    strokeStr = 'stroke="rgb(' + red + ',' + green + ',' + blue + ')" stroke-opacity="' + opacity + '"'
+  } else {
+    strokeStr = 'stroke="' + String(color) + '"'
+  }
   return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"'
-    + ' fill="none" stroke="rgb(' + red + ',' + green + ',' + blue + ')"'
-    + ' stroke-opacity="' + color.a + '" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'
+    + ' fill="none" ' + strokeStr + ' stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'
     + paths[name] + '</svg>'
 }
 

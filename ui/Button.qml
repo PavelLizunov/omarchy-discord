@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls as Controls
 import "Icons.js" as Icons
+import "../Api.js" as Api
 
 Controls.AbstractButton {
   id: root
@@ -28,9 +29,17 @@ Controls.AbstractButton {
   property color tooltipForeground: Color.tooltip.text
   property color tooltipBorder: Color.tooltip.border
   readonly property alias iconStatus: svgIcon.status
+  readonly property alias tooltipItem: buttonToolTip
   readonly property bool hot: hovered || hasCursor
   readonly property bool _showFocusRing: focusable && activeFocus
   readonly property color _selectedColor: Style.selectedStateColor(foreground, accent)
+  readonly property color paintedBackground: Api.blend(root.down ? Style.pressedFillFor(foreground, accent)
+    : _showFocusRing ? Style.focusFillFor(foreground, accent)
+    : selected || active ? Style.selectedFillFor(foreground, accent)
+    : hot ? Style.hoverFillFor(foreground, accent) : backgroundColor, Color.popups.background,
+    root.down ? Style.pressedFillAlpha : _showFocusRing ? Style.focusFillAlpha
+      : selected || active ? Style.selectedFillAlpha : hot ? Style.hoverFillAlpha : backgroundColor.a)
+  readonly property color textForeground: Api.textColor(selected || active ? _selectedColor : foreground, Color.foreground, paintedBackground)
   readonly property var _borderSpec: Border.controlSpec(_showFocusRing ? "focus" : hot ? "hover-cursor" : selected || active ? "selected" : "normal", foreground, accent)
   signal rightClicked()
 
@@ -38,7 +47,7 @@ Controls.AbstractButton {
   activeFocusOnTab: focusable
   hoverEnabled: true
   Accessible.role: Accessible.Button
-  Accessible.name: text || tooltipText
+  Accessible.name: tooltipText || text
   leftPadding: horizontalPadding + Border.left(_borderSpec)
   rightPadding: horizontalPadding + Border.right(_borderSpec)
   topPadding: verticalPadding + Border.top(_borderSpec)
@@ -53,14 +62,15 @@ Controls.AbstractButton {
     radius: Style.cornerRadius
     color: root.down ? Style.pressedFillFor(root.foreground, root.accent)
       : root._showFocusRing ? Style.focusFillFor(root.foreground, root.accent)
-      : root.hot ? Style.hoverFillFor(root.foreground, root.accent)
-      : root.selected || root.active ? Style.selectedFillFor(root.foreground, root.accent) : root.backgroundColor
+      : root.selected || root.active ? Style.selectedFillFor(root.foreground, root.accent)
+      : root.hot ? Style.hoverFillFor(root.foreground, root.accent) : root.backgroundColor
     borderSpec: root._showFocusRing || root.hot || root.selected || root.active || root.bordered ? root._borderSpec : Border.none()
+    Behavior on color { ColorAnimation { duration: 120 } }
   }
   TextMetrics { id: labelMetrics; text: root.text; font.family: root.fontFamily; font.pixelSize: root.fontSize }
   contentItem: Item {
     id: content
-    clip: true
+    clip: false
     readonly property bool hasIcon: root.iconName !== "" || root.iconText !== ""
     readonly property bool hasLabel: root.text !== "" && !root.iconOnly
     implicitWidth: (hasIcon ? root.iconSize : 0) + (hasLabel ? labelMetrics.advanceWidth : 0)
@@ -101,15 +111,15 @@ Controls.AbstractButton {
       elide: Text.ElideRight
       horizontalAlignment: root.leftAlign ? Text.AlignLeft : Text.AlignHCenter
       text: root.text; textFormat: Text.PlainText
-      color: root.selected || root.active ? root._selectedColor : root.foreground
+      color: root.textForeground
       font.family: root.fontFamily; font.pixelSize: root.fontSize
     }
   }
   TapHandler { acceptedButtons: Qt.RightButton; onTapped: root.rightClicked() }
-  Controls.ToolTip {
-    popupType: Controls.Popup.Item
+  PanelToolTip {
+    id: buttonToolTip
     visible: root.tooltipText !== "" && root.hovered
-    delay: 600
+    delay: 1000
     text: root.tooltipText
   }
 }

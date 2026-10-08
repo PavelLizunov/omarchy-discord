@@ -11,6 +11,7 @@ FocusScope {
   property var service: null
   property var list: null
   property bool voiceMode: false
+  property bool compactHeader: false
   property string headingText: ""
   property var voiceUsers: []
   property bool loading: false
@@ -31,7 +32,8 @@ FocusScope {
   property string cursorId: ""
   readonly property int cursor: indexOfId(rows, cursorId)
   readonly property color foreground: Color.popups.text
-  readonly property color muted: Api.secondaryColor(Color.muted, Color.popups.text, Color.popups.background)
+  readonly property color muted: Api.secondaryColor(Color.muted, Color.popups.text,
+    Api.blend(Style.hoverFillFor(Color.popups.text, Color.accent), Color.popups.background, Style.hoverFillAlpha))
   readonly property string fontFamily: Style.font.family
   readonly property bool dense: width < Style.space(170)
   readonly property int avatarSize: Style.space(dense ? 18 : 24)
@@ -132,6 +134,7 @@ FocusScope {
       spacing: Style.spacing.xs
 
       PanelSectionHeader {
+        visible: !root.compactHeader
         width: parent.width
         objectName: "people-heading"
         text: root.headingText || (root.voiceMode ? "In voice" :  (root.dismissible ? "Members · Esc closes" : "Members"))
@@ -141,7 +144,7 @@ FocusScope {
       Text {
         id: voiceHeading
         width: parent.width
-        visible: root.voiceMode
+        visible: root.voiceMode && !root.compactHeader
         text: root.channelName
         textFormat: Text.PlainText
         wrapMode: Text.Wrap
@@ -164,7 +167,7 @@ FocusScope {
       ListView {
         id: listView
         width: parent.width
-        height: parent.height - Style.spacing.controlHeight
+        height: parent.height - (root.compactHeader ? 0 : Style.spacing.controlHeight)
           - (voiceHeading.visible ? voiceHeading.height + Style.spacing.xs : 0)
           - (root.dismissible ? Style.spacing.controlHeight + Style.spacing.sm : 0)
         visible: root.rows.length > 0

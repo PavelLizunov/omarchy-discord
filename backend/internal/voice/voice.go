@@ -51,11 +51,12 @@ type Engine struct {
 	opMu sync.Mutex
 	mu   sync.Mutex
 
-	st     State
-	selfID discord.UserID
-	mgr    dvoice.Manager
-	gen    uint64
-	drops  int
+	st         State
+	selfID     discord.UserID
+	mgr        dvoice.Manager
+	gen        uint64
+	drops      int
+	recoveries int
 
 	op4      dvoice.StateUpdateFunc
 	newAudio func() (*audio, error)
@@ -101,6 +102,10 @@ func (e *Engine) update(fn func() (after func())) {
 }
 
 func (e *Engine) Join(ctx context.Context, guildID discord.GuildID, channelID discord.ChannelID) error {
+	return e.join(ctx, guildID, channelID, nil)
+}
+
+func (e *Engine) join(ctx context.Context, guildID discord.GuildID, channelID discord.ChannelID, recoveryGen *uint64) error {
 	if !guildID.IsValid() || !channelID.IsValid() {
 		return errors.New("voice: guild and channel are required")
 	}
@@ -114,6 +119,13 @@ func (e *Engine) Join(ctx context.Context, guildID discord.GuildID, channelID di
 		deaf    bool
 	)
 	e.update(func() func() {
+		if recoveryGen != nil && (*recoveryGen != e.gen || e.st.Status != StatusConnecting) {
+			joinErr = context.Canceled
+			return nil
+		}
+		if recoveryGen == nil {
+			e.recoveries = 0
+		}
 		after := e.detachLocked()
 		me, err := e.n.Cabinet.Me()
 		if err != nil {
@@ -356,6 +368,10 @@ func (e *Engine) gatewayCreate(ds godave.Session, evh dvoice.EventHandlerFunc, _
 		evh(g, op, seq, data)
 		e.onEvent(gen, op, data)
 	}, func(_ dvoice.Gateway, err error) {
+		if closeCode(err) == 4006 {
+			e.observeClose(gen, err)
+			return
+		}
 		e.fail(gen, closeMessage(err))
 	}, opts...)
 }
@@ -368,6 +384,21 @@ func (e *Engine) observeClose(gen uint64, err error) {
 	e.update(func() func() {
 		if gen != e.gen || e.st.Status == StatusIdle {
 			return nil
+		}
+		// One fresh session per explicit Join. Both gateway close callbacks may
+		// report the same loss; detach advances gen before either can re-enter.
+		if closeCode(err) == 4006 && e.conn != nil && e.recoveries == 0 && (e.st.Status == StatusConnected || e.st.Status == StatusConnecting) {
+			e.recoveries++
+			st := e.st
+			after := e.detachLocked()
+			recoveryGen := e.gen
+			e.st.Status, e.st.Error = StatusConnecting, ""
+			return func() {
+				if after != nil {
+					after()
+				}
+				go func() { _ = e.join(context.Background(), st.GuildID, st.ChannelID, &recoveryGen) }()
+			}
 		}
 		e.drops++
 		if !resumable || e.drops > 1 {
