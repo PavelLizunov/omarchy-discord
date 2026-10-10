@@ -583,6 +583,10 @@ func (m *Manager) Handle(ctx context.Context, req *protocol.Request) (any, *prot
 		return m.voiceJoin(ctx, req)
 	case "voice_leave":
 		return m.voiceLeave(ctx)
+	case "voice_cameras":
+		return m.voiceCameras(ctx, req, false)
+	case "voice_watch_camera":
+		return m.voiceCameras(ctx, req, true)
 	case "voice_set":
 		return m.voiceSet(ctx, req)
 	case "subscribe_members":

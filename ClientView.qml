@@ -32,7 +32,7 @@ Item {
   readonly property bool opened: hostOpened
   property bool windowActive: false
   property bool mapped: false
-  readonly property bool reading: opened && mapped && windowActive
+  readonly property bool reading: opened && mapped && windowActive && !cameraView.shown
   property string screenName: ""
   signal closeRequested()
   signal linkRequested(string url)
@@ -43,6 +43,9 @@ Item {
   readonly property alias picker: pickerView
   readonly property alias members: membersView
   readonly property alias controls: headerControls
+  property bool cameraPreviousChat: false
+  function openCamera() {cameraPreviousChat=compactChatOpen;cameraView.open();if(narrowLayout)compactChatOpen=true}
+  readonly property alias camera: cameraView
   readonly property bool qrImageReady: qrImage.status === Image.Ready
   readonly property alias logoutConfirmation: logoutConfirm
   readonly property alias serverMenu: serverMenu
@@ -50,7 +53,7 @@ Item {
   readonly property alias helpButton: optionsHelp
   readonly property alias logoutButton: optionsLogout
   readonly property alias optionsButton: optionsButton
-  readonly property bool overlayShown: cheatsheetView.shown || pickerView.shown || logoutConfirm.shown || serverMenu.shown || optionsMenu.shown
+  readonly property bool overlayShown: cameraView.shown || cheatsheetView.shown || pickerView.shown || logoutConfirm.shown || serverMenu.shown || optionsMenu.shown
   readonly property bool compactMembers: false
   readonly property bool narrowLayout: compactView || width < Style.space(900)
   property bool navigationShown: false
@@ -70,6 +73,7 @@ Item {
   readonly property real controlsRowHeight: Math.max(Style.spacing.controlHeight, headerControls.height)
   readonly property real controlButtonsWidth:
     (ready && currentChannelId !== "" ? membersButton.width + Style.spacing.controlGap : 0)
+    + (cameraButton.visible ? cameraButton.width + Style.spacing.controlGap : 0)
     + (ready ? searchButton.width + Style.spacing.controlGap : 0)
     + (ready ? optionsButton.width + Style.spacing.controlGap : 0)
     + navigationButton.width + Style.spacing.controlGap + modeButton.width + Style.spacing.controlGap + closeButton.width
@@ -106,7 +110,7 @@ Item {
   property string zone: "sidebar"
   property string column: "rail"
   readonly property bool buttonFocused: navigationButton.activeFocus || optionsButton.activeFocus || closeButton.activeFocus || modeButton.activeFocus
-    || membersButton.activeFocus || searchButton.activeFocus || optionsHelp.activeFocus || optionsLogout.activeFocus
+    || cameraButton.activeFocus || membersButton.activeFocus || searchButton.activeFocus || optionsHelp.activeFocus || optionsLogout.activeFocus
     || startBackendButton.activeFocus || dismissErrorButton.activeFocus || joinVoiceButton.activeFocus || callBarFocused
     || filterButtons(serverFilterChips).some(function(button) { return button.activeFocus })
     || filterButtons(channelFilterChips).some(function(button) { return button.activeFocus })
@@ -774,11 +778,11 @@ Item {
       }
     }
     var stops = ["rail", "serverChips", "serverTools", "serverSearch", "serverFilter", "serverSort", "serverRefresh", "channels", "channelChips", "timeline", "composer", "joinVoice", "callbar", "members", "startBackend",
-      "navigation", "search", "membersButton", "options", "mode", "close", "dismissError"]
+      "navigation", "search", "camera", "membersButton", "options", "mode", "close", "dismissError"]
     var current = focusedGroup || (joinVoiceButton.activeFocus ? "joinVoice" : dismissErrorButton.activeFocus ? "dismissError" : navigationButton.activeFocus ? "navigation" : serverToolsButton.activeFocus ? "serverTools" : serverSearch.activeFocus ? "serverSearch" : serverFilterControl.activeFocus ? "serverFilter"
       : serverSortControl.activeFocus ? "serverSort" : serverRefresh.activeFocus ? "serverRefresh" : callBarFocused ? "callbar"
       : (buttonFocused
-        ? (modeButton.activeFocus ? "mode" : closeButton.activeFocus ? "close" : searchButton.activeFocus ? "search" : optionsButton.activeFocus ? "options"
+        ? (cameraButton.activeFocus ? "camera" : modeButton.activeFocus ? "mode" : closeButton.activeFocus ? "close" : searchButton.activeFocus ? "search" : optionsButton.activeFocus ? "options"
           : (membersButton.activeFocus ? "membersButton"
             : (startBackendButton.activeFocus ? "startBackend" : "options")))
         : (zone === "sidebar" ? column : zone)))
@@ -798,6 +802,7 @@ Item {
       if (stop === "callbar" && !(ready && callBar.visible)) continue
       if (stop === "members" && !membersVisible) continue
       if (stop === "startBackend" && !startBackendButton.visible) continue
+      if (stop === "camera" && !cameraButton.visible) continue
       if (stop === "membersButton" && !membersButton.visible) continue
       if (stop === "navigation" && !navigationButton.visible) continue
       if (stop === "search" && !searchButton.visible) continue
@@ -830,6 +835,7 @@ Item {
     if (stop === "search") { searchButton.forceActiveFocus(); return }
     if (stop === "options") { optionsButton.forceActiveFocus(); return }
     if (stop === "close") { closeButton.forceActiveFocus(); return }
+    if (stop === "camera") { cameraButton.forceActiveFocus(); return }
     if (stop === "membersButton") { membersButton.forceActiveFocus(); return }
     if (stop === "startBackend") { startBackendButton.forceActiveFocus(); return }
     if (stop === "callbar") { focusCallBar(); return }
@@ -986,7 +992,7 @@ Item {
   onWindowActiveChanged: publishActive()
   onReadingChanged: if (reading && ready && timelineView.pinned
     && (focusedZone === "timeline" || focusedZone === "composer")) ackTimer.restart()
-  onOpenedChanged: opened ? enter() : leave()
+  onOpenedChanged: {if (!opened && cameraView.shown) cameraView.hide(); opened ? enter() : leave()}
 
   onMappedChanged: publishMapped()
   onScreenNameChanged: publishScreen()
@@ -1103,6 +1109,15 @@ Item {
           activeFocusOnTab: false
           tooltipText: "Find a channel or direct message (Ctrl+K)"
           onClicked: root.openSwitcher()
+        }
+        Button {
+          id: cameraButton
+          objectName: "camera-button"
+          visible: root.ready && root.service && root.service.voice && root.service.voice.status === "connected"
+          text: "Cameras"
+          tooltipText: "Choose a participant's webcam to watch (H.264 MVP)"
+          focusable: true
+          onClicked: root.openCamera()
         }
         Button {
           id: membersButton
@@ -2432,6 +2447,15 @@ Item {
               y: root.voiceNavigation ? parent.height - height : 0
               width: Math.max(0, parent.width - x)
               height: root.voiceNavigation ? Math.min(Style.space(210), parent.height * 0.55) : parent.height
+            }
+            Components.CameraView {
+              id: cameraView
+              objectName: "camera-view"
+              parent: channelContent
+              anchors.fill: parent
+              z: 20
+              service: root.service
+              onClosed: {root.compactChatOpen=root.cameraPreviousChat;root.focusZone()}
             }
             Column {
               id: chatColumn

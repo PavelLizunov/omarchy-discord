@@ -28,9 +28,14 @@ for (const file of ['ClientView.qml',...fs.readdirSync(path.join(root,'component
   const text=fs.readFileSync(path.join(root,file),'utf8');
   assert(!text.includes('MultiEffect {'),file);
   assert(!/^import Quickshell/m.test(text),file);
-  if (file !== 'ClientView.qml') assert(!/\bImage\s*\{/.test(text),file);
+  if (file !== 'ClientView.qml' && file !== 'components/CameraView.qml') assert(!/\bImage\s*\{/.test(text),file);
+  if (file === 'components/CameraView.qml') {
+    assert(!text.includes('fetch_media'), 'Camera frames must not enable attachment fetching');
+    assert(text.includes('"data:image/jpeg;base64,"'), 'Camera display must use backend frame bytes');
+    assert(text.includes('voice_watch_camera') && text.includes('Component.onDestruction'), 'Camera reception must have an explicit stop path');
+  }
 }
-console.log('PASS: no fetch_media, no queued media, no cached images, portable text consumers');
+console.log('PASS: no attachment fetching/queued/cached images; camera is an explicit backend-frame exception');
 const api = {};
 vm.createContext(api);
 vm.runInContext(fs.readFileSync(path.join(root,'Api.js'),'utf8'),api);

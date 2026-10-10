@@ -1,6 +1,6 @@
 # Omacord
 
-A text-only Discord client for Omarchy Quattro, with a native panel, channel switcher, mention indicator and voice controls. Plugin ID: `quickshell.discord`.
+A text-focused Discord client for Omarchy Quattro, with a native panel, channel switcher, mention indicator, voice controls and an experimental webcam viewer. Plugin ID: `quickshell.discord`.
 
 The plugin runs with your user permissions inside the shared Omarchy shell. The backend connects to Discord, stores a sign-in token through Secret Service, and uses a user systemd service. This is an unofficial client; use it at your own risk.
 
@@ -12,7 +12,7 @@ The release includes a complete plugin archive with the tested Linux x86_64 back
 
 ## Requirements and installation
 
-Requires Omarchy Quattro, Quickshell, Qt Quick Controls, systemd, `secret-tool`, `libopus`, `rsync` and `jq`. Clipboard image staging uses `wl-paste`. The bundled backend is for x86_64; other architectures or changed backend sources require Go and build dependencies. Source builds may download Go modules. Never start a second Quickshell instance to run the plugin.
+Requires Omarchy Quattro, Quickshell, Qt Quick Controls, systemd, `secret-tool`, `libopus`, `rsync` and `jq`. Experimental webcam viewing additionally requires `ffmpeg`. Clipboard image staging uses `wl-paste`. The bundled backend is for x86_64; other architectures or changed backend sources require Go and build dependencies. Source builds may download Go modules. Never start a second Quickshell instance to run the plugin.
 
 From this checkout:
 
@@ -36,6 +36,7 @@ Click the bar icon to open the client. Log in by scanning the QR code with Disco
 - The Options button opens an account card with shortcuts reference and guarded Log out, keeping destructive and secondary actions away from the primary toolbar.
 - Voice channels also support text chat: selecting a voice channel in the list or search opens its messages without connecting to voice. Join voice above the messages connects only when explicitly pressed. Clicking Chat or the room title in the call bar opens its text channel beside the call controls without changing the call.
 - Navigation follows servers, the selected server's channels, then channel content. In Full, the voice room's people and controls occupy the left side of that content area, not the server or channel list. In narrow browsing, the server rail keeps its readable width and the retained call sits below the selected server's channel tree. In narrow chat, people and controls remain to the left of the messages. They never overlay navigation. Compact suppresses the optional server-wide member column during a call, not the voice panel. The room list follows voice membership events and remains visible without a text channel or when another server is selected. Missing membership data is marked unavailable.
+- Experimental webcam MVP: explicitly join a voice channel, press Cameras in the toolbar, then select a participant. One H.264 webcam is decoded by the backend's owned FFmpeg process and shown at up to 640×360, with UI refresh capped at 5 frames per second. Close or Escape stops watching and returns to the retained channel/draft; hiding the panel or leaving voice also stops the decoder. It does not turn on your camera, record video, open another client, or support Go Live screen shares. Other codecs, retransmission and automatic recovery are not implemented. This is a local development candidate; synthetic decoding and offscreen UI checks do not establish live Discord webcam acceptance. The immutable 0.1.0 beta above does not include this feature.
 - A failed voice session retains its room panel with a Disconnected status and an explicit Reconnect button. Room members are not labeled as an active call while disconnected. An invalid voice session (4006) triggers at most one fresh-session recovery per explicit join, preserving the room and mute/deafen flags. A repeat failure stops at Disconnected; Reconnect starts a new user-requested attempt. Leaving cancels stale recovery. The exact gateway error remains in the reconnect tooltip. Error 4006 means the voice session is no longer valid, not that Discord login expired.
 - The optional server Members list appears beside the conversation when there is room. It is hidden while browsing compact server/channel navigation and returns with the conversation. The people icon shows or hides it; narrow active calls reserve that space for the persistent left voice panel. Narrow lists wrap names and omit activity subtitles. Hover or keyboard focus reveals full member details. Escape returns focus to the composer.
 - Read acknowledgements wait for Discord before updating local read state. Failed acknowledgements surface an error rather than reporting local success. Older local acknowledgement requests do not move the read boundary backwards; new messages can still make a channel unread.
@@ -43,7 +44,7 @@ Click the bar icon to open the client. Log in by scanning the QR code with Disco
 - Log out asks for confirmation before ending the session and attempting to remove its saved token. Cancel is initially focused. Close only hides the panel.
 - Escape walks back through focus zones; it does not close a ready panel from the server rail.
 
-Attachments are links, not image previews. Bar settings control connection lifetime, notifications, mention count and window persistence. Real QR login, delivery, clipboard and audio depend on the account, network and desktop; inert tests do not certify them.
+Attachments remain links, not image previews. The experimental call-camera viewer is separate from attachment fetching. Bar settings control connection lifetime, notifications, mention count and window persistence. Real QR login, delivery, clipboard and audio depend on the account, network and desktop; inert tests do not certify them.
 
 ## Checks and troubleshooting
 

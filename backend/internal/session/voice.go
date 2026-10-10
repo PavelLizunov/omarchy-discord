@@ -10,6 +10,7 @@ import (
 	"github.com/diamondburned/arikawa/v3/gateway"
 	"github.com/diamondburned/arikawa/v3/state/store"
 	"github.com/diamondburned/ningen/v3"
+	dsnowflake "github.com/disgoorg/snowflake/v2"
 
 	"github.com/mattcalayo/omarchy-discord/backend/internal/protocol"
 	"github.com/mattcalayo/omarchy-discord/backend/internal/redact"
@@ -26,6 +27,41 @@ type voiceEngine interface {
 }
 
 var idleVoice = voice.State{Status: voice.StatusIdle}
+
+func (m *Manager) voiceCameras(ctx context.Context, req *protocol.Request, watch bool) (any, *protocol.Error) {
+	v, e := m.liveVoice()
+	if e != nil {
+		return nil, e
+	}
+	c, ok := v.(interface {
+		Cameras() voice.CameraSnapshot
+		WatchCamera(context.Context, dsnowflake.ID, uint64) error
+	})
+	if !ok {
+		return nil, protocol.Errorf(protocol.CodeGatewayUnavailable, "camera viewing unavailable")
+	}
+	if watch {
+		var p struct {
+			UserID   string `json:"user_id"`
+			Revision uint64 `json:"revision"`
+		}
+		if e = req.Params(&p); e != nil {
+			return nil, e
+		}
+		var id dsnowflake.ID
+		if p.UserID != "" {
+			sf, err := parseSnowflake(p.UserID, "user_id")
+			if err != nil {
+				return nil, err
+			}
+			id = dsnowflake.ID(sf)
+		}
+		if err := c.WatchCamera(ctx, id, p.Revision); err != nil {
+			return nil, protocol.Errorf(protocol.CodeDiscordError, "%v", err)
+		}
+	}
+	return c.Cameras(), nil
+}
 
 func wireVoice(v voice.State) protocol.VoiceState {
 	status := string(v.Status)

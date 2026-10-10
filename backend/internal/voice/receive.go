@@ -10,9 +10,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	dvoice "github.com/disgoorg/disgo/voice"
 	"github.com/disgoorg/snowflake/v2"
 	"github.com/hraban/opus"
+	dvoice "github.com/mattcalayo/omarchy-discord/backend/internal/voicewire"
 )
 
 const (
@@ -291,6 +291,7 @@ type rxDriver struct {
 	log    *slog.Logger
 	rx     dvoice.OpusFrameReceiver
 	conn   dvoice.Conn
+	video  *camera
 	cancel context.CancelFunc
 	mu     sync.Mutex
 }
@@ -322,6 +323,12 @@ func (d *rxDriver) loop(ctx context.Context) {
 		if err != nil {
 			d.log.Debug("voice: read packet", "err", err)
 			pause()
+			continue
+		}
+		if p.Type == 105 {
+			if d.video != nil {
+				d.video.receive(p, d.conn.DAVE())
+			}
 			continue
 		}
 		if err := d.rx.ReceiveOpusFrame(d.conn.UserIDBySSRC(p.SSRC), p); err != nil {

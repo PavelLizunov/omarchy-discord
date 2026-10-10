@@ -13,7 +13,7 @@ source_fingerprint() {
     cd -- "$source_root/backend"
     { sha256sum go.mod go.sum
       find cmd internal -type f -name '*.go' ! -name '*_test.go' -print0 \
-        | sort -z | xargs -0 sha256sum
+        | LC_ALL=C sort -z | xargs -0 sha256sum
     } | sha256sum | cut -d' ' -f1
   )
 }

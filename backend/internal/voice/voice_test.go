@@ -21,11 +21,11 @@ import (
 	"github.com/diamondburned/arikawa/v3/gateway"
 	"github.com/diamondburned/ningen/v3"
 	dgateway "github.com/disgoorg/disgo/gateway"
-	dvoice "github.com/disgoorg/disgo/voice"
 	"github.com/disgoorg/godave"
 	"github.com/disgoorg/snowflake/v2"
 	"github.com/gorilla/websocket"
 	"github.com/hraban/opus"
+	dvoice "github.com/mattcalayo/omarchy-discord/backend/internal/voicewire"
 )
 
 func TestConvertVoiceState(t *testing.T) {
