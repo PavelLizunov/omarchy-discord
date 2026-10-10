@@ -114,7 +114,7 @@ Item {
     || startBackendButton.activeFocus || dismissErrorButton.activeFocus || joinVoiceButton.activeFocus || callBarFocused
     || filterButtons(serverFilterChips).some(function(button) { return button.activeFocus })
     || filterButtons(channelFilterChips).some(function(button) { return button.activeFocus })
-  readonly property bool callBarFocused: callBar.visible && callBar.activeFocus
+  readonly property bool callBarFocused: callBar.visible && (callBar.activeFocus || callBar.controlFocused)
   readonly property string activeVoiceChannelId: {
     if (!service || !service.voice) return ""
     var status = String(service.voice.status || "")
@@ -598,7 +598,7 @@ Item {
 
   function focusCallBar() {
     if (!callBar.visible) return
-    callBar.forceActiveFocus()
+    callBar.focusAudio(1)
   }
 
   function voiceAction(action) {
@@ -767,6 +767,7 @@ Item {
   }
 
   function cycleFocus(delta) {
+    if(callBarFocused && callBar.focusAudio(delta))return
     var groups = [serverFilterChips, channelFilterChips]
     var groupNames = ["serverChips", "channelChips"]
     var focusedGroup = ""
@@ -879,6 +880,10 @@ Item {
     var alt = (event.modifiers & Qt.AltModifier) !== 0
     var shift = (event.modifiers & Qt.ShiftModifier) !== 0
     if (overlayShown) return
+    if (key === Qt.Key_Escape && callBarFocused && callBar.dismissAudio()) {
+      event.accepted = true
+      return
+    }
     if (narrowLayout && compactChatOpen && key === Qt.Key_Escape) {
       compactChatOpen = false
       zone = "sidebar"

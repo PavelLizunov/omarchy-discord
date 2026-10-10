@@ -7,6 +7,30 @@ import "../Api.js" as Api
 Item {
   id: root
 
+  property bool rejoining: false
+  function rejoin() {
+    if (rejoining || !service || !service.showStructure || !voice.channelId) return
+    rejoining = true
+    if (!service.voiceJoin(String(voice.guildId || ""), String(voice.channelId))) rejoining = false
+    else rejoinDeadline.restart()
+  }
+  onStatusChanged: if (status === "connecting" || status === "error" || status === "idle") { rejoining = false; rejoinDeadline.stop() }
+  Timer { id: rejoinDeadline; interval: 10000; onTriggered: root.rejoining = false }
+  readonly property bool controlFocused: diagnosticToggle.activeFocus || diagnostics.testFocused || voiceRoster.activeFocus || voiceRoster.audioControls.controlFocused || muteButton.activeFocus || deafenButton.activeFocus || leaveButton.activeFocus || reconnect.activeFocus
+  function focusAudio(delta) {
+    var buttons = voiceRoster.audioUserId ? voiceRoster.audioControls.focusControls() : [voiceRoster]
+    buttons.push(diagnosticToggle)
+    if (diagnostics.details) buttons = buttons.concat(diagnostics.focusControls())
+    if (reconnect.visible) buttons.push(reconnect)
+    buttons = buttons.concat([muteButton,deafenButton,leaveButton])
+    var current = buttons.findIndex(function(button) { return button.activeFocus })
+    var next = current < 0 ? (delta < 0 ? buttons.length - 1 : buttons.indexOf(diagnosticToggle)) : current + delta
+    if (next < 0 || next >= buttons.length) return false
+    if (diagnostics.focusControls().indexOf(buttons[next]) >= 0) diagnostics.focusControl(buttons[next])
+    else buttons[next].forceActiveFocus()
+    return true
+  }
+  function dismissAudio(){if(voiceRoster.audioUserId){voiceRoster.closeAudio();return true}if(!diagnostics.details)return false;diagnostics.details=false;diagnosticToggle.forceActiveFocus();return true}
   signal chatRequested()
   function openChat() {
     if (!service || !voice.channelId) return
@@ -34,9 +58,11 @@ Item {
   readonly property bool isMuted: !!voice.muted
   readonly property bool isDeafened: !!voice.deafened
   readonly property string statusText: {
+    if (rejoining) return "Reconnecting…"
     if (status === "connecting") return "Connecting…"
     if (failed) return "Disconnected · reconnect to rejoin"
     if (!connected) return ""
+    if (diagnostics.fresh && !diagnostics.sample.encryption_ready) return "Securing audio…"
     var parts = []
     if (isMuted) parts.push("muted")
     if (isDeafened) parts.push("deafened")
@@ -124,6 +150,7 @@ Item {
         id: callStatus
         objectName: "voice-status"
         width: parent.width
+        visible: !root.connected || root.expanded
         wrapMode: Text.WordWrap
         text: root.statusText
         color: root.failed ? Color.urgent : root.secondary
@@ -136,14 +163,44 @@ Item {
         objectName: "voice-roster"
         visible: root.expanded
         width: parent.width
-        height: visible ? Math.max(0, root.height - voiceTitleContainer.height - callStatus.height - controls.height
+        height: visible && !diagnostics.details ? Math.max(0, root.height - voiceTitleContainer.height - (callStatus.visible ? callStatus.height : 0) - controls.height - (diagnosticToggle.visible ? diagnosticToggle.height : 0)
           - (reconnect.visible ? reconnect.height + content.spacing : 0) - Style.spacing.sm * 2 - content.spacing * 3) : 0
         service: root.service
         voiceMode: true
+        active: activeFocus || audioControls.controlFocused
         compactHeader: root.compactRosterHeader
         voiceUsers: root.roomUsers
         channelName: root.channelName
         headingText: root.failed ? "People in room" : "In voice"
+      }
+      Button {
+        id: diagnosticToggle
+        objectName: "voice-audio-details"
+        width: parent.width
+        visible: root.connected
+        text: diagnostics.details ? "Show people" : "Audio details"
+        leftAlign: true
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        implicitHeight: Style.space(32)
+        focusable: true
+        onClicked: diagnostics.details = !diagnostics.details
+      }
+      VoiceDiagnostics {
+        id: diagnostics
+        objectName: "voice-audio-diagnostics"
+        width: parent.width
+        service: root.service
+        connected: root.connected
+        callIdentity: String(root.voice.guildId || "") + ":" + String(root.voice.channelId || "")
+        muted: root.isMuted
+        deafened: root.isDeafened
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        rejoining: root.rejoining
+        onReconnectRequested: root.rejoin()
+        height: !details ? 0 : !root.expanded ? Math.min(implicitHeight, Style.space(220))
+          : Math.max(0, root.height - voiceTitleContainer.height - (callStatus.visible ? callStatus.height + content.spacing : 0) - controls.height - diagnosticToggle.height - Style.spacing.sm * 2 - content.spacing * 4)
       }
       Button {
         id: reconnect
@@ -153,9 +210,11 @@ Item {
         text: "Reconnect"
         iconName: "reconnect"
         focusable: true
-        enabled: !!(root.service && root.service.showStructure && root.voice.channelId)
+        enabled: !root.rejoining && !!(root.service && root.service.showStructure && root.voice.channelId)
         tooltipText: String(root.voice.error || "Voice disconnected") + " · Rejoin this voice channel"
-        onClicked: if (root.service) root.service.voiceJoin(String(root.voice.guildId || ""), String(root.voice.channelId))
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        onClicked: root.rejoin()
       }
       Row {
         id: controls
@@ -165,6 +224,7 @@ Item {
         readonly property real cell: Math.max(0, (width - spacing * 2) / 3)
 
         Button {
+          id: muteButton
           objectName: "voice-mute"
           width: controls.cell
           iconOnly: true
@@ -179,6 +239,7 @@ Item {
           onClicked: if (root.service) root.service.toggleMute()
         }
         Button {
+          id: deafenButton
           objectName: "voice-deafen"
           width: controls.cell
           iconOnly: true
@@ -193,6 +254,7 @@ Item {
           onClicked: if (root.service) root.service.toggleDeafen()
         }
         Button {
+          id: leaveButton
           objectName: "voice-leave"
           width: controls.cell
           iconOnly: true

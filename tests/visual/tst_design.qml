@@ -143,6 +143,28 @@ TestCase {
   verify(viewport.contentY>0);verify(refresh.mapToItem(viewport,0,refresh.height).y<=viewport.height+1)
   p.client.serverToolsShown=false;p.client.serverSort="position"
  }
+ function test_audio_details_keyboard_and_no_automatic_tone(){
+  p.model.voice={status:"connected",guildId:"1",channelId:"9002"};wait(30)
+  var bar=findChild(p.client,"call-bar"),toggle=findChild(p.client,"voice-audio-details"),d=findChild(p.client,"voice-audio-diagnostics")
+  p.client.focusCallBar();verify(toggle.activeFocus);keyClick(Qt.Key_Return);verify(d.details)
+  p.client.cycleFocus(1);verify(findChild(p.client,"voice-test-output").activeFocus)
+  keyClick(Qt.Key_Escape);verify(!d.details);verify(toggle.activeFocus)
+  toggle.clicked();p.client.cycleFocus(1);verify(findChild(p.client,"voice-test-output").activeFocus)
+  p.client.cycleFocus(1);verify(findChild(p.client,"voice-reconnect-audio").activeFocus)
+  p.client.cycleFocus(1);verify(findChild(p.client,"voice-device-details").activeFocus)
+  p.client.cycleFocus(1);verify(findChild(p.client,"voice-mute").activeFocus)
+  toggle.clicked()
+  p.model.reset();toggle.clicked();toggle.clicked();compare(p.model.callCount("voice_test_output"),0)
+  compare(p.model.callCount("voiceJoin"),0);compare(p.model.callCount("voiceLeave"),0)
+ }
+ function test_rejoin_is_one_explicit_call_and_preserves_context(){
+  p.model.voice={status:"connected",guildId:"1",channelId:"9002",muted:true,deafened:false};wait(20)
+  var bar=findChild(p.client,"call-bar"),d=findChild(p.client,"voice-audio-diagnostics")
+  bar.rejoining=false;p.model.reset();var channel=p.model.currentChannelId
+  bar.rejoin();bar.rejoin();compare(p.model.callCount("voiceJoin"),1);compare(p.model.callCount("voiceLeave"),0)
+  compare(p.model.currentChannelId,channel);compare(p.model.voice.muted,true);compare(p.model.voice.deafened,false)
+  bar.rejoining=false
+ }
  function test_composited_text_contrast(){
   var oldBg=Color.background,oldFg=Color.foreground,oldMuted=Color.muted,oldAccent=Color.accent
   Color.background="#111c18";Color.foreground="#c1c497";Color.muted="#53685b";Color.accent="#509475";row.cursor=true

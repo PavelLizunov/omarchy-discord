@@ -67,6 +67,7 @@ type Engine struct {
 	rxDriver      *rxDriver
 	video         *camera
 	watchRevision uint64
+	userLevels    map[snowflake.ID]UserAudio
 	openCancel    context.CancelFunc
 }
 
@@ -145,6 +146,12 @@ func (e *Engine) join(ctx context.Context, guildID discord.GuildID, channelID di
 			e.mgr = e.newManager(snowflake.ID(me.ID))
 		}
 		e.audio = a
+		if e.userLevels == nil {
+			e.userLevels = make(map[snowflake.ID]UserAudio)
+		}
+		a.rx.mu.Lock()
+		a.rx.levels = e.userLevels
+		a.rx.mu.Unlock()
 		e.video = newCamera()
 		a.tx.setMuted(e.st.Muted)
 		a.rx.deafened.Store(e.st.Deafened)
@@ -294,6 +301,14 @@ type senderConn struct {
 	dvoice.Conn
 	started chan struct{}
 	once    sync.Once
+	metrics *audioMetrics
+}
+
+func (c *senderConn) UDP() dvoice.UDPConn {
+	if c.metrics == nil {
+		return c.Conn.UDP()
+	}
+	return observedUDP{UDPConn: c.Conn.UDP(), metrics: c.metrics}
 }
 
 func (c *senderConn) DAVE() godave.Session {
@@ -303,6 +318,9 @@ func (c *senderConn) DAVE() godave.Session {
 
 func newSender(l *slog.Logger, p dvoice.OpusFrameProvider, c dvoice.Conn) *sender {
 	sc := &senderConn{Conn: c, started: make(chan struct{})}
+	if tx, ok := p.(*capture); ok {
+		sc.metrics = tx.metrics
+	}
 	return &sender{AudioSender: dvoice.NewAudioSender(l, p, sc), started: sc.started}
 }
 

@@ -19,7 +19,21 @@ FocusScope {
   property bool active: false
   property string channelName: ""
   property bool dismissible: false
+  property string audioUserId: ""
+  property string audioUserName: ""
+  readonly property alias audioControls: participantAudio
   signal closeRequested()
+  function openAudio(row) {
+    if (!voiceMode || !row || !row.user || !row.user.id || String(row.user.id) === String(service ? service.selfId : "")) return
+    audioUserName = Api.userLabel(row.user, service ? service.knownUsers : null)
+    audioUserId = String(row.user.id)
+    participantAudio.focusControls()[0].forceActiveFocus()
+  }
+  function closeAudio() {audioUserId = "";root.forceActiveFocus()}
+  onRowsChanged: {
+    ensureCursor()
+    if (audioUserId && indexOfId(rows,audioUserId)<0) closeAudio()
+  }
 
   signal escapeRequested()
   signal moveZone(string direction)
@@ -101,6 +115,7 @@ FocusScope {
     if (alt && key === Qt.Key_H) moveZone("left")
     else if (alt && key === Qt.Key_L) moveZone("right")
     else if (alt) return
+    else if (key === Qt.Key_Escape && audioUserId) closeAudio()
     else if (key === Qt.Key_Escape) escapeRequested()
     else if (key === Qt.Key_Down || text === "j") moveCursor(1)
     else if (key === Qt.Key_Up || text === "k") moveCursor(-1)
@@ -108,12 +123,11 @@ FocusScope {
     else if (key === Qt.Key_End || text === "G") { cursorId = ""; moveCursor(-1) }
     else if (key === Qt.Key_PageDown) { for (var d = 0; d < 8; d++) moveCursor(1) }
     else if (key === Qt.Key_PageUp) { for (var u = 0; u < 8; u++) moveCursor(-1) }
+    else if (voiceMode && (key === Qt.Key_Return || key === Qt.Key_Enter || key === Qt.Key_Menu || (key === Qt.Key_F10 && (event.modifiers & Qt.ShiftModifier)))) openAudio(rows[cursor])
     else if (text === "y" || text === "Y") copyCursor()
     else return
     event.accepted = true
   }
-
-  onRowsChanged: ensureCursor()
 
   Keys.priority: Keys.BeforeItem
   Keys.onPressed: function(event) { root.handleKey(event) }
@@ -164,13 +178,41 @@ FocusScope {
         font.pixelSize: Style.font.body
       }
 
+      Flickable {
+        id: participantViewport
+        objectName: root.objectName === "voice-roster" ? "call-participant-viewport" : "participant-viewport"
+        width: parent.width
+        height: Math.max(0, parent.height - (root.compactHeader ? 0 : Style.spacing.controlHeight)
+          - (voiceHeading.visible ? voiceHeading.height + Style.spacing.xs : 0))
+        visible: root.audioUserId !== ""
+        clip: true
+        contentHeight: participantAudio.implicitHeight
+        boundsBehavior: Flickable.StopAtBounds
+        ScrollBar.vertical: ScrollBar {policy: ScrollBar.AsNeeded}
+        function reveal(item) {
+          var y = item.mapToItem(participantAudio,0,0).y
+          contentY = Math.max(0,Math.min(Math.max(0,contentHeight-height), y < contentY ? y : y+item.height > contentY+height ? y+item.height-height : contentY))
+        }
+        ParticipantAudio {
+          id: participantAudio
+          objectName: root.objectName === "voice-roster" ? "call-participant-audio" : "participant-audio"
+          width: participantViewport.width
+          service: root.service
+          userId: root.audioUserId
+          userName: root.audioUserName
+          connected: !!(root.service && root.service.voice && root.service.voice.status === "connected")
+          callIdentity: root.service && root.service.voice ? String(root.service.voice.guildId)+":"+String(root.service.voice.channelId) : ""
+          onClosed: root.closeAudio()
+          onFocusRequested: function(item) {participantViewport.reveal(item)}
+        }
+      }
       ListView {
         id: listView
         width: parent.width
         height: parent.height - (root.compactHeader ? 0 : Style.spacing.controlHeight)
           - (voiceHeading.visible ? voiceHeading.height + Style.spacing.xs : 0)
           - (root.dismissible ? Style.spacing.controlHeight + Style.spacing.sm : 0)
-        visible: root.rows.length > 0
+        visible: root.rows.length > 0 && !root.audioUserId
         clip: true
         reuseItems: true
         cacheBuffer: Style.space(150)
@@ -278,17 +320,21 @@ FocusScope {
 
             MouseArea {
               id: rowMouse
+              objectName: root.voiceMode ? "voice-row-"+String(memberRow.user.id || "") : ""
               anchors.fill: parent
               hoverEnabled: true
-              onClicked: {
+              acceptedButtons: Qt.LeftButton | Qt.RightButton
+              onClicked: function(mouse) {
                 root.setCursor(memberRow.index)
                 root.forceActiveFocus()
+                if (mouse.button === Qt.RightButton) root.openAudio(memberRow.row)
               }
+              onDoubleClicked: root.openAudio(memberRow.row)
             }
             PanelToolTip {
               visible: rowMouse.containsMouse || memberRow.hasCursor
               text: memberRow.displayName + (memberRow.user.username ? "\n@" + String(memberRow.user.username) : "")
-                + (root.voiceMode ? (memberRow.talking ? "\nSpeaking" : "\nIn voice") : "")
+                + (root.voiceMode ? (memberRow.talking ? "\nSpeaking" : "\nIn voice") + " · Right-click for audio" : "")
                 + (memberRow.activity ? "\n" + memberRow.activity : "")
             }
           }

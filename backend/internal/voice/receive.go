@@ -26,13 +26,16 @@ const (
 var silenceFrame = []byte{0xF8, 0xFF, 0xFE}
 
 type receiver struct {
-	log      *slog.Logger
-	speaking func(snowflake.ID, bool)
-	deafened atomic.Bool
+	log         *slog.Logger
+	speaking    func(snowflake.ID, bool)
+	deafened    atomic.Bool
+	metrics     *audioMetrics
+	testSamples atomic.Int64
 
 	mu      sync.Mutex
 	closed  bool
 	users   map[snowflake.ID]*user
+	levels  map[snowflake.ID]UserAudio
 	mix     []int32
 	frame   []int16
 	pending []int16
@@ -70,6 +73,9 @@ func (r *receiver) ReceiveOpusFrame(userID snowflake.ID, p *dvoice.Packet) error
 		return nil
 	}
 	silent := bytes.Equal(p.Opus, silenceFrame)
+	if !silent && r.metrics != nil {
+		r.metrics.receivedAt.Store(time.Now().UnixMilli())
+	}
 	var emit *bool
 	r.mu.Lock()
 	if r.closed {
@@ -182,17 +188,30 @@ func (r *receiver) read(out []int16) (int, error) {
 		r.pending = r.pending[k:]
 		filled += k
 	}
+	for i := range out {
+		if remaining := r.testSamples.Load(); remaining > 0 {
+			out[i] = saturate(int32(out[i]) + int32(testSample(remaining)))
+			r.testSamples.Add(-1)
+		}
+	}
+	if r.metrics != nil && len(out) > 0 && rms(out) > 0 {
+		r.metrics.outputAt.Store(time.Now().UnixMilli())
+	}
 	return filled, nil
 }
 
 func (r *receiver) mixLocked() {
 	clear(r.mix)
-	for _, u := range r.users {
-		if !u.pop(r.log) {
+	for id, u := range r.users {
+		if !u.pop(r.log, r.metrics) {
+			continue
+		}
+		level := userAudio(r.levels, id)
+		if level.Muted || r.deafened.Load() {
 			continue
 		}
 		for i, s := range u.pcm {
-			r.mix[i] += int32(s)
+			r.mix[i] += int32(s) * int32(level.Volume) / 100
 		}
 	}
 	for i, s := range r.mix {
@@ -267,7 +286,11 @@ func (u *user) take() (f *frame, plc bool) {
 	return f, false
 }
 
-func (u *user) pop(log *slog.Logger) bool {
+func (u *user) pop(log *slog.Logger, metrics ...*audioMetrics) bool {
+	var m *audioMetrics
+	if len(metrics) > 0 {
+		m = metrics[0]
+	}
 	f, plc := u.take()
 	switch {
 	case plc:
@@ -281,7 +304,13 @@ func (u *user) pop(log *slog.Logger) bool {
 	n, err := u.dec.Decode(f.opus, u.pcm)
 	if err != nil {
 		log.Debug("voice: opus decode", "err", err)
+		if m != nil {
+			m.decodeErrors.Add(1)
+		}
 		return false
+	}
+	if m != nil {
+		m.decodedAt.Store(time.Now().UnixMilli())
 	}
 	clear(u.pcm[n*channels:])
 	return true
@@ -322,6 +351,9 @@ func (d *rxDriver) loop(ctx context.Context) {
 		}
 		if err != nil {
 			d.log.Debug("voice: read packet", "err", err)
+			if r, ok := d.rx.(*receiver); ok && r.metrics != nil {
+				r.metrics.receiveErrors.Add(1)
+			}
 			pause()
 			continue
 		}

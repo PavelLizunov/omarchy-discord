@@ -28,6 +28,27 @@ type voiceEngine interface {
 
 var idleVoice = voice.State{Status: voice.StatusIdle}
 
+func (m *Manager) voiceDiagnostics(test bool) (any, *protocol.Error) {
+	v, e := m.liveVoice()
+	if e != nil {
+		return nil, e
+	}
+	diagnostic, ok := v.(interface {
+		Diagnostics() voice.Diagnostics
+		TestOutput() error
+	})
+	if !ok {
+		return nil, protocol.Errorf(protocol.CodeGatewayUnavailable, "audio diagnostics unavailable")
+	}
+	if test {
+		if err := diagnostic.TestOutput(); err != nil {
+			return nil, protocol.Errorf(protocol.CodeDiscordError, "%v", err)
+		}
+		return protocol.EmptyResult{}, nil
+	}
+	return diagnostic.Diagnostics(), nil
+}
+
 func (m *Manager) voiceCameras(ctx context.Context, req *protocol.Request, watch bool) (any, *protocol.Error) {
 	v, e := m.liveVoice()
 	if e != nil {
@@ -61,6 +82,53 @@ func (m *Manager) voiceCameras(ctx context.Context, req *protocol.Request, watch
 		}
 	}
 	return c.Cameras(), nil
+}
+
+func (m *Manager) voiceUserAudio(req *protocol.Request, set bool) (any, *protocol.Error) {
+	v, e := m.liveVoice()
+	if e != nil {
+		return nil, e
+	}
+	a, ok := v.(interface {
+		UserLevels() map[string]voice.UserAudio
+		SetUserAudio(dsnowflake.ID, *int, *bool) error
+	})
+	if !ok {
+		return nil, protocol.Errorf(protocol.CodeGatewayUnavailable, "participant audio unavailable")
+	}
+	if set {
+		var p struct {
+			UserID string `json:"user_id"`
+			Volume *int   `json:"volume"`
+			Muted  *bool  `json:"muted"`
+		}
+		if e = req.Params(&p); e != nil {
+			return nil, e
+		}
+		id, err := parseSnowflake(p.UserID, "user_id")
+		if err != nil {
+			return nil, err
+		}
+		if (p.Volume == nil && p.Muted == nil) || (p.Volume != nil && (*p.Volume < 0 || *p.Volume > 200)) {
+			return nil, protocol.Errorf(protocol.CodeInvalidArgument, "provide mute or a volume from 0 to 200 percent")
+		}
+		st := v.State()
+		if st.Status != voice.StatusConnected {
+			return nil, protocol.Errorf(protocol.CodeGatewayUnavailable, "join voice before changing participant audio")
+		}
+		n, e := m.cachedSession()
+		if e != nil {
+			return nil, e
+		}
+		vs, stateErr := n.Offline().Cabinet.VoiceState(st.GuildID, discord.UserID(id))
+		if stateErr != nil || vs.ChannelID != st.ChannelID {
+			return nil, protocol.Errorf(protocol.CodeInvalidArgument, "participant is not in the current voice room")
+		}
+		if err := a.SetUserAudio(dsnowflake.ID(id), p.Volume, p.Muted); err != nil {
+			return nil, protocol.Errorf(protocol.CodeDiscordError, "%v", err)
+		}
+	}
+	return a.UserLevels(), nil
 }
 
 func wireVoice(v voice.State) protocol.VoiceState {
