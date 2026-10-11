@@ -26,29 +26,33 @@ type CameraStream struct {
 	SSRC   uint32 `json:"ssrc"`
 }
 type CameraSnapshot struct {
-	Streams     []CameraStream `json:"streams"`
-	UserID      string         `json:"user_id"`
-	Image       string         `json:"image"`
-	Sequence    uint64         `json:"sequence"`
-	Packets     uint64         `json:"packets"`
-	PacketAgeMS int64          `json:"packet_age_ms"`
-	AgeMS       int64          `json:"age_ms"`
-	Error       string         `json:"error"`
+	Streams      []CameraStream `json:"streams"`
+	UserID       string         `json:"user_id"`
+	Image        string         `json:"image"`
+	Sequence     uint64         `json:"sequence"`
+	Packets      uint64         `json:"packets"`
+	Dispatched   uint64         `json:"dispatched"`
+	SSRCMismatch uint64         `json:"ssrc_mismatch"`
+	PacketAgeMS  int64          `json:"packet_age_ms"`
+	AgeMS        int64          `json:"age_ms"`
+	Error        string         `json:"error"`
 }
 type camera struct {
-	mu         sync.Mutex
-	streams    map[snowflake.ID]uint32
-	videoSSRCs map[uint32]bool
-	audioSSRCs map[uint32]bool
-	selected   snowflake.ID
-	ssrc       uint32
-	decoder    *cameraDecoder
-	frame      []byte
-	timestamp  uint32
-	sequence   uint16
-	assembling bool
-	packets    uint64
-	packetAt   time.Time
+	mu           sync.Mutex
+	streams      map[snowflake.ID]uint32
+	videoSSRCs   map[uint32]bool
+	audioSSRCs   map[uint32]bool
+	selected     snowflake.ID
+	ssrc         uint32
+	decoder      *cameraDecoder
+	frame        []byte
+	timestamp    uint32
+	sequence     uint16
+	assembling   bool
+	packets      uint64
+	dispatched   uint64
+	ssrcMismatch uint64
+	packetAt     time.Time
 }
 
 func newCamera() *camera {
@@ -142,7 +146,7 @@ func (v *camera) selectUser(id snowflake.ID) (uint32, error) {
 func (v *camera) snapshot() CameraSnapshot {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	s := CameraSnapshot{Streams: []CameraStream{}, AgeMS: -1, Packets: v.packets, PacketAgeMS: -1}
+	s := CameraSnapshot{Streams: []CameraStream{}, AgeMS: -1, Packets: v.packets, Dispatched: v.dispatched, SSRCMismatch: v.ssrcMismatch, PacketAgeMS: -1}
 	if !v.packetAt.IsZero() {
 		s.PacketAgeMS = time.Since(v.packetAt).Milliseconds()
 	}
@@ -170,7 +174,9 @@ func (v *camera) snapshot() CameraSnapshot {
 func (v *camera) receive(p *dvoice.Packet, ds godave.Session) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	v.dispatched++
 	if p.SSRC != v.ssrc || v.decoder == nil {
+		v.ssrcMismatch++
 		return
 	}
 	v.packets++

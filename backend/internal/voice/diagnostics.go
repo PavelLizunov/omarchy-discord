@@ -21,6 +21,7 @@ type Diagnostics struct {
 	InputAgeMS      int64             `json:"input_age_ms"`
 	SentAgeMS       int64             `json:"sent_age_ms"`
 	PacketHeaders   map[string]uint64 `json:"packet_headers,omitempty"`
+	CameraStages    map[string]uint64 `json:"camera_stages,omitempty"`
 	UDPDatagrams    uint64            `json:"udp_datagrams"`
 	UDPAgeMS        int64             `json:"udp_age_ms"`
 	ReceivedAgeMS   int64             `json:"received_age_ms"`
@@ -93,6 +94,9 @@ func (e *Engine) Diagnostics() Diagnostics {
 	d := a.metrics.snapshot()
 	d.UDPAgeMS = -1
 	if c != nil {
+		if stages, ok := c.UDP().(interface{ CameraReceiveStages() map[string]uint64 }); ok {
+			d.CameraStages = stages.CameraReceiveStages()
+		}
 		if headers, ok := c.UDP().(interface{ PacketHeaders() map[string]uint64 }); ok {
 			d.PacketHeaders = headers.PacketHeaders()
 		}

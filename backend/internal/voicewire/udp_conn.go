@@ -157,6 +157,7 @@ type udpConnImpl struct {
 
 	observationMu sync.Mutex
 	packetHeaders map[uint64]uint64
+	cameraStages  map[string]uint64
 	lastDatagram  atomic.Int64
 	datagrams     atomic.Uint64
 	receiveBuffer []byte
@@ -348,6 +349,25 @@ func (u *udpConnImpl) PacketHeaders() map[string]uint64 {
 	return out
 }
 
+// CameraReceiveStages counts admission decisions only; it never retains media.
+func (u *udpConnImpl) CameraReceiveStages() map[string]uint64 {
+	u.observationMu.Lock()
+	defer u.observationMu.Unlock()
+	out := make(map[string]uint64, len(u.cameraStages))
+	for k, v := range u.cameraStages {
+		out[k] = v
+	}
+	return out
+}
+func (u *udpConnImpl) cameraStage(stage string) {
+	u.observationMu.Lock()
+	defer u.observationMu.Unlock()
+	if u.cameraStages == nil {
+		u.cameraStages = make(map[string]uint64)
+	}
+	u.cameraStages[stage]++
+}
+
 func (u *udpConnImpl) ReadPacket() (*Packet, error) {
 	u.connMu.Lock()
 	conn := u.conn
@@ -366,6 +386,10 @@ func (u *udpConnImpl) ReadPacket() (*Packet, error) {
 		}
 
 		packetType := u.receiveBuffer[1] & 0x7f
+		cameraPacket := packetType == H264PayloadType
+		if cameraPacket {
+			u.cameraStage("raw")
+		}
 		if u.receiveBuffer[0]>>6 == 2 && !(u.receiveBuffer[1] >= 192 && u.receiveBuffer[1] <= 223) {
 			key := uint64(packetType)<<32 | uint64(binary.BigEndian.Uint32(u.receiveBuffer[8:12]))
 			u.observationMu.Lock()
@@ -380,6 +404,9 @@ func (u *udpConnImpl) ReadPacket() (*Packet, error) {
 		if u.receiveBuffer[0]>>6 != 2 || (u.receiveBuffer[1] >= 192 && u.receiveBuffer[1] <= 223) ||
 			(packetType != RTPPayloadType && packetType != H264PayloadType) {
 			// Ignore unadvertised media and RTCP, not the selected H264 stream.
+			if cameraPacket {
+				u.cameraStage("filtered")
+			}
 			continue
 		}
 
@@ -404,6 +431,9 @@ func (u *udpConnImpl) ReadPacket() (*Packet, error) {
 		cc := int(u.receiveBuffer[0] & rtpCSRCCountMask)
 		headerLen := RTPHeaderSize + (4 * cc)
 		if n < headerLen {
+			if cameraPacket {
+				u.cameraStage("short_csrc")
+			}
 			continue
 		}
 
@@ -415,6 +445,9 @@ func (u *udpConnImpl) ReadPacket() (*Packet, error) {
 		var extensionLenWords uint16
 		if p.HasExtension {
 			if n < headerLen+4 {
+				if cameraPacket {
+					u.cameraStage("short_extension")
+				}
 				continue
 			}
 			p.ExtensionID = int(binary.BigEndian.Uint16(u.receiveBuffer[headerLen : headerLen+2]))
@@ -424,11 +457,17 @@ func (u *udpConnImpl) ReadPacket() (*Packet, error) {
 
 		p.HeaderSize = headerLen
 		if n < p.HeaderSize+4 {
+			if cameraPacket {
+				u.cameraStage("short_ciphertext")
+			}
 			continue
 		}
 
 		decrypted, err := u.encrypter.Decrypt(p.HeaderSize, u.receiveBuffer[:n])
 		if err != nil {
+			if cameraPacket {
+				u.cameraStage("transport_error")
+			}
 			return nil, fmt.Errorf("failed to decrypt packet: %w", err)
 		}
 
@@ -436,6 +475,9 @@ func (u *udpConnImpl) ReadPacket() (*Packet, error) {
 		if p.HasExtension {
 			extensionLen := int(extensionLenWords) * 4
 			if decryptedOffset+extensionLen > len(decrypted) {
+				if cameraPacket {
+					u.cameraStage("invalid_extension")
+				}
 				continue
 			}
 			p.Extension = decrypted[decryptedOffset : decryptedOffset+extensionLen]
@@ -451,11 +493,15 @@ func (u *udpConnImpl) ReadPacket() (*Packet, error) {
 		// A padding-only packet carries no media: it advances the sequence number
 		// without advancing the timestamp, and has nothing to decrypt.
 		if len(decrypted) == 0 {
+			if cameraPacket {
+				u.cameraStage("empty")
+			}
 			continue
 		}
 
 		// Video DAVE authentication applies to the assembled frame, not RTP fragments.
 		if packetType == H264PayloadType {
+			u.cameraStage("delivered")
 			p.Opus = append([]byte(nil), decrypted...)
 			return &p, nil
 		}

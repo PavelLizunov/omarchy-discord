@@ -78,6 +78,14 @@ func TestCameraTransport101AndOpusDemultiplexing(t *testing.T) {
 			if u.PacketHeaders()["101:42"] != 1 || u.PacketHeaders()["109:42"] != 1 {
 				t.Fatal("raw observation missing")
 			}
+			stages := u.CameraReceiveStages()
+			if stages["raw"] != 1 || stages["delivered"] != 1 {
+				t.Fatalf("camera stages: %v", stages)
+			}
+			stages["raw"] = 99
+			if u.CameraReceiveStages()["raw"] != 1 {
+				t.Fatal("camera stages share mutable state")
+			}
 		})
 	}
 }
