@@ -16,6 +16,12 @@ test('bar left click opens only compact popup; right/middle keep explicit window
   assert.deepEqual(calls,['compact','full','middle']);
 });
 
+test('bar exposes one equal-sized SVG microphone, not a second status glyph', () => {
+ assert(!source.includes('id: callMark'));assert(!source.includes('callGlyph'));
+ const mute=source.slice(source.indexOf('id: quickMute'),source.indexOf('onSettingsChanged:'));
+ assert(mute.includes('width: Style.bar.iconFont'));assert(mute.includes('height: width'));assert(mute.includes('Icons.source('));assert(mute.includes('labelVisible: false'));
+});
+
 test('compact popup uses native keyboard ownership and the real search focus target', () => {
   const popup=fs.readFileSync(new URL('../QuickPopup.qml', `file://${__filename}`),'utf8');
   const view=fs.readFileSync(new URL('../components/QuickView.qml', `file://${__filename}`),'utf8');

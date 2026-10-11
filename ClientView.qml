@@ -16,6 +16,7 @@ Item {
   property var shell: null
   property var manifest: null
   property var service: null
+  Components.DMPresence { id:dmPresence;service:root.service;active:root.opened }
   property bool compactMode: false
   readonly property bool compactView: compactMode
   property bool compactChatOpen: false
@@ -2258,7 +2259,7 @@ Item {
                     readonly property bool expanded: threadCount > 0 && !!root.expandedThreads[String(row.id || "")]
                     width: channelList.width
                     height: (category ? Style.spacing.controlHeight : Style.spacing.popupRowHeight)
-                      + channelRow.occupants.length * root.voiceOccupantHeight
+                      + (root.dmsSelected ? Style.space(20) : 0) + channelRow.occupants.length * root.voiceOccupantHeight
 
                     PanelSectionHeader {
                       visible: channelRow.category
@@ -2275,7 +2276,7 @@ Item {
                       anchors.left: parent.left
                       anchors.right: parent.right
                       anchors.top: parent.top
-                      height: Style.spacing.popupRowHeight
+                      height: Style.spacing.popupRowHeight + (root.dmsSelected ? Style.space(20) : 0)
                       radius: Style.cornerRadius
                       color: channelRow.hasCursor || channelMouse.containsMouse
                         ? Style.hoverFillFor(root.foreground, root.accent)
@@ -2304,12 +2305,29 @@ Item {
                         anchors.leftMargin: Style.spacing.sm
                         anchors.rightMargin: Style.spacing.sm
                         anchors.verticalCenter: parent.verticalCenter
+                        anchors.verticalCenterOffset: root.dmsSelected ? -Style.space(9) : 0
                         text: String(channelRow.row.name || "")
                         elide: Text.ElideRight
                         color: channelRow.dim ? root.muted : root.foreground
                         font.family: root.fontFamily
                         font.pixelSize: Style.font.body
                         font.bold: channelRow.unread
+                      }
+                      Text {
+                        objectName: "dm-presence-" + String(channelRow.row.id || "")
+                        visible: root.dmsSelected
+                        anchors.left: channelGlyph.right
+                        anchors.leftMargin: Style.spacing.sm
+                        anchors.right: parent.right
+                        anchors.rightMargin: Style.spacing.sm
+                        anchors.bottom: parent.bottom
+                        anchors.bottomMargin: Style.spacing.xs
+                        text: dmPresence.summary(channelRow.row,false)
+                        textFormat: Text.PlainText
+                        elide: Text.ElideRight
+                        color: root.muted
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
                       }
                       Text {
                         id: rowHint
@@ -2557,6 +2575,20 @@ Item {
                 }
               }
 
+              Text {
+                id:dmStatus
+                objectName:"dm-current-presence"
+                width:parent.width
+                visible:root.currentChannel && root.currentChannel.type==="dm"
+                text:visible ? dmPresence.summary(root.currentChannel,true) : ""
+                textFormat:Text.PlainText
+                wrapMode:Text.WordWrap
+                maximumLineCount:3
+                elide:Text.ElideRight
+                color:root.muted
+                font.family:root.fontFamily
+                font.pixelSize:Style.font.bodySmall
+              }
               Button {
                 id: joinVoiceButton
                 objectName: "join-channel-voice"
@@ -2581,6 +2613,7 @@ Item {
                 height: parent.height - channelHeader.height - typingLine.height
                   - composerView.height - parent.spacing * 3
                   - (joinVoiceButton.visible ? joinVoiceButton.height + parent.spacing : 0)
+                  - (dmStatus.visible ? dmStatus.height + parent.spacing : 0)
 
                 messages: root.currentMessages
                 hasMore: !!(root.currentEntry && root.currentEntry.hasMore)

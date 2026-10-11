@@ -3,6 +3,7 @@ import Quickshell
 import qs.Commons
 import qs.Ui
 import Quickshell.Io
+import "ui/Icons.js" as Icons
 
 BarWidget {
   id: root
@@ -31,7 +32,6 @@ BarWidget {
     && String(discord.voice.status || "idle") === "connected")
   readonly property bool callSilent: inCall
     && !!(discord.voice.muted || discord.voice.deafened)
-  readonly property string callGlyph: inCall ? (callSilent ? "\uf131" : "\uf130") : ""
   readonly property string tooltip: {
     if (!discord) return "Omarchy Discord"
     var text = "Discord: " + discord.statusText
@@ -110,7 +110,8 @@ BarWidget {
         compactComponent:!!popup.content, keyboardPanel:true, openRequests:root.openRequests, closeRequests:root.closeRequests,
         popupMapped:popup.backingWindowVisible, focusPrimed:popup.focusPrimed,
         compactWidth:popup.contentWidth, compactHeight:popup.contentHeight,
-        quickMuteVisible:quickMute.visible, inCall:root.inCall,
+        quickMuteVisible:quickMute.visible, muteIconCount:quickMute.visible ? 1 : 0,
+        iconSize:mark.width, muteIconSize:muteDrawing.width, muteIconReady:muteDrawing.status === Image.Ready, inCall:root.inCall,
         muted:!!(root.discord && root.discord.voice && root.discord.voice.muted),
         backendReady:!!(root.discord && root.discord.ready)})
     }
@@ -118,6 +119,8 @@ BarWidget {
 
   WidgetButton {
     id: quickMute
+    width: implicitWidth
+    height: implicitHeight
     objectName: "bar-quick-mute"
     bar: root.bar
     visible: root.inCall
@@ -125,7 +128,20 @@ BarWidget {
     y: root.vertical ? button.height : 0
     fixedWidth: root.vertical ? root.barSize : Style.bar.statusSlot
     fixedHeight: root.vertical ? Style.bar.statusSlot : -1
-    text: root.discord && root.discord.voice.muted ? "\uf131" : "\uf130"
+    text: ""
+    labelVisible: false
+    hasVisualContent: true
+    Image {
+      id: muteDrawing
+      objectName: "bar-mute-icon"
+      anchors.centerIn: parent
+      width: Style.bar.iconFont
+      height: width
+      sourceSize.width: Math.ceil(width * 2)
+      sourceSize.height: Math.ceil(height * 2)
+      source: Icons.source(root.discord && root.discord.voice.muted ? "microphoneOff" : "microphone",
+        root.discord && root.discord.voice.muted ? Color.urgent : root.foreground)
+    }
     active: !!(root.discord && root.discord.voice.muted)
     tooltipText: root.discord && root.discord.voice.muted ? "Unmute microphone" : "Mute microphone"
     onPressed: function(mouseButton) { if (mouseButton === Qt.LeftButton && root.discord) root.discord.toggleMute() }
@@ -156,7 +172,6 @@ BarWidget {
     fixedWidth: root.vertical ? root.barSize
       : Math.max(Style.bar.statusSlot,
         mark.implicitWidth + (root.badgeText ? badgeMetrics.advanceWidth + Style.space(4) : 0)
-          + (root.inCall ? callMark.implicitWidth + Style.space(4) : 0)
           + Style.space(17))
     fixedHeight: root.vertical ? Style.bar.statusSlot : -1
 
@@ -172,6 +187,7 @@ BarWidget {
 
         DiscordIcon {
           id: mark
+          objectName: "bar-primary-icon"
           anchors.centerIn: parent
           iconSize: Style.bar.iconFont
           color: root.foreground
@@ -187,17 +203,6 @@ BarWidget {
           radius: width / 2
           color: Util.alpha(root.foreground, 0.7)
         }
-      }
-
-      Text {
-        id: callMark
-        anchors.verticalCenter: parent.verticalCenter
-        visible: root.inCall
-        text: root.callGlyph
-        color: root.foreground
-        font.family: root.bar ? root.bar.fontFamily : Style.font.family
-        font.pixelSize: Style.font.bodySmall
-        renderType: Text.NativeRendering
       }
 
       Text {

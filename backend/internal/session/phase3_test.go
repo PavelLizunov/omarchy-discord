@@ -389,7 +389,7 @@ func TestDMMemberListAndPresenceRouting(t *testing.T) {
 
 	dispatch(n, &gateway.PresenceUpdateEvent{Presence: discord.Presence{User: discord.User{ID: adaID}, Status: discord.IdleStatus,
 		Activities: []discord.Activity{{Type: discord.ListeningActivity, Name: "Spotify"}}}})
-	if r := routed(t, m); len(r.Open) != 2 || len(r.Members) != 0 || r.Event.(protocol.PresenceUpdateEvent).Activity != "Listening to Spotify" {
+	if r := routed(t, m); len(r.Open) != 2 || len(r.Members) != 0 || !r.All || r.Event.(protocol.PresenceUpdateEvent).Activity != "Listening to Spotify" {
 		t.Fatalf("friend presence: %+v", r)
 	}
 	dispatch(n, &gateway.PresenceUpdateEvent{Presence: discord.Presence{User: discord.User{ID: bobID}, Status: discord.IdleStatus}})
@@ -424,7 +424,7 @@ func TestDMMemberListAndPresenceRouting(t *testing.T) {
 	if fmt.Sprint(r.Open) != fmt.Sprint([]string{"400000000000000002", "400000000000000001"}) && fmt.Sprint(r.Open) != fmt.Sprint([]string{"400000000000000001", "400000000000000002"}) {
 		t.Fatalf("presence dm keys: %v", r.Open)
 	}
-	if fmt.Sprint(r.Members) != fmt.Sprint([]string{"400000000000000002"}) || r.All || r.ChannelID != "" {
+	if fmt.Sprint(r.Members) != fmt.Sprint([]string{"400000000000000002"}) || !r.All || r.ChannelID != "" {
 		t.Fatalf("presence member keys: %+v", r)
 	}
 	dispatch(n, &gateway.PresenceUpdateEvent{Presence: discord.Presence{User: discord.User{ID: 999}, GuildID: guildOmar, Status: discord.OnlineStatus}})

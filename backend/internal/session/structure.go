@@ -246,7 +246,12 @@ func wireChannel(n *ningen.State, ch discord.Channel) protocol.Channel {
 	if ch.Type == discord.DirectMessage || ch.Type == discord.GroupDM {
 		names := make([]string, 0, len(ch.DMRecipients))
 		for _, u := range ch.DMRecipients {
-			c.Recipients = append(c.Recipients, wireUser(u))
+			user := wireUser(u)
+			user.Status = userPresence(n, 0, u.ID)
+			if p, _ := n.PresenceStore.Presence(0, u.ID); p != nil {
+				user.Activity = activityLine(p.Activities)
+			}
+			c.Recipients = append(c.Recipients, user)
 			names = append(names, u.DisplayOrUsername())
 		}
 		if c.Name == "" {

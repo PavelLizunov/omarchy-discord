@@ -6,6 +6,7 @@ import "../ui"
 Item {
   id: root
   property var service: null
+  DMPresence {id:presence;service:root.service;active:root.opened}
   property bool opened: false
   property string guildId: ""
   readonly property alias focusItem: search
@@ -27,7 +28,7 @@ Item {
     } else {
       var dms = service.dms || [], guilds = service.guilds || []
       for (var d = 0; d < dms.length; d++)
-        add({id:String(dms[d].id), guild:"dms", label:String(dms[d].name || "Direct message"), kind:"dm", unread:dms[d].unread})
+        add({id:String(dms[d].id), guild:"dms", label:String(dms[d].name || "Direct message"), kind:"dm", unread:dms[d].unread, channel:dms[d]})
       for (var g = 0; g < guilds.length; g++)
         add({id:String(guilds[g].id), label:String(guilds[g].name || "Unnamed server"), kind:"server", unread:guilds[g].unread})
     }
@@ -103,10 +104,10 @@ Item {
         required property int index
         width:list.width;height:Style.space(44);leftAlign:true;focusable:true
         objectName:"quick-row-"+modelData.id
-        text:modelData.label
+        text:modelData.kind==="dm" ? modelData.label+" · "+presence.summary(modelData.channel,false) : modelData.label
         iconName:modelData.kind==="server"?"all":modelData.voice?"headphones":modelData.kind==="dm"?"user":"textChannel"
         active:modelData.unread==="mentioned";hasCursor:list.currentIndex===index && search.activeFocus
-        tooltipText:modelData.label+(modelData.kind==="server"?" · Browse channels":" · Open conversation in window")
+        tooltipText:modelData.label+(modelData.kind==="dm" ? "\n"+presence.summary(modelData.channel,true) : "")+(modelData.kind==="server"?" · Browse channels":" · Open conversation in window")
         onClicked:root.activate(modelData)
       }
       Text {
