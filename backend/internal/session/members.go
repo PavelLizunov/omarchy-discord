@@ -500,6 +500,15 @@ func (m *Manager) installMemberHandlers(n *ningen.State) {
 			return
 		}
 		dms, lists := m.members.channelsFor(ev.User.ID)
+		// Presence is independent of voice membership, including a recent departure.
+		if ev.GuildID.IsValid() {
+			m.mu.Lock()
+			inGuild := m.voiceState.GuildID == ev.GuildID && m.voiceState.ChannelID.IsValid()
+			m.mu.Unlock()
+			if inGuild {
+				m.push(protocol.NewPresenceUpdate(ev.User.ID.String(), presenceStatus(ev.Status), activityLine(ev.Activities)))
+			}
+		}
 		if len(dms) == 0 && len(lists) == 0 {
 			return
 		}

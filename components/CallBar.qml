@@ -14,7 +14,7 @@ Item {
     if (!service.voiceJoin(String(voice.guildId || ""), String(voice.channelId))) rejoining = false
     else rejoinDeadline.restart()
   }
-  onStatusChanged: if (status === "connecting" || status === "error" || status === "idle") { rejoining = false; rejoinDeadline.stop() }
+  onStatusChanged: if (status === "connecting" || status === "error" || status === "idle") { rejoining = false; rejoinDeadline.stop(); departure=null; previousUsers=[]; previousRoom="" }
   Timer { id: rejoinDeadline; interval: 10000; onTriggered: root.rejoining = false }
   readonly property bool controlFocused: diagnosticToggle.activeFocus || diagnostics.testFocused || voiceRoster.activeFocus || voiceRoster.audioControls.controlFocused || muteButton.activeFocus || deafenButton.activeFocus || leaveButton.activeFocus || reconnect.activeFocus
   function focusAudio(delta) {
@@ -39,6 +39,30 @@ Item {
   }
 
   property var service: null
+  property double clock: Date.now()
+  property var departure: null
+  property var previousUsers: []
+  property string previousRoom: ""
+  onRoomUsersChanged: {
+    var room = String(voice.guildId || "") + ":" + String(voice.channelId || "")
+    if (status === "connected" && previousRoom === room) {
+      for (var i=0;i<previousUsers.length;i++) {
+        var user=previousUsers[i]
+        if (!roomUsers.some(function(row){return String(row.id)===String(user.id)}))
+          departure = {user:user, status:String(user.status || "unknown"), at:Date.now()}
+      }
+    } else departure=null
+    previousUsers=roomUsers.slice();previousRoom=room
+  }
+  Connections {
+    target: root.service ? root.service.backend : null
+    ignoreUnknownSignals: true
+    function onEventReceived(name, message) {
+      if (name === "presence_update" && root.departure && String(message.user_id) === String(root.departure.user.id))
+        root.departure = Api.assign(Api.shallowCopy(root.departure),{status:String(message.status || "unknown")})
+    }
+  }
+  Timer { interval:1000;repeat:true;running:!!root.departure;onTriggered:{root.clock=Date.now();if(root.clock-root.departure.at>=60000)root.departure=null} }
   property string channelName: ""
   property bool expanded: false
   property bool compactRosterHeader: false
@@ -158,13 +182,25 @@ Item {
         font.pixelSize: Style.font.bodySmall
       }
 
+      Text {
+        id: departureLine
+        objectName: "voice-departure"
+        textFormat: Text.PlainText
+        width: parent.width
+        visible: root.expanded && !!root.departure && root.clock-root.departure.at<60000
+        text: root.departure ? Api.userLabel(root.departure.user, root.service.knownUsers) + " left voice · " + voiceRoster.statusLabel(root.departure.status) : ""
+        wrapMode: Text.WordWrap
+        color: root.secondary
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+      }
       MemberList {
         id: voiceRoster
         objectName: "voice-roster"
         visible: root.expanded
         width: parent.width
         height: visible && !diagnostics.details ? Math.max(0, root.height - voiceTitleContainer.height - (callStatus.visible ? callStatus.height : 0) - controls.height - (diagnosticToggle.visible ? diagnosticToggle.height : 0)
-          - (reconnect.visible ? reconnect.height + content.spacing : 0) - Style.spacing.sm * 2 - content.spacing * 3) : 0
+          - (reconnect.visible ? reconnect.height + content.spacing : 0) - (departureLine.visible ? departureLine.height + content.spacing : 0) - Style.spacing.sm * 2 - content.spacing * 3) : 0
         service: root.service
         voiceMode: true
         active: activeFocus || audioControls.controlFocused

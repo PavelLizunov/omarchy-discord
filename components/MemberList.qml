@@ -41,7 +41,7 @@ FocusScope {
   signal copyRequested(string text)
 
   readonly property var rows: voiceMode
-    ? voiceUsers.map(function(user) { return {kind:"member", id:String(user.id || ""), user:user, status:"voice", activity:""} })
+    ? voiceUsers.map(function(user) { return {kind:"member", id:String(user.id || ""), user:user, status:String(user.status || "unknown"), activity:""} })
     : Api.memberRows(list)
   property string cursorId: ""
   readonly property int cursor: indexOfId(rows, cursorId)
@@ -59,6 +59,16 @@ FocusScope {
   }
 
   function isMember(row) { return !!row && row.kind === "member" }
+
+  function statusLabel(status) {
+    switch (String(status || "")) {
+      case "online": return "Online"
+      case "idle": return "Away"
+      case "dnd": return "Do not disturb"
+      case "offline": return "Offline · may be invisible"
+      default: return "Status unknown"
+    }
+  }
 
   function statusColor(status) {
     switch (String(status || "")) {
@@ -281,7 +291,7 @@ FocusScope {
                   width: Style.spacing.lg
                   height: width
                   radius: width / 2
-                  color: root.voiceMode ? (memberRow.talking ? Color.accent : root.muted) : root.statusColor(memberRow.row.status)
+                  color: root.statusColor(memberRow.row.status)
                 }
               }
             }
@@ -305,6 +315,16 @@ FocusScope {
                 color: memberRow.row.status === "offline" ? root.muted : root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: root.dense ? Style.font.bodySmall : Style.font.body
+              }
+              Text {
+                objectName: "presence-" + String(memberRow.user.id || "")
+                textFormat: Text.PlainText
+                width: parent.width
+                text: root.statusLabel(memberRow.row.status) + (memberRow.talking ? " · Speaking" : "")
+                wrapMode: Text.WordWrap
+                color: root.muted
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
               }
               Text {
                 width: parent.width
@@ -334,6 +354,7 @@ FocusScope {
             PanelToolTip {
               visible: rowMouse.containsMouse || memberRow.hasCursor
               text: memberRow.displayName + (memberRow.user.username ? "\n@" + String(memberRow.user.username) : "")
+                + "\n" + root.statusLabel(memberRow.row.status)
                 + (root.voiceMode ? (memberRow.talking ? "\nSpeaking" : "\nIn voice") + " · Right-click for audio" : "")
                 + (memberRow.activity ? "\n" + memberRow.activity : "")
             }

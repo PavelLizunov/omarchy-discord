@@ -250,13 +250,22 @@ func voiceUser(n *ningen.State, guildID discord.GuildID, vs discord.VoiceState) 
 		mem, _ = n.Cabinet.Member(guildID, vs.UserID)
 	}
 	if mem == nil {
-		return protocol.User{ID: vs.UserID.String()}
+		return protocol.User{ID: vs.UserID.String(), Status: userPresence(n, guildID, vs.UserID)}
 	}
 	u := wireUser(mem.User)
+	u.Status = userPresence(n, guildID, vs.UserID)
 	if mem.Nick != "" {
 		u.DisplayName = mem.Nick
 	}
 	return u
+}
+
+func userPresence(n *ningen.State, guildID discord.GuildID, userID discord.UserID) string {
+	p, _ := n.PresenceStore.Presence(guildID, userID)
+	if p == nil || p.Status == "" {
+		return "unknown"
+	}
+	return presenceStatus(p.Status)
 }
 
 func VoiceMembers(n *ningen.State, guildID discord.GuildID) protocol.VoiceMembersEvent {
@@ -311,6 +320,17 @@ func (m *Manager) pushVoiceMembersLocked(n *ningen.State) {
 }
 
 func (m *Manager) installVoiceHandlers(n *ningen.State) {
+	addSyncHandler(n, "voice_presence_update", func(ev *gateway.PresenceUpdateEvent) {
+		m.mu.Lock()
+		live := m.n == n && m.lifecycle == protocol.LifecycleReady
+		m.mu.Unlock()
+		if !live || !ev.GuildID.IsValid() {
+			return
+		}
+		if vs, err := n.Offline().Cabinet.VoiceState(ev.GuildID, ev.User.ID); err == nil && vs.ChannelID.IsValid() {
+			m.push(VoiceMembers(n.Offline(), ev.GuildID))
+		}
+	})
 	addSyncHandler(n, "voice_state_update", func(ev *gateway.VoiceStateUpdateEvent) {
 		m.mu.Lock()
 		live := m.n == n && m.lifecycle == protocol.LifecycleReady
