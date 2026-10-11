@@ -469,7 +469,7 @@ func (e *Engine) onEvent(gen uint64, op dvoice.Opcode, data dvoice.GatewayMessag
 	case dvoice.GatewayMessageDataReady:
 		e.log.Info("voice: ready", "ssrc", d.SSRC, "modes", d.Modes)
 	case dvoice.GatewayMessageDataSessionDescription:
-		e.log.Info("voice: session description", "mode", d.Mode, "dave_protocol_version", d.DaveProtocolVersion)
+		e.log.Info("voice: session description", "mode", d.Mode, "dave_protocol_version", d.DaveProtocolVersion, "audio_codec", d.AudioCodec, "video_codec", d.VideoCodec)
 	case dvoice.GatewayMessageDataClientsConnect:
 		e.log.Info("voice: clients connect", "users", d.UserIDs)
 	case dvoice.GatewayMessageDataClientDisconnect:

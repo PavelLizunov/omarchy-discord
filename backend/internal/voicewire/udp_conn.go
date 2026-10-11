@@ -151,6 +151,8 @@ type udpConnImpl struct {
 	sequence  uint16
 	timestamp uint32
 
+	observationMu sync.Mutex
+	packetHeaders map[uint64]uint64
 	lastDatagram  atomic.Int64
 	datagrams     atomic.Uint64
 	receiveBuffer []byte
@@ -331,6 +333,17 @@ func (u *udpConnImpl) ReceiveObservation() (uint64, int64) {
 	return u.datagrams.Load(), u.lastDatagram.Load()
 }
 
+// PacketHeaders contains counts only, never payloads, addresses or media keys.
+func (u *udpConnImpl) PacketHeaders() map[string]uint64 {
+	u.observationMu.Lock()
+	defer u.observationMu.Unlock()
+	out := make(map[string]uint64, len(u.packetHeaders))
+	for key, count := range u.packetHeaders {
+		out[fmt.Sprintf("%d:%d", key>>32, uint32(key))] = count
+	}
+	return out
+}
+
 func (u *udpConnImpl) ReadPacket() (*Packet, error) {
 	u.connMu.Lock()
 	conn := u.conn
@@ -349,6 +362,17 @@ func (u *udpConnImpl) ReadPacket() (*Packet, error) {
 		}
 
 		packetType := u.receiveBuffer[1] & 0x7f
+		if u.receiveBuffer[0]>>6 == 2 && !(u.receiveBuffer[1] >= 192 && u.receiveBuffer[1] <= 223) {
+			key := uint64(packetType)<<32 | uint64(binary.BigEndian.Uint32(u.receiveBuffer[8:12]))
+			u.observationMu.Lock()
+			if u.packetHeaders == nil {
+				u.packetHeaders = make(map[uint64]uint64)
+			}
+			if _, known := u.packetHeaders[key]; known || len(u.packetHeaders) < 32 {
+				u.packetHeaders[key]++
+			}
+			u.observationMu.Unlock()
+		}
 		if packetType != RTPPayloadType && packetType != 105 {
 			// ignore non-voice packets
 			continue

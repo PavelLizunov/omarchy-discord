@@ -239,6 +239,8 @@ type GatewayMessageDataSessionDescription struct {
 	Mode                EncryptionMode `json:"mode"`
 	SecretKey           []byte         `json:"secret_key"`
 	DaveProtocolVersion int            `json:"dave_protocol_version"`
+	VideoCodec          string         `json:"video_codec"`
+	AudioCodec          string         `json:"audio_codec"`
 }
 
 func (GatewayMessageDataSessionDescription) voiceGatewayMessageData() {}

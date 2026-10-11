@@ -16,24 +16,25 @@ import (
 
 // Diagnostics describes observations, never remote hearing or physical audibility.
 type Diagnostics struct {
-	Active          bool   `json:"active"`
-	InputLevel      int64  `json:"input_level"`
-	InputAgeMS      int64  `json:"input_age_ms"`
-	SentAgeMS       int64  `json:"sent_age_ms"`
-	UDPDatagrams    uint64 `json:"udp_datagrams"`
-	UDPAgeMS        int64  `json:"udp_age_ms"`
-	ReceivedAgeMS   int64  `json:"received_age_ms"`
-	DecodedAgeMS    int64  `json:"decoded_age_ms"`
-	OutputAgeMS     int64  `json:"output_age_ms"`
-	SendErrors      uint64 `json:"send_errors"`
-	ReceiveErrors   uint64 `json:"receive_errors"`
-	DecodeErrors    uint64 `json:"decode_errors"`
-	EncryptionReady bool   `json:"encryption_ready"`
-	InputDevice     string `json:"input_device"`
-	OutputDevice    string `json:"output_device"`
-	InputBlocked    *bool  `json:"input_blocked"`
-	OutputBlocked   *bool  `json:"output_blocked"`
-	DeviceError     string `json:"device_error"`
+	Active          bool              `json:"active"`
+	InputLevel      int64             `json:"input_level"`
+	InputAgeMS      int64             `json:"input_age_ms"`
+	SentAgeMS       int64             `json:"sent_age_ms"`
+	PacketHeaders   map[string]uint64 `json:"packet_headers,omitempty"`
+	UDPDatagrams    uint64            `json:"udp_datagrams"`
+	UDPAgeMS        int64             `json:"udp_age_ms"`
+	ReceivedAgeMS   int64             `json:"received_age_ms"`
+	DecodedAgeMS    int64             `json:"decoded_age_ms"`
+	OutputAgeMS     int64             `json:"output_age_ms"`
+	SendErrors      uint64            `json:"send_errors"`
+	ReceiveErrors   uint64            `json:"receive_errors"`
+	DecodeErrors    uint64            `json:"decode_errors"`
+	EncryptionReady bool              `json:"encryption_ready"`
+	InputDevice     string            `json:"input_device"`
+	OutputDevice    string            `json:"output_device"`
+	InputBlocked    *bool             `json:"input_blocked"`
+	OutputBlocked   *bool             `json:"output_blocked"`
+	DeviceError     string            `json:"device_error"`
 }
 
 type audioMetrics struct {
@@ -92,6 +93,9 @@ func (e *Engine) Diagnostics() Diagnostics {
 	d := a.metrics.snapshot()
 	d.UDPAgeMS = -1
 	if c != nil {
+		if headers, ok := c.UDP().(interface{ PacketHeaders() map[string]uint64 }); ok {
+			d.PacketHeaders = headers.PacketHeaders()
+		}
 		if observation, ok := c.UDP().(interface{ ReceiveObservation() (uint64, int64) }); ok {
 			count, last := observation.ReceiveObservation()
 			d.UDPDatagrams = count

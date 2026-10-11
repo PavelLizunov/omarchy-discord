@@ -1,6 +1,7 @@
 package voice
 
 import (
+	"encoding/binary"
 	"net"
 	"testing"
 	"time"
@@ -16,13 +17,27 @@ func TestReceiveObservationIncludesIgnoredDatagrams(t *testing.T) {
 	go func() {
 		defer writer.Close()
 		writer.Write([]byte{1})
-		writer.Write(make([]byte, 12))
+		for i := uint32(0); i < 40; i++ {
+			p := make([]byte, 12)
+			p[0] = 0x80
+			p[1] = 101
+			binary.BigEndian.PutUint32(p[8:], i)
+			writer.Write(p)
+		}
 	}()
 	if _, err := u.ReadPacket(); err == nil {
 		t.Fatal("closed synthetic transport must return an error")
 	}
 	count, last := u.ReceiveObservation()
-	if count != 2 || last <= 0 || time.Now().UnixMilli()-last > 1000 {
+	if count != 41 || last <= 0 || time.Now().UnixMilli()-last > 1000 {
 		t.Fatalf("ignored raw delivery was lost: count=%d last=%d", count, last)
+	}
+	headers := u.PacketHeaders()
+	if len(headers) != 32 || headers["101:0"] != 1 {
+		t.Fatalf("header bound or ignored payload visibility failed: %v", headers)
+	}
+	headers["101:0"] = 999
+	if u.PacketHeaders()["101:0"] != 1 {
+		t.Fatal("diagnostic snapshot shares owner state")
 	}
 }
