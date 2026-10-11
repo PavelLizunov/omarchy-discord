@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import qs.Commons
 import qs.Ui
+import Quickshell.Io
 
 BarWidget {
   id: root
@@ -42,7 +43,13 @@ BarWidget {
     return text
   }
 
+  property bool opened: false
+  function open() { opened = true }
+  function close() { opened = false }
+  function toggle() { opened ? close() : open() }
+
   function openFullPanel(payload) {
+    close()
     if (!bar || !bar.shell) return
     var encoded = JSON.stringify(payload || ({}))
     var host = bar.shell
@@ -78,8 +85,45 @@ BarWidget {
     if (discord) discord.applySettings(settings)
   }
 
-  implicitWidth: button.implicitWidth
-  implicitHeight: button.implicitHeight
+  implicitWidth: vertical ? button.implicitWidth : button.implicitWidth + (inCall ? quickMute.implicitWidth : 0)
+  implicitHeight: button.implicitHeight + (vertical && inCall ? quickMute.implicitHeight : 0)
+
+  QuickPopup {
+    id: popup
+    anchorItem: button
+    owner: root
+    bar: root.bar
+    open: root.opened
+    service: root.discord
+    onFullRequested: function(payload) { root.openFullPanel(payload) }
+  }
+
+  IpcHandler {
+    target: "quickshell.discord.quick"
+    function evidence(): string {
+      return JSON.stringify({source:String(Qt.resolvedUrl("BarWidget.qml")), opened:root.opened,
+        compactComponent:!!popup.content, popupFocusGrab:popup.grabFocus,
+        compactWidth:popup.contentWidth, compactHeight:popup.contentHeight,
+        quickMuteVisible:quickMute.visible, inCall:root.inCall,
+        muted:!!(root.discord && root.discord.voice && root.discord.voice.muted),
+        backendReady:!!(root.discord && root.discord.ready)})
+    }
+  }
+
+  WidgetButton {
+    id: quickMute
+    objectName: "bar-quick-mute"
+    bar: root.bar
+    visible: root.inCall
+    x: root.vertical ? 0 : button.width
+    y: root.vertical ? button.height : 0
+    fixedWidth: root.vertical ? root.barSize : Style.bar.statusSlot
+    fixedHeight: root.vertical ? Style.bar.statusSlot : -1
+    text: root.discord && root.discord.voice.muted ? "\uf131" : "\uf130"
+    active: !!(root.discord && root.discord.voice.muted)
+    tooltipText: root.discord && root.discord.voice.muted ? "Unmute microphone" : "Mute microphone"
+    onPressed: function(mouseButton) { if (mouseButton === Qt.LeftButton && root.discord) root.discord.toggleMute() }
+  }
 
   onSettingsChanged: syncSettings()
   onDiscordChanged: syncSettings()
@@ -94,7 +138,8 @@ BarWidget {
 
   WidgetButton {
     id: button
-    anchors.fill: parent
+    width: implicitWidth
+    height: implicitHeight
     bar: root.bar
     text: ""
     labelVisible: false
@@ -162,7 +207,8 @@ BarWidget {
 
     onPressed: function(mouseButton) {
       if (mouseButton === Qt.MiddleButton) root.middleClick()
-      else root.openFullPanel(null)
+      else if (mouseButton === Qt.RightButton) root.openFullPanel({})
+      else root.toggle()
     }
   }
 }

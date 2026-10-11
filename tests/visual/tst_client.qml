@@ -27,6 +27,19 @@ TestCase {
     preview.client.timeline.focusNewest()
     preview.client.focusZone()
   }
+  function test_close_and_quick_mute_remain_visible_in_small_voice_window() {
+    var oldWidth=tests.width;tests.width=420
+    preview.client.open("{}");preview.model.voice={status:"connected",guildId:"1",channelId:"9002",muted:false,deafened:false}
+    preview.model.reset();wait(30)
+    var mute=findChild(preview.client,"quick-microphone"),close=findChild(preview.client,"close-window")
+    verify(mute.visible);verify(close.visible)
+    verify(mute.mapToItem(preview.client,0,0).x>=0)
+    verify(close.mapToItem(preview.client,close.width,0).x<=preview.client.width+1)
+    mouseClick(mute,mute.width/2,mute.height/2);compare(preview.model.callCount("toggleMute"),1)
+    close.forceActiveFocus();keyClick(Qt.Key_Return);verify(!preview.client.opened)
+    compare(preview.model.voice.status,"connected");compare(preview.model.callCount("voiceLeave"),0)
+    preview.client.open("{}");tests.width=oldWidth;preview.model.voice={status:"idle"}
+  }
   function test_ack_requires_visible_active_window() {
     preview.client.mapped = true
     preview.client.windowActive = true

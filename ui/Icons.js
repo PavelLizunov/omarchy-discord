@@ -28,6 +28,8 @@ var paths = {
   send: '<path d="m3 3 18 9-18 9 3-9-3-9Zm3 9h15"/>',
   save: '<path d="M4 3h13l4 4v14H3V3h1Zm3 0v6h10V3M7 21v-8h10v8"/>',
   microphone: '<rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11v1a7 7 0 0 0 14 0v-1m-7 8v3m-4 0h8"/>',
+  microphoneOff: '<path d="m3 3 18 18M9 9v3a3 3 0 0 0 5 2M9 5a3 3 0 0 1 6 0v4M5 11v1a7 7 0 0 0 12 5m2-5v-1m-7 8v3m-4 0h8"/>',
+  camera: '<rect x="3" y="5" width="12" height="14" rx="2"/><path d="m15 10 6-4v12l-6-4"/>',
   headphones: '<path d="M3 14v-2a9 9 0 0 1 18 0v2M3 13h4v8H3v-8Zm14 0h4v8h-4v-8Z"/>',
   leave: '<path d="M3 13c5-5 13-5 18 0l-2 5-5-2v-3h-4v3l-5 2-2-5Z"/>'
 }

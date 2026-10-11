@@ -54,7 +54,7 @@ Item {
     view.open(payload)
   }
   function close() {
-    if (persistent && opened) {
+    if (persistent) {
       if (parkWorkspace) moveWindow(parkWorkspace, false)
       else persistentVisible = false
     }

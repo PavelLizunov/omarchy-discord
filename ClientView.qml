@@ -74,6 +74,7 @@ Item {
   readonly property real controlButtonsWidth:
     (ready && currentChannelId !== "" ? membersButton.width + Style.spacing.controlGap : 0)
     + (cameraButton.visible ? cameraButton.width + Style.spacing.controlGap : 0)
+    + (quickMuteButton.visible ? quickMuteButton.width + Style.spacing.controlGap : 0)
     + (ready ? searchButton.width + Style.spacing.controlGap : 0)
     + (ready ? optionsButton.width + Style.spacing.controlGap : 0)
     + navigationButton.width + Style.spacing.controlGap + modeButton.width + Style.spacing.controlGap + closeButton.width
@@ -110,7 +111,7 @@ Item {
   property string zone: "sidebar"
   property string column: "rail"
   readonly property bool buttonFocused: navigationButton.activeFocus || optionsButton.activeFocus || closeButton.activeFocus || modeButton.activeFocus
-    || cameraButton.activeFocus || membersButton.activeFocus || searchButton.activeFocus || optionsHelp.activeFocus || optionsLogout.activeFocus
+    || quickMuteButton.activeFocus || cameraButton.activeFocus || membersButton.activeFocus || searchButton.activeFocus || optionsHelp.activeFocus || optionsLogout.activeFocus
     || startBackendButton.activeFocus || dismissErrorButton.activeFocus || joinVoiceButton.activeFocus || callBarFocused
     || filterButtons(serverFilterChips).some(function(button) { return button.activeFocus })
     || filterButtons(channelFilterChips).some(function(button) { return button.activeFocus })
@@ -779,11 +780,11 @@ Item {
       }
     }
     var stops = ["rail", "serverChips", "serverTools", "serverSearch", "serverFilter", "serverSort", "serverRefresh", "channels", "channelChips", "timeline", "composer", "joinVoice", "callbar", "members", "startBackend",
-      "navigation", "search", "camera", "membersButton", "options", "mode", "close", "dismissError"]
+      "navigation", "quickMute", "search", "camera", "membersButton", "options", "mode", "close", "dismissError"]
     var current = focusedGroup || (joinVoiceButton.activeFocus ? "joinVoice" : dismissErrorButton.activeFocus ? "dismissError" : navigationButton.activeFocus ? "navigation" : serverToolsButton.activeFocus ? "serverTools" : serverSearch.activeFocus ? "serverSearch" : serverFilterControl.activeFocus ? "serverFilter"
       : serverSortControl.activeFocus ? "serverSort" : serverRefresh.activeFocus ? "serverRefresh" : callBarFocused ? "callbar"
       : (buttonFocused
-        ? (cameraButton.activeFocus ? "camera" : modeButton.activeFocus ? "mode" : closeButton.activeFocus ? "close" : searchButton.activeFocus ? "search" : optionsButton.activeFocus ? "options"
+        ? (quickMuteButton.activeFocus ? "quickMute" : cameraButton.activeFocus ? "camera" : modeButton.activeFocus ? "mode" : closeButton.activeFocus ? "close" : searchButton.activeFocus ? "search" : optionsButton.activeFocus ? "options"
           : (membersButton.activeFocus ? "membersButton"
             : (startBackendButton.activeFocus ? "startBackend" : "options")))
         : (zone === "sidebar" ? column : zone)))
@@ -809,6 +810,7 @@ Item {
       if (stop === "search" && !searchButton.visible) continue
       if (stop === "options" && !optionsButton.visible) continue
       if (stop === "mode" && !modeButton.visible) continue
+      if (stop === "quickMute" && !quickMuteButton.visible) continue
       if (stop === "close" && !closeButton.visible) continue
       if (stop === "dismissError") {
         if (!dismissErrorButton.visible) continue
@@ -835,6 +837,7 @@ Item {
     if (stop === "mode") { modeButton.forceActiveFocus(); return }
     if (stop === "search") { searchButton.forceActiveFocus(); return }
     if (stop === "options") { optionsButton.forceActiveFocus(); return }
+    if (stop === "quickMute") { quickMuteButton.forceActiveFocus(); return }
     if (stop === "close") { closeButton.forceActiveFocus(); return }
     if (stop === "camera") { cameraButton.forceActiveFocus(); return }
     if (stop === "membersButton") { membersButton.forceActiveFocus(); return }
@@ -1104,6 +1107,18 @@ Item {
           }
         }
         Button {
+          id: quickMuteButton
+          objectName: "quick-microphone"
+          visible: root.service && root.service.voice && root.service.voice.status === "connected"
+          iconOnly: true
+          iconName: root.service && root.service.voice.muted ? "microphoneOff" : "microphone"
+          text: root.service && root.service.voice.muted ? "Unmute microphone" : "Mute microphone"
+          tooltipText: text + " (Ctrl+Shift+M)"
+          active: !!(root.service && root.service.voice.muted)
+          focusable: true
+          onClicked: root.service.toggleMute()
+        }
+        Button {
           id: searchButton
           objectName: "search-button"
           visible: root.ready
@@ -1120,6 +1135,8 @@ Item {
           objectName: "camera-button"
           visible: root.ready && root.service && root.service.voice && root.service.voice.status === "connected"
           text: "Cameras"
+          iconOnly: true
+          iconName: "camera"
           tooltipText: "Choose a participant's webcam to watch (H.264 MVP)"
           focusable: true
           onClicked: root.openCamera()
@@ -1164,7 +1181,9 @@ Item {
         }
         Button {
           id: closeButton
-          iconOnly: true
+          objectName: "close-window"
+          iconOnly: false
+          bordered: true
           tooltipText: "Close window"
           text: "Close"
           iconName: "close"
