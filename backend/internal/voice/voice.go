@@ -462,6 +462,10 @@ func (e *Engine) onEvent(gen uint64, op dvoice.Opcode, data dvoice.GatewayMessag
 		if video != nil {
 			video.announce(d)
 		}
+	case dvoice.GatewayMessageDataSpeaking:
+		if video != nil {
+			video.announceAudio(d.SSRC)
+		}
 	case dvoice.GatewayMessageDataReady:
 		e.log.Info("voice: ready", "ssrc", d.SSRC, "modes", d.Modes)
 	case dvoice.GatewayMessageDataSessionDescription:

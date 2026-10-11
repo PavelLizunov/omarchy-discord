@@ -44,8 +44,12 @@ BarWidget {
   }
 
   property bool opened: false
-  function open() { opened = true }
-  function close() { opened = false }
+  property int openRequests: 0
+  property int closeRequests: 0
+  property bool popoutSwitchClosing: false
+  function closeForPopoutSwitch() { popoutSwitchClosing = true; close() }
+  function open() { popoutSwitchClosing = false; openRequests++; opened = true }
+  function close() { closeRequests++; opened = false }
   function toggle() { opened ? close() : open() }
 
   function openFullPanel(payload) {
@@ -95,6 +99,7 @@ BarWidget {
     bar: root.bar
     open: root.opened
     service: root.discord
+    popoutSwitchClosing: root.popoutSwitchClosing
     onFullRequested: function(payload) { root.openFullPanel(payload) }
   }
 
@@ -102,7 +107,8 @@ BarWidget {
     target: "quickshell.discord.quick"
     function evidence(): string {
       return JSON.stringify({source:String(Qt.resolvedUrl("BarWidget.qml")), opened:root.opened,
-        compactComponent:!!popup.content, popupFocusGrab:popup.grabFocus,
+        compactComponent:!!popup.content, keyboardPanel:true, openRequests:root.openRequests, closeRequests:root.closeRequests,
+        popupMapped:popup.backingWindowVisible, focusPrimed:popup.focusPrimed,
         compactWidth:popup.contentWidth, compactHeight:popup.contentHeight,
         quickMuteVisible:quickMute.visible, inCall:root.inCall,
         muted:!!(root.discord && root.discord.voice && root.discord.voice.muted),
@@ -138,6 +144,7 @@ BarWidget {
 
   WidgetButton {
     id: button
+    objectName: "bar-compact-toggle"
     width: implicitWidth
     height: implicitHeight
     bar: root.bar

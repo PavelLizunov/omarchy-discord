@@ -20,6 +20,8 @@ type Diagnostics struct {
 	InputLevel      int64  `json:"input_level"`
 	InputAgeMS      int64  `json:"input_age_ms"`
 	SentAgeMS       int64  `json:"sent_age_ms"`
+	UDPDatagrams    uint64 `json:"udp_datagrams"`
+	UDPAgeMS        int64  `json:"udp_age_ms"`
 	ReceivedAgeMS   int64  `json:"received_age_ms"`
 	DecodedAgeMS    int64  `json:"decoded_age_ms"`
 	OutputAgeMS     int64  `json:"output_age_ms"`
@@ -88,6 +90,14 @@ func (e *Engine) Diagnostics() Diagnostics {
 		return Diagnostics{}
 	}
 	d := a.metrics.snapshot()
+	d.UDPAgeMS = -1
+	if c != nil {
+		if observation, ok := c.UDP().(interface{ ReceiveObservation() (uint64, int64) }); ok {
+			count, last := observation.ReceiveObservation()
+			d.UDPDatagrams = count
+			d.UDPAgeMS = age(time.Now().UnixMilli(), last)
+		}
+	}
 	if c != nil {
 		d.EncryptionReady = c.DAVE().Ready()
 	}

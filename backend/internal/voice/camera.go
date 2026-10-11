@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -25,16 +26,20 @@ type CameraStream struct {
 	SSRC   uint32 `json:"ssrc"`
 }
 type CameraSnapshot struct {
-	Streams  []CameraStream `json:"streams"`
-	UserID   string         `json:"user_id"`
-	Image    string         `json:"image"`
-	Sequence uint64         `json:"sequence"`
-	AgeMS    int64          `json:"age_ms"`
-	Error    string         `json:"error"`
+	Streams     []CameraStream `json:"streams"`
+	UserID      string         `json:"user_id"`
+	Image       string         `json:"image"`
+	Sequence    uint64         `json:"sequence"`
+	Packets     uint64         `json:"packets"`
+	PacketAgeMS int64          `json:"packet_age_ms"`
+	AgeMS       int64          `json:"age_ms"`
+	Error       string         `json:"error"`
 }
 type camera struct {
 	mu         sync.Mutex
 	streams    map[snowflake.ID]uint32
+	videoSSRCs map[uint32]bool
+	audioSSRCs map[uint32]bool
 	selected   snowflake.ID
 	ssrc       uint32
 	decoder    *cameraDecoder
@@ -42,9 +47,13 @@ type camera struct {
 	timestamp  uint32
 	sequence   uint16
 	assembling bool
+	packets    uint64
+	packetAt   time.Time
 }
 
-func newCamera() *camera { return &camera{streams: make(map[snowflake.ID]uint32)} }
+func newCamera() *camera {
+	return &camera{streams: make(map[snowflake.ID]uint32), videoSSRCs: make(map[uint32]bool), audioSSRCs: make(map[uint32]bool)}
+}
 func (v *camera) announce(d dvoice.GatewayMessageDataVideo) {
 	if d.UserID == 0 {
 		return
@@ -57,6 +66,17 @@ func (v *camera) announce(d dvoice.GatewayMessageDataVideo) {
 	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	if d.AudioSSRC != 0 && len(v.audioSSRCs) < 512 {
+		v.audioSSRCs[d.AudioSSRC] = true
+	}
+	if d.VideoSSRC != 0 && len(v.videoSSRCs) < 1536 {
+		v.videoSSRCs[d.VideoSSRC] = true
+	}
+	for _, stream := range d.Streams {
+		if stream.SSRC != 0 && len(v.videoSSRCs) < 1536 {
+			v.videoSSRCs[stream.SSRC] = true
+		}
+	}
 	if _, known := v.streams[d.UserID]; !known && len(v.streams) >= 512 {
 		return
 	}
@@ -74,6 +94,13 @@ func (v *camera) announce(d dvoice.GatewayMessageDataVideo) {
 		}
 	}
 }
+func (v *camera) announceAudio(ssrc uint32) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if ssrc != 0 && len(v.audioSSRCs) < 512 {
+		v.audioSSRCs[ssrc] = true
+	}
+}
 func (v *camera) remove(id snowflake.ID) { v.announce(dvoice.GatewayMessageDataVideo{UserID: id}) }
 func (v *camera) close() {
 	v.mu.Lock()
@@ -81,6 +108,8 @@ func (v *camera) close() {
 	v.decoder = nil
 	v.selected = 0
 	v.ssrc = 0
+	v.packets = 0
+	v.packetAt = time.Time{}
 	v.frame = nil
 	v.assembling = false
 	v.mu.Unlock()
@@ -113,7 +142,10 @@ func (v *camera) selectUser(id snowflake.ID) (uint32, error) {
 func (v *camera) snapshot() CameraSnapshot {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	s := CameraSnapshot{Streams: []CameraStream{}, AgeMS: -1}
+	s := CameraSnapshot{Streams: []CameraStream{}, AgeMS: -1, Packets: v.packets, PacketAgeMS: -1}
+	if !v.packetAt.IsZero() {
+		s.PacketAgeMS = time.Since(v.packetAt).Milliseconds()
+	}
 	for id, ssrc := range v.streams {
 		s.Streams = append(s.Streams, CameraStream{id.String(), ssrc})
 	}
@@ -141,6 +173,8 @@ func (v *camera) receive(p *dvoice.Packet, ds godave.Session) {
 	if p.SSRC != v.ssrc || v.decoder == nil {
 		return
 	}
+	v.packets++
+	v.packetAt = time.Now()
 	if !v.assembling || p.Timestamp != v.timestamp {
 		v.frame = nil
 		v.timestamp = p.Timestamp
@@ -215,6 +249,25 @@ func appendH264(frame *[]byte, p []byte) error {
 		return errors.New("camera frame exceeds MVP limit")
 	}
 	return nil
+}
+
+// Never set a global "any":0: unspecified media includes the call's audio.
+// Disable only announced video SSRCs; keep the server's audio subscription intact.
+func (v *camera) sinkWants(selected uint32) dvoice.GatewayMessageDataUnknown {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	wants := make(map[string]int, len(v.videoSSRCs))
+	for ssrc := range v.videoSSRCs {
+		wants[fmt.Sprint(ssrc)] = 0
+	}
+	for ssrc := range v.audioSSRCs {
+		wants[fmt.Sprint(ssrc)] = 100
+	}
+	if selected != 0 {
+		wants[fmt.Sprint(selected)] = 100
+	}
+	data, _ := json.Marshal(wants)
+	return dvoice.GatewayMessageDataUnknown(data)
 }
 
 type cameraDecoder struct {
@@ -316,7 +369,7 @@ func (e *Engine) Cameras() CameraSnapshot {
 	v := e.video
 	e.mu.Unlock()
 	if v == nil {
-		return CameraSnapshot{Streams: []CameraStream{}, AgeMS: -1}
+		return CameraSnapshot{Streams: []CameraStream{}, AgeMS: -1, PacketAgeMS: -1}
 	}
 	return v.snapshot()
 }
@@ -338,12 +391,9 @@ func (e *Engine) WatchCamera(ctx context.Context, id snowflake.ID, revision uint
 	if err != nil {
 		return err
 	}
-	wants := fmt.Sprintf(`{"any":0,"%d":100}`, ssrc)
-	if ssrc == 0 {
-		wants = `{"any":0}`
-	}
+	wants := v.sinkWants(ssrc)
 	if err = c.Gateway().Send(ctx, dvoice.OpcodeVideo, dvoice.GatewayMessageDataVideo{AudioSSRC: c.Gateway().SSRC(), Streams: []dvoice.VideoStream{}}); err == nil {
-		err = c.Gateway().Send(ctx, dvoice.OpcodeMediaSinkWants, dvoice.GatewayMessageDataUnknown(wants))
+		err = c.Gateway().Send(ctx, dvoice.OpcodeMediaSinkWants, wants)
 	}
 	if err != nil {
 		v.close()

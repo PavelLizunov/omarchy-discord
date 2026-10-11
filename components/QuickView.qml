@@ -8,6 +8,7 @@ Item {
   property var service: null
   property bool opened: false
   property string guildId: ""
+  readonly property alias focusItem: search
   readonly property bool ready: !!(service && service.showStructure)
   readonly property bool inCall: !!(service && service.voice && service.voice.status === "connected")
   readonly property bool muted: !!(service && service.voice && service.voice.muted)

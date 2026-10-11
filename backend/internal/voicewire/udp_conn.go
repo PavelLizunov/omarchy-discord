@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/disgoorg/godave"
@@ -150,6 +151,8 @@ type udpConnImpl struct {
 	sequence  uint16
 	timestamp uint32
 
+	lastDatagram  atomic.Int64
+	datagrams     atomic.Uint64
 	receiveBuffer []byte
 	decryptBuffer []byte
 	encryptBuffer []byte
@@ -323,6 +326,11 @@ func (u *udpConnImpl) Read(p []byte) (n int, err error) {
 	return copy(p, packet.Opus), nil
 }
 
+// ReceiveObservation reports raw UDP arrival, before codec/mapping/decryption.
+func (u *udpConnImpl) ReceiveObservation() (uint64, int64) {
+	return u.datagrams.Load(), u.lastDatagram.Load()
+}
+
 func (u *udpConnImpl) ReadPacket() (*Packet, error) {
 	u.connMu.Lock()
 	conn := u.conn
@@ -334,6 +342,8 @@ func (u *udpConnImpl) ReadPacket() (*Packet, error) {
 			return nil, fmt.Errorf("failed to read packet: %w", err)
 		}
 
+		u.datagrams.Add(1)
+		u.lastDatagram.Store(time.Now().UnixMilli())
 		if n < RTPHeaderSize {
 			continue
 		}
