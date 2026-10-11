@@ -45,6 +45,7 @@ Item {
    root.error=ok?"":String(reason || "Camera request failed")
    if(ok) {
     root.sample=result || ({streams:[]})
+    root.error=String(root.sample.error || "")
     root.imageSource=root.sample.image ? "data:image/jpeg;base64,"+root.sample.image : ""
     if(name==="voice_watch_camera")root.selectedAt=Date.now()
    }

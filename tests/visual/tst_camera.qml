@@ -10,12 +10,20 @@ Item {
   property var knownUsers:({})
   property var backend:service
   property var calls:[]
+  property string cameraError:""
   function voiceUsers(g,c){return [{id:"123",display_name:"Ada"}]}
-  function sendCommand(name,p,callback){calls=calls.concat([{name:name,user:p.user_id || ""}]);callback(true,{streams:[{user_id:"123",ssrc:42}],user_id:name==="voice_watch_camera"?p.user_id:"",image:"",age_ms:-1},"");return 1}
+  function sendCommand(name,p,callback){calls=calls.concat([{name:name,user:p.user_id || ""}]);callback(true,{streams:[{user_id:"123",ssrc:42}],user_id:name==="voice_watch_camera"?p.user_id:"",image:"",age_ms:-1,error:cameraError},"");return 1}
  }
  Components.CameraView {id:camera;anchors.fill:parent;service:service}
  TestCase {
   name:"CameraMVP";when:windowShown
+  function cleanup(){camera.hide();service.cameraError=""}
+  function test_backend_error_visible_and_cleared(){
+   camera.open();service.cameraError="Camera changed. Select it again.";camera.watch("123")
+   compare(camera.error,service.cameraError)
+   camera.poll();compare(camera.error,service.cameraError)
+   service.cameraError="";camera.poll();compare(camera.error,"")
+  }
   function test_choose_and_close(){
    camera.open();compare(camera.shown,true);compare(camera.sample.streams.length,1)
    camera.watch("123");compare(camera.sample.user_id,"123");compare(service.calls[service.calls.length-1].name,"voice_watch_camera")
