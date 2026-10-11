@@ -357,7 +357,7 @@ func (d *rxDriver) loop(ctx context.Context) {
 			pause()
 			continue
 		}
-		if p.Type == 105 {
+		if p.Type == dvoice.H264PayloadType {
 			if d.video != nil {
 				d.video.receive(p, d.conn.DAVE())
 			}

@@ -9,9 +9,12 @@ Item {
   DMPresence {id:presence;service:root.service;active:root.opened}
   property bool opened: false
   property string guildId: ""
-  readonly property alias focusItem: search
+  property bool browsing: false
+  readonly property bool callView: !!(service && service.voice && service.voice.status !== "idle") && !browsing
+  readonly property var focusItem: callView ? call.roster : search
+  readonly property alias callPanel: call
   readonly property bool ready: !!(service && service.showStructure)
-  readonly property bool inCall: !!(service && service.voice && service.voice.status === "connected")
+  readonly property bool inCall: !!(service && service.voice && service.voice.status !== "idle")
   readonly property bool muted: !!(service && service.voice && service.voice.muted)
   readonly property bool deafened: !!(service && service.voice && service.voice.deafened)
   readonly property var rows: {
@@ -36,7 +39,7 @@ Item {
   }
   signal closeRequested()
   signal fullRequested(var payload)
-  function focusSearch() { search.forceActiveFocus() }
+  function focusSearch() { if (callView) call.roster.forceActiveFocus(); else search.forceActiveFocus() }
   function activate(row) {
     if (!row) return
     if (row.kind === "server") {
@@ -44,15 +47,18 @@ Item {
     } else fullRequested({channel_id:row.id})
   }
   function dismiss() {
+    if (callView && call.dismissAudio()) return
+    if (browsing && inCall) { browsing = false; guildId = ""; focusSearch(); return }
     if (guildId) { guildId = ""; search.text = ""; focusSearch() }
     else closeRequested()
   }
   onOpenedChanged: {
     if (service) service.setUiVisible("quick-panel", opened)
-    if (opened) { guildId = ""; search.text = ""; Qt.callLater(focusSearch) }
+    if (opened) { browsing = false; guildId = ""; search.text = ""; Qt.callLater(focusSearch) }
   }
   Component.onDestruction: if (service) service.setUiVisible("quick-panel", false)
   Keys.onEscapePressed: function(event) { root.dismiss(); event.accepted = true }
+  onCallViewChanged: if (opened) Qt.callLater(focusSearch)
   Column {
     anchors.fill: parent
     spacing: Style.spacing.sm
@@ -71,31 +77,43 @@ Item {
       Button {id:full; objectName:"quick-full";text:"Open window";iconName:"expand";focusable:true;onClicked:root.fullRequested({})}
       Button {id:close; objectName:"quick-close";text:"Close";iconOnly:true;iconName:"close";tooltipText:"Close compact panel";focusable:true;onClicked:root.closeRequested()}
     }
-    Row {
-      id: voiceControls
-      objectName: "quick-voice-controls"
+    Button {
+      objectName: "quick-browse"
       visible: root.inCall
-      width: parent.width; spacing: Style.spacing.controlGap
-      Button {
-        objectName:"quick-mute";width:(parent.width-parent.spacing)/2
-        text:root.muted?"Unmute microphone":"Mute microphone";iconName:root.muted?"microphoneOff":"microphone"
-        active:root.muted;tooltipText:text;focusable:true;onClicked:root.service.toggleMute()
-      }
-      Button {
-        objectName:"quick-deafen";width:(parent.width-parent.spacing)/2
-        text:root.deafened?"Enable audio":"Deafen";iconName:"headphones";active:root.deafened
-        tooltipText:text;focusable:true;onClicked:root.service.toggleDeafen()
-      }
+      width: parent.width
+      text: root.browsing ? "Back to voice room" : "Browse conversations"
+      iconName: root.browsing ? "headphones" : "search"
+      focusable: true
+      onClicked: { root.browsing = !root.browsing; root.guildId = ""; Qt.callLater(root.focusSearch) }
+    }
+    CallBar {
+      id: call
+      objectName: "quick-call"
+      visible: root.callView
+      width: parent.width
+      height: Math.max(0, root.height - y)
+      service: root.service
+      expanded: true
+      compactRosterHeader: true
+      showDiagnostics: false
+      roster.singleClickAudio: true
+      channelName: root.service && root.service.channelNames && root.service.voice
+        ? String(root.service.channelNames[String(root.service.voice.channelId || "")] || "Voice room") : "Voice room"
+      onChatRequested: root.fullRequested({channel_id:String(root.service.voice.channelId || "")})
+    }
+    Connections {
+      target: call.roster
+      function onEscapeRequested() { root.dismiss() }
     }
     TextField {
-      id:search;objectName:"quick-search";width:parent.width
+      id:search;objectName:"quick-search";width:parent.width;visible:!root.callView
       placeholderText:root.guildId?"Find a channel":"Find a server or direct message"
       Keys.onDownPressed: function(event) { list.currentIndex=Math.min(list.count-1,list.currentIndex+1);event.accepted=true }
       Keys.onUpPressed: function(event) { list.currentIndex=Math.max(0,list.currentIndex-1);event.accepted=true }
       onAccepted: root.activate(root.rows[list.currentIndex])
     }
     ListView {
-      id:list;objectName:"quick-results";width:parent.width
+      id:list;objectName:"quick-results";width:parent.width;visible:!root.callView
       height:Math.max(0,root.height-y);clip:true;model:root.rows;currentIndex:0
       onCountChanged: currentIndex=0
       Controls.ScrollBar.vertical:Controls.ScrollBar {policy:Controls.ScrollBar.AsNeeded}

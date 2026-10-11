@@ -266,7 +266,7 @@ func (c *connImpl) handleMessage(gateway Gateway, op Opcode, sequenceNumber int,
 
 		if err = c.Gateway().Send(ctx, OpcodeSelectProtocol, GatewayMessageDataSelectProtocol{
 			Protocol: ProtocolUDP,
-			Codecs:   []MediaCodec{{Name: "opus", Type: "audio", Priority: 1000, PayloadType: 120, Encode: true, Decode: true}, {Name: "H264", Type: "video", Priority: 1000, PayloadType: 105, Encode: false, Decode: true}},
+			Codecs:   []MediaCodec{{Name: "opus", Type: "audio", Priority: 1000, PayloadType: 120, Encode: true, Decode: true}, {Name: "H264", Type: "video", Priority: 1000, PayloadType: H264PayloadType, Encode: false, Decode: true}},
 			Data: GatewayMessageDataSelectProtocolData{
 				Address: ourAddress,
 				Port:    ourPort,

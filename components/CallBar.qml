@@ -3,6 +3,7 @@ import QtQuick
 import "../ui"
 
 import "../Api.js" as Api
+import "../ui/Icons.js" as Icons
 
 Item {
   id: root
@@ -19,12 +20,12 @@ Item {
   readonly property bool controlFocused: diagnosticToggle.activeFocus || diagnostics.testFocused || voiceRoster.activeFocus || voiceRoster.audioControls.controlFocused || muteButton.activeFocus || deafenButton.activeFocus || leaveButton.activeFocus || reconnect.activeFocus
   function focusAudio(delta) {
     var buttons = voiceRoster.audioUserId ? voiceRoster.audioControls.focusControls() : [voiceRoster]
-    buttons.push(diagnosticToggle)
+    if (diagnosticToggle.visible) buttons.push(diagnosticToggle)
     if (diagnostics.details) buttons = buttons.concat(diagnostics.focusControls())
     if (reconnect.visible) buttons.push(reconnect)
     buttons = buttons.concat([muteButton,deafenButton,leaveButton])
     var current = buttons.findIndex(function(button) { return button.activeFocus })
-    var next = current < 0 ? (delta < 0 ? buttons.length - 1 : buttons.indexOf(diagnosticToggle)) : current + delta
+    var next = current < 0 ? (delta < 0 ? buttons.length - 1 : diagnosticToggle.visible ? buttons.indexOf(diagnosticToggle) : 0) : current + delta
     if (next < 0 || next >= buttons.length) return false
     if (diagnostics.focusControls().indexOf(buttons[next]) >= 0) diagnostics.focusControl(buttons[next])
     else buttons[next].forceActiveFocus()
@@ -55,7 +56,7 @@ Item {
     previousUsers=roomUsers.slice();previousRoom=room
   }
   Connections {
-    target: root.service ? root.service.backend : null
+    target: root.service && root.service.backend ? root.service.backend : null
     ignoreUnknownSignals: true
     function onEventReceived(name, message) {
       if (name === "presence_update" && root.departure && String(message.user_id) === String(root.departure.user.id))
@@ -66,6 +67,7 @@ Item {
   property string channelName: ""
   property bool expanded: false
   property bool compactRosterHeader: false
+  property bool showDiagnostics: true
   readonly property var roomUsers: service && voice.channelId
     ? service.voiceUsers(String(voice.guildId || ""), String(voice.channelId)) : []
   readonly property alias roster: voiceRoster
@@ -129,13 +131,13 @@ Item {
           anchors.verticalCenter: parent.verticalCenter
           spacing: Style.spacing.sm
 
-          Text {
+          Image {
             id: glyph
             anchors.verticalCenter: parent.verticalCenter
-            text: Api.channelGlyph("voice")
-            color: root.failed ? Color.urgent : (root.connected ? root.accent : root.secondary)
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
+            width: Style.space(16)
+            height: width
+            source: Icons.source("headphones", root.failed ? Color.urgent : (root.connected ? root.accent : root.secondary))
+            sourceSize: Qt.size(width * 2, height * 2)
           }
 
           Text {
@@ -213,7 +215,8 @@ Item {
         id: diagnosticToggle
         objectName: "voice-audio-details"
         width: parent.width
-        visible: root.connected
+        visible: root.connected && root.showDiagnostics
+        iconName: diagnostics.details ? "members" : "sliders"
         text: diagnostics.details ? "Show people" : "Audio details"
         leftAlign: true
         foreground: root.foreground
@@ -224,6 +227,7 @@ Item {
       }
       VoiceDiagnostics {
         id: diagnostics
+        visible: root.showDiagnostics
         objectName: "voice-audio-diagnostics"
         width: parent.width
         service: root.service
@@ -265,7 +269,7 @@ Item {
           width: controls.cell
           iconOnly: true
           text: root.isMuted ? "Unmute" : "Mute"
-          iconName: "microphone"
+          iconName: root.isMuted ? "microphoneOff" : "microphone"
           focusable: true
           active: root.isMuted
           enabled: root.connected
@@ -280,7 +284,7 @@ Item {
           width: controls.cell
           iconOnly: true
           text: root.isDeafened ? "Hear" : "Deafen"
-          iconName: "headphones"
+          iconName: root.isDeafened ? "headphonesOff" : "headphones"
           focusable: true
           active: root.isDeafened
           enabled: root.connected

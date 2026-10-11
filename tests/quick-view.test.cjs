@@ -19,7 +19,7 @@ test('bar left click opens only compact popup; right/middle keep explicit window
 test('bar exposes one equal-sized SVG microphone, not a second status glyph', () => {
  assert(!source.includes('id: callMark'));assert(!source.includes('callGlyph'));
  const mute=source.slice(source.indexOf('id: quickMute'),source.indexOf('onSettingsChanged:'));
- assert(mute.includes('width: Style.bar.iconFont'));assert(mute.includes('height: width'));assert(mute.includes('Icons.source('));assert(mute.includes('labelVisible: false'));
+ assert(mute.includes('width: Style.bar.iconCanvas'));assert(mute.includes('height: width'));assert(mute.includes('Icons.source('));assert(mute.includes('labelVisible: false'));
 });
 
 test('compact popup uses native keyboard ownership and the real search focus target', () => {
@@ -28,7 +28,9 @@ test('compact popup uses native keyboard ownership and the real search focus tar
   assert(popup.includes('KeyboardPanel {'));
   assert(popup.includes('focusTarget: view.focusItem'));
   assert(!popup.includes('grabFocus:'));
-  assert(view.includes('readonly property alias focusItem: search'));
+  assert(view.includes('readonly property var focusItem: callView ? call.roster : search'));
+  assert(view.includes('roster.singleClickAudio: true'));
+  assert(view.includes('showDiagnostics: false'));
 });
 
 test('persistent close does not depend on focus, and quick mute does not deafen or leave', () => {

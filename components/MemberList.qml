@@ -12,6 +12,7 @@ FocusScope {
   property var list: null
   property bool voiceMode: false
   property bool compactHeader: false
+  property bool singleClickAudio: false
   property string headingText: ""
   property var voiceUsers: []
   property bool loading: false
@@ -29,7 +30,7 @@ FocusScope {
     audioUserId = String(row.user.id)
     participantAudio.focusControls()[0].forceActiveFocus()
   }
-  function closeAudio() {audioUserId = "";root.forceActiveFocus()}
+  function closeAudio() {audioUserId = "";listView.forceActiveFocus()}
   onRowsChanged: {
     ensureCursor()
     if (audioUserId && indexOfId(rows,audioUserId)<0) closeAudio()
@@ -218,6 +219,7 @@ FocusScope {
       }
       ListView {
         id: listView
+        focus: true
         width: parent.width
         height: parent.height - (root.compactHeader ? 0 : Style.spacing.controlHeight)
           - (voiceHeading.visible ? voiceHeading.height + Style.spacing.xs : 0)
@@ -347,7 +349,7 @@ FocusScope {
               onClicked: function(mouse) {
                 root.setCursor(memberRow.index)
                 root.forceActiveFocus()
-                if (mouse.button === Qt.RightButton) root.openAudio(memberRow.row)
+                if (root.singleClickAudio || mouse.button === Qt.RightButton) root.openAudio(memberRow.row)
               }
               onDoubleClicked: root.openAudio(memberRow.row)
             }
@@ -355,7 +357,7 @@ FocusScope {
               visible: rowMouse.containsMouse || memberRow.hasCursor
               text: memberRow.displayName + (memberRow.user.username ? "\n@" + String(memberRow.user.username) : "")
                 + "\n" + root.statusLabel(memberRow.row.status)
-                + (root.voiceMode ? (memberRow.talking ? "\nSpeaking" : "\nIn voice") + " · Right-click for audio" : "")
+                + (root.voiceMode ? (memberRow.talking ? "\nSpeaking" : "\nIn voice") + (root.singleClickAudio ? " · Click for audio" : " · Right-click for audio") : "")
                 + (memberRow.activity ? "\n" + memberRow.activity : "")
             }
           }

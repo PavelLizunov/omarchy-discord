@@ -15,7 +15,7 @@
   },
   "barWidget": {
     "displayName": "Omarchy Discord",
-    "description": "Discord mark with a mention badge and quick microphone mute. Left click opens the compact list; right click opens the window; middle click runs the configured quick action.",
+    "description": "Discord mark with a mention badge and quick microphone mute. Left click opens your current voice room during calls or the conversation list otherwise; right click opens the window; middle click runs the configured quick action.",
     "category": "Communication",
     "allowMultiple": false,
     "defaultSection": "left",

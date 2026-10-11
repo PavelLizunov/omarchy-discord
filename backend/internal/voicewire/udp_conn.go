@@ -40,6 +40,10 @@ const (
 	// I've yet to find actual documentation on what the bits inside this value represent.
 	RTPPayloadType = 0x78
 
+	// H264PayloadType is advertised by this receive-only client. Keep the
+	// negotiation, transport filter and camera demultiplexer on this same value.
+	H264PayloadType = 101
+
 	// MaxOpusFrameSize is the max size of an opus frame in bytes.
 	MaxOpusFrameSize = 1400
 
@@ -373,8 +377,9 @@ func (u *udpConnImpl) ReadPacket() (*Packet, error) {
 			}
 			u.observationMu.Unlock()
 		}
-		if packetType != RTPPayloadType && packetType != 105 {
-			// ignore non-voice packets
+		if u.receiveBuffer[0]>>6 != 2 || (u.receiveBuffer[1] >= 192 && u.receiveBuffer[1] <= 223) ||
+			(packetType != RTPPayloadType && packetType != H264PayloadType) {
+			// Ignore unadvertised media and RTCP, not the selected H264 stream.
 			continue
 		}
 
@@ -450,7 +455,7 @@ func (u *udpConnImpl) ReadPacket() (*Packet, error) {
 		}
 
 		// Video DAVE authentication applies to the assembled frame, not RTP fragments.
-		if packetType == 105 {
+		if packetType == H264PayloadType {
 			p.Opus = append([]byte(nil), decrypted...)
 			return &p, nil
 		}

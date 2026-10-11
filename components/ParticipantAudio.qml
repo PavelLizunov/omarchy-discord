@@ -55,7 +55,8 @@ Column {
   }
   Button {
     id: mute; objectName: "participant-mute"; width: parent.width
-    text: root.muted ? "Unmute locally" : "Mute locally"
+    text: root.muted ? "Hear participant" : "Mute participant"
+    iconName: root.muted ? "speakerOff" : "speaker"
     tooltipText: "Change only how you hear this participant"
     focusable: true; active: root.muted; enabled: root.connected && !root.busy
     onActiveFocusChanged: if(activeFocus)root.focusRequested(mute)
@@ -91,6 +92,6 @@ Column {
     textFormat: Text.PlainText; wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
     color: Color.urgent; font.family: Style.font.family; font.pixelSize: Style.font.bodySmall
   }
-  Button {id:close;objectName:"participant-audio-close";width:parent.width;text:"Back to people";focusable:true;onActiveFocusChanged:if(activeFocus)root.focusRequested(close);onClicked:root.closed()}
+  Button {id:close;objectName:"participant-audio-close";width:parent.width;text:"Back to people";iconName:"back";focusable:true;onActiveFocusChanged:if(activeFocus)root.focusRequested(close);onClicked:root.closed()}
   Keys.onEscapePressed: function(event) {root.closed();event.accepted=true}
 }

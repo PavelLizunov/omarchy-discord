@@ -113,7 +113,12 @@ BarWidget {
         quickMuteVisible:quickMute.visible, muteIconCount:quickMute.visible ? 1 : 0,
         iconSize:mark.width, muteIconSize:muteDrawing.width, muteIconReady:muteDrawing.status === Image.Ready, inCall:root.inCall,
         muted:!!(root.discord && root.discord.voice && root.discord.voice.muted),
-        backendReady:!!(root.discord && root.discord.ready)})
+        backendReady:!!(root.discord && root.discord.ready),
+        callView:popup.content.callView,
+        voiceRoom:String(root.discord && root.discord.voice ? root.discord.voice.channelId || "" : ""),
+        rosterCount:popup.content.callPanel.roster.rows.length,
+        singleClickAudio:popup.content.callPanel.roster.singleClickAudio,
+        microphoneIcon:root.discord && root.discord.voice.muted ? "microphoneOff" : "microphone"})
     }
   }
 
@@ -135,7 +140,7 @@ BarWidget {
       id: muteDrawing
       objectName: "bar-mute-icon"
       anchors.centerIn: parent
-      width: Style.bar.iconFont
+      width: Style.bar.iconCanvas
       height: width
       sourceSize.width: Math.ceil(width * 2)
       sourceSize.height: Math.ceil(height * 2)
@@ -189,7 +194,7 @@ BarWidget {
           id: mark
           objectName: "bar-primary-icon"
           anchors.centerIn: parent
-          iconSize: Style.bar.iconFont
+          iconSize: Style.bar.iconCanvas
           color: root.foreground
         }
 

@@ -20,7 +20,7 @@ func TestReceiveObservationIncludesIgnoredDatagrams(t *testing.T) {
 		for i := uint32(0); i < 40; i++ {
 			p := make([]byte, 12)
 			p[0] = 0x80
-			p[1] = 101
+			p[1] = 109
 			binary.BigEndian.PutUint32(p[8:], i)
 			writer.Write(p)
 		}
@@ -33,11 +33,11 @@ func TestReceiveObservationIncludesIgnoredDatagrams(t *testing.T) {
 		t.Fatalf("ignored raw delivery was lost: count=%d last=%d", count, last)
 	}
 	headers := u.PacketHeaders()
-	if len(headers) != 32 || headers["101:0"] != 1 {
+	if len(headers) != 32 || headers["109:0"] != 1 {
 		t.Fatalf("header bound or ignored payload visibility failed: %v", headers)
 	}
-	headers["101:0"] = 999
-	if u.PacketHeaders()["101:0"] != 1 {
+	headers["109:0"] = 999
+	if u.PacketHeaders()["109:0"] != 1 {
 		t.Fatal("diagnostic snapshot shares owner state")
 	}
 }

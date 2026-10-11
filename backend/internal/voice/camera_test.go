@@ -15,6 +15,7 @@ import (
 
 	"github.com/disgoorg/godave"
 	dvoice "github.com/mattcalayo/omarchy-discord/backend/internal/voicewire"
+	daveframe "github.com/thomas-vilte/dave-go/frame"
 )
 
 type cameraGatewayProbe struct {
@@ -103,6 +104,16 @@ func TestCameraSinkWantsPreservesAudioAndStopsOnlyVideo(t *testing.T) {
 	}
 }
 
+type encryptedCameraSession struct {
+	godave.Session
+	key []byte
+}
+
+func (s encryptedCameraSession) Decrypt(_ godave.UserID, in, out []byte) (int, error) {
+	plain, _, err := daveframe.Decrypt(daveframe.DecryptParams{Ciphertext: in, Key: s.key})
+	return copy(out, plain), err
+}
+
 func TestCameraMVPDecodeAndStop(t *testing.T) {
 	path, err := exec.LookPath("ffmpeg")
 	if err != nil {
@@ -121,7 +132,10 @@ func TestCameraMVPDecodeAndStop(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer v.close()
-	// The packet path reconstructs a STAP-A frame before DAVE and the actual decoder.
+	// Reconstruct and authenticate real DAVE frame bytes before FFmpeg. This
+	// uses a synthetic key, not a live MLS session or a remote camera.
+	var canonical []byte
+	var clear []daveframe.Range
 	var aggregate = []byte{24}
 	for _, nal := range bytes.Split(encoded, []byte{0, 0, 0, 1}) {
 		if len(nal) == 0 {
@@ -134,11 +148,30 @@ func TestCameraMVPDecodeAndStop(t *testing.T) {
 			if len(n) > 65535 {
 				t.Fatal("fixture NAL too large")
 			}
-			aggregate = append(aggregate, byte(len(n)>>8), byte(len(n)))
-			aggregate = append(aggregate, n...)
+			clear = append(clear, daveframe.Range{Offset: len(canonical), Length: 5})
+			canonical = append(canonical, 0, 0, 0, 1)
+			canonical = append(canonical, n...)
 		}
 	}
-	v.receive(&dvoice.Packet{SSRC: 42, Type: 105, Sequence: 1, Timestamp: 1, Marker: true, Opus: aggregate}, godave.NewNoopSession(slog.Default(), "123", nil))
+	key := bytes.Repeat([]byte{42}, 16)
+	encrypted, err := daveframe.Encrypt(daveframe.EncryptParams{Plaintext: canonical, Key: key, TruncatedNonce: 7, UnencryptedRanges: clear})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Keep original NAL boundaries: arbitrary ciphertext may contain start codes.
+	for i, r := range clear {
+		end := len(encrypted)
+		if i+1 < len(clear) {
+			end = clear[i+1].Offset
+		}
+		nal := encrypted[r.Offset+4 : end]
+		if len(nal) > 65535 {
+			t.Fatal("encrypted fixture NAL too large")
+		}
+		aggregate = append(aggregate, byte(len(nal)>>8), byte(len(nal)))
+		aggregate = append(aggregate, nal...)
+	}
+	v.receive(&dvoice.Packet{SSRC: 42, Type: dvoice.H264PayloadType, Sequence: 1, Timestamp: 1, Marker: true, Opus: aggregate}, encryptedCameraSession{Session: godave.NewNoopSession(slog.Default(), "123", nil), key: key})
 	deadline := time.Now().Add(6 * time.Second)
 	for time.Now().Before(deadline) {
 		s := v.snapshot()
