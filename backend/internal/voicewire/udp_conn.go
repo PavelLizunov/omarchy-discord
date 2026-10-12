@@ -40,9 +40,10 @@ const (
 	// I've yet to find actual documentation on what the bits inside this value represent.
 	RTPPayloadType = 0x78
 
-	// H264PayloadType is advertised by this receive-only client. Keep the
-	// negotiation, transport filter and camera demultiplexer on this same value.
-	H264PayloadType = 101
+	// Native receive codec catalog: AV1=101, H265=103, H264=105, VP8=107,
+	// VP9=109; RTX follows each primary. Keep H264 decoding and advertisement
+	// consistent. A local Session Description describes SEND, not remote codec.
+	H264PayloadType = 105
 
 	// MaxOpusFrameSize is the max size of an opus frame in bytes.
 	MaxOpusFrameSize = 1400
@@ -158,6 +159,11 @@ type udpConnImpl struct {
 	observationMu sync.Mutex
 	packetHeaders map[uint64]uint64
 	cameraStages  map[string]uint64
+	feedback      transportFeedback
+	reports       map[uint32]*receiverReport
+	rtxMu         sync.Mutex
+	rtxSources    map[uint32]uint32
+	rtxOwners     map[uint32]snowflake.ID
 	lastDatagram  atomic.Int64
 	datagrams     atomic.Uint64
 	receiveBuffer []byte
@@ -386,7 +392,10 @@ func (u *udpConnImpl) ReadPacket() (*Packet, error) {
 		}
 
 		packetType := u.receiveBuffer[1] & 0x7f
-		cameraPacket := packetType == H264PayloadType
+		cameraPacket := packetType >= 101 && packetType <= 110
+		if packetType%2 == 0 && cameraPacket {
+			u.cameraStage("rtx_raw")
+		}
 		if cameraPacket {
 			u.cameraStage("raw")
 		}
@@ -402,7 +411,7 @@ func (u *udpConnImpl) ReadPacket() (*Packet, error) {
 			u.observationMu.Unlock()
 		}
 		if u.receiveBuffer[0]>>6 != 2 || (u.receiveBuffer[1] >= 192 && u.receiveBuffer[1] <= 223) ||
-			(packetType != RTPPayloadType && packetType != H264PayloadType) {
+			(packetType != RTPPayloadType && !cameraPacket) {
 			// Ignore unadvertised media and RTCP, not the selected H264 stream.
 			if cameraPacket {
 				u.cameraStage("filtered")
@@ -491,6 +500,8 @@ func (u *udpConnImpl) ReadPacket() (*Packet, error) {
 			decryptedOffset += extensionLen
 		}
 
+		// Acknowledge authenticated transport delivery before removing probes.
+		u.feedbackArrival(&p)
 		decrypted = decrypted[decryptedOffset:]
 		if cameraPacket && len(decrypted) == 0 {
 			u.cameraStage("empty_after_extension")
@@ -516,6 +527,33 @@ func (u *udpConnImpl) ReadPacket() (*Packet, error) {
 			continue
 		}
 
+		if cameraPacket && packetType != H264PayloadType && packetType != H264PayloadType+1 {
+			u.cameraStage("unsupported_codec_media")
+			continue
+		}
+		if packetType == H264PayloadType+1 {
+			u.cameraStage("rtx_nonpadding")
+			if len(decrypted) <= 2 {
+				u.cameraStage("rtx_sequence_only")
+			} else {
+				u.cameraStage("rtx_media_bytes")
+			}
+			u.rtxMu.Lock()
+			primary := u.rtxSources[p.SSRC]
+			u.rtxMu.Unlock()
+			if primary == 0 || len(decrypted) < 3 {
+				if primary == 0 {
+					u.cameraStage("rtx_unmapped")
+				}
+				continue
+			}
+			p.SSRC = primary
+			p.Sequence = binary.BigEndian.Uint16(decrypted[:2])
+			p.Type = H264PayloadType
+			decrypted = decrypted[2:]
+			packetType = H264PayloadType
+			u.cameraStage("rtx_repaired")
+		}
 		// Video DAVE authentication applies to the assembled frame, not RTP fragments.
 		if packetType == H264PayloadType {
 			u.cameraStage("delivered")

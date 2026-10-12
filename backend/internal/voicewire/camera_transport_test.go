@@ -22,12 +22,11 @@ func (d *cameraDaveProbe) Decrypt(id godave.UserID, in, out []byte) (int, error)
 	return d.Session.Decrypt(id, in, out)
 }
 
-// Real encrypted RTP101 fragments must reach the camera without per-packet
+// Real encrypted RTP105 fragments must reach the camera without per-packet
 // DAVE authentication. Opus still takes the existing authenticated audio path.
-func TestCameraTransport101AndOpusDemultiplexing(t *testing.T) {
-	if H264PayloadType != 101 {
-		t.Fatal("H264 advertisement must match observed RTP101")
-	}
+func TestCameraTransport105AndOpusDemultiplexing(t *testing.T) {
+	// Fixed wire IDs deliberately do not derive the input from the code under test.
+	// An old101filter fails delivery, not merely a constant-equality assertion.
 	for _, mode := range AllEncryptionModes {
 		t.Run(string(mode), func(t *testing.T) {
 			reader, writer := net.Pipe()
@@ -48,7 +47,7 @@ func TestCameraTransport101AndOpusDemultiplexing(t *testing.T) {
 			audio := []byte{0xf8, 0xff, 0xfe}
 			go func() {
 				defer writer.Close()
-				for _, pt := range []byte{109, H264PayloadType, RTPPayloadType} {
+				for _, pt := range []byte{101, 105, RTPPayloadType} {
 					var h [12]byte
 					h[0] = 0x80
 					h[1] = pt | 0x80
@@ -65,7 +64,7 @@ func TestCameraTransport101AndOpusDemultiplexing(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if p.Type != 101 || p.SSRC != 42 || !p.Marker || !bytes.Equal(p.Opus, camera) || d.calls != 0 {
+			if p.Type != 105 || p.SSRC != 42 || !p.Marker || !bytes.Equal(p.Opus, camera) || d.calls != 0 {
 				t.Fatalf("camera dropped or authenticated before assembly: %+v calls%d", p, d.calls)
 			}
 			p, err = u.ReadPacket()
@@ -75,15 +74,15 @@ func TestCameraTransport101AndOpusDemultiplexing(t *testing.T) {
 			if p.Type != RTPPayloadType || !bytes.Equal(p.Opus, audio) || d.calls != 1 {
 				t.Fatalf("audio path changed: %+v calls%d", p, d.calls)
 			}
-			if u.PacketHeaders()["101:42"] != 1 || u.PacketHeaders()["109:42"] != 1 {
+			if u.PacketHeaders()["105:42"] != 1 || u.PacketHeaders()["101:42"] != 1 {
 				t.Fatal("raw observation missing")
 			}
 			stages := u.CameraReceiveStages()
-			if stages["raw"] != 1 || stages["delivered"] != 1 {
+			if stages["raw"] != 2 || stages["unsupported_codec_media"] != 1 || stages["delivered"] != 1 {
 				t.Fatalf("camera stages: %v", stages)
 			}
 			stages["raw"] = 99
-			if u.CameraReceiveStages()["raw"] != 1 {
+			if u.CameraReceiveStages()["raw"] != 2 {
 				t.Fatal("camera stages share mutable state")
 			}
 		})

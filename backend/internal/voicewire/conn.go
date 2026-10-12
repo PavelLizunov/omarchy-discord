@@ -267,7 +267,7 @@ func (c *connImpl) handleMessage(gateway Gateway, op Opcode, sequenceNumber int,
 
 		if err = c.Gateway().Send(ctx, OpcodeSelectProtocol, GatewayMessageDataSelectProtocol{
 			Protocol: ProtocolUDP,
-			Codecs:   []MediaCodec{{Name: "opus", Type: "audio", Priority: 1000, PayloadType: 120, Encode: true, Decode: true}, {Name: "H264", Type: "video", Priority: 1000, PayloadType: H264PayloadType, Encode: false, Decode: true}},
+			Codecs:   []MediaCodec{{Name: "opus", Type: "audio", Priority: 1000, PayloadType: 120, Encode: true, Decode: true}, {Name: "H264", Type: "video", Priority: 1000, PayloadType: H264PayloadType, RTXPayloadType: H264PayloadType + 1, Encode: false, Decode: true}},
 			Data: GatewayMessageDataSelectProtocolData{
 				Address: ourAddress,
 				Port:    ourPort,
@@ -291,6 +291,9 @@ func (c *connImpl) handleMessage(gateway Gateway, op Opcode, sequenceNumber int,
 		c.ssrcsMu.Unlock()
 
 	case GatewayMessageDataVideo:
+		if mapper, ok := c.udp.(interface{ AnnounceVideo(GatewayMessageDataVideo) }); ok {
+			mapper.AnnounceVideo(d)
+		}
 		c.ssrcsMu.Lock()
 		if d.AudioSSRC != 0 {
 			c.ssrcs[d.AudioSSRC] = d.UserID
@@ -306,6 +309,9 @@ func (c *connImpl) handleMessage(gateway Gateway, op Opcode, sequenceNumber int,
 		c.ssrcsMu.Unlock()
 
 	case GatewayMessageDataClientDisconnect:
+		if mapper, ok := c.udp.(interface{ AnnounceVideo(GatewayMessageDataVideo) }); ok {
+			mapper.AnnounceVideo(GatewayMessageDataVideo{UserID: d.UserID})
+		}
 		c.ssrcsMu.Lock()
 		for ssrc, userID := range c.ssrcs {
 			if userID == d.UserID {

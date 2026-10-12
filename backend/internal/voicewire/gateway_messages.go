@@ -345,15 +345,17 @@ type GatewayMessageDataClientConnect struct {
 func (GatewayMessageDataClientConnect) voiceGatewayMessageData() {}
 
 type MediaCodec struct {
-	Name        string `json:"name"`
-	Type        string `json:"type"`
-	Priority    int    `json:"priority"`
-	PayloadType int    `json:"payload_type"`
-	Encode      bool   `json:"encode"`
-	Decode      bool   `json:"decode"`
+	RTXPayloadType int    `json:"rtx_payload_type,omitempty"`
+	Name           string `json:"name"`
+	Type           string `json:"type"`
+	Priority       int    `json:"priority"`
+	PayloadType    int    `json:"payload_type"`
+	Encode         bool   `json:"encode"`
+	Decode         bool   `json:"decode"`
 }
 
 type VideoStream struct {
+	RTXSSRC uint32 `json:"rtx_ssrc"`
 	Type    string `json:"type"`
 	SSRC    uint32 `json:"ssrc"`
 	Active  bool   `json:"active"`
