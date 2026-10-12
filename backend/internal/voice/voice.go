@@ -459,6 +459,9 @@ func (e *Engine) onEvent(gen uint64, op dvoice.Opcode, data dvoice.GatewayMessag
 	}
 	switch d := data.(type) {
 	case dvoice.GatewayMessageDataVideo:
+		if e.log != nil {
+			e.log.Info("camera: announced layers", "user", d.UserID, "primary_ssrc", d.VideoSSRC, "layers", d.Streams)
+		}
 		if video != nil {
 			video.announce(d)
 		}

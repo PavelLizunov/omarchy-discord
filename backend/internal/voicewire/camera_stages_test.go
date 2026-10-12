@@ -23,6 +23,7 @@ func TestCameraReceiveStageRejections(t *testing.T) {
 		{"short_ciphertext", 0x80, nil, "short_ciphertext"},
 		{"invalid_extension", 0x90, []byte{0xbe, 0xde, 0, 1}, "invalid_extension"},
 		{"empty", 0x80, nil, "empty"},
+		{"padding_only_255", 0xa0, nil, "padding_only"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			reader, writer := net.Pipe()
@@ -41,6 +42,11 @@ func TestCameraReceiveStageRejections(t *testing.T) {
 			if tc.stage == "empty" {
 				packet = enc.Encrypt(h, nil)
 			}
+			if tc.stage == "padding_only" {
+				padding := make([]byte, 255)
+				padding[254] = 255
+				packet = enc.Encrypt(h, padding)
+			}
 			if tc.stage == "invalid_extension" {
 				packet = enc.encryptHeader(append(h[:], tc.body...), []byte{1})
 			}
@@ -49,6 +55,9 @@ func TestCameraReceiveStageRejections(t *testing.T) {
 			s := u.CameraReceiveStages()
 			if s["raw"] != 1 || s[tc.stage] != 1 || s["delivered"] != 0 {
 				t.Fatalf("stage not distinguished: %v", s)
+			}
+			if tc.stage == "padding_only" && (s["nonempty_decryption"] != 1 || s["padding_length_255"] != 1) {
+				t.Fatal(s)
 			}
 		})
 	}

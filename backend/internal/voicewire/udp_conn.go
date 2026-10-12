@@ -471,6 +471,13 @@ func (u *udpConnImpl) ReadPacket() (*Packet, error) {
 			return nil, fmt.Errorf("failed to decrypt packet: %w", err)
 		}
 
+		if cameraPacket {
+			if len(decrypted) == 0 {
+				u.cameraStage("empty_decryption")
+			} else {
+				u.cameraStage("nonempty_decryption")
+			}
+		}
 		var decryptedOffset int
 		if p.HasExtension {
 			extensionLen := int(extensionLenWords) * 4
@@ -485,9 +492,19 @@ func (u *udpConnImpl) ReadPacket() (*Packet, error) {
 		}
 
 		decrypted = decrypted[decryptedOffset:]
+		if cameraPacket && len(decrypted) == 0 {
+			u.cameraStage("empty_after_extension")
+		}
 
 		if hasPadding {
+			beforePadding := len(decrypted)
 			decrypted = stripRTPPadding(decrypted)
+			if cameraPacket && beforePadding > 0 && len(decrypted) == 0 {
+				u.cameraStage("padding_only")
+				if beforePadding <= 255 {
+					u.cameraStage(fmt.Sprintf("padding_length_%d", beforePadding))
+				}
+			}
 		}
 
 		// A padding-only packet carries no media: it advances the sequence number
