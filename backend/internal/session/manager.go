@@ -82,6 +82,7 @@ type Manager struct {
 	generation int64
 	errText    string
 	voice      voiceEngine
+	video      *videoModule
 	voiceState voice.State
 
 	token     string
@@ -219,14 +220,30 @@ func (m *Manager) Stop() {
 }
 
 func (m *Manager) teardownLocked() (*ningen.State, chan struct{}, voiceEngine) {
+	mediaDone := make(chan struct{})
+	if m.video != nil {
+		module := m.video
+		m.video = nil
+		go func() { module.close(); close(mediaDone) }()
+	} else {
+		close(mediaDone)
+	}
 	if m.cancel != nil {
 		m.cancel()
 		m.cancel = nil
 	}
 	n, done, v := m.n, m.loopDone, m.voice
+	allDone := make(chan struct{})
+	go func() {
+		if done != nil {
+			<-done
+		}
+		<-mediaDone
+		close(allDone)
+	}()
 	m.n, m.loopDone, m.token, m.everReady = nil, nil, "", false
 	m.voice, m.voiceState = nil, idleVoice
-	return n, done, v
+	return n, allDone, v
 }
 
 func closeAndWait(n *ningen.State, done chan struct{}, v voiceEngine) {
@@ -319,6 +336,7 @@ func (m *Manager) installHandlers(n *ningen.State) {
 	m.installChannelHandlers(n)
 	m.installMemberHandlers(n)
 	m.installVoiceHandlers(n)
+	m.installVideoHandlers(n)
 	resync := func() {
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -606,6 +624,10 @@ func (m *Manager) Handle(ctx context.Context, req *protocol.Request) (any, *prot
 			return nil, protocol.Errorf(protocol.CodeUnknownGuild, "guild is not in this session")
 		}
 		return VoiceMembers(n.Offline(), discord.GuildID(sf)), nil
+	case "video_state":
+		return m.videoSnapshot()
+	case "video_watch":
+		return m.watchVideo(ctx, req)
 	case "voice_cameras":
 		return m.voiceCameras(ctx, req, false)
 	case "voice_watch_camera":

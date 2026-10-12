@@ -77,6 +77,11 @@ func (m *Manager) voiceCameras(ctx context.Context, req *protocol.Request, watch
 			}
 			id = dsnowflake.ID(sf)
 		}
+		if id != 0 {
+			if e := m.cameraParticipant(id); e != nil {
+				return nil, e
+			}
+		}
 		if err := c.WatchCamera(ctx, id, p.Revision); err != nil {
 			return nil, protocol.Errorf(protocol.CodeDiscordError, "%v", err)
 		}
@@ -84,6 +89,28 @@ func (m *Manager) voiceCameras(ctx context.Context, req *protocol.Request, watch
 	return c.Cameras(), nil
 }
 
+func (m *Manager) cameraParticipant(id dsnowflake.ID) *protocol.Error {
+	v, e := m.liveVoice()
+	if e != nil {
+		return e
+	}
+	st := v.State()
+	if st.Status != voice.StatusConnected {
+		return protocol.Errorf(protocol.CodeGatewayUnavailable, "join voice before watching video")
+	}
+	n, e := m.cachedSession()
+	if e != nil {
+		return e
+	}
+	u, err := n.Offline().Cabinet.VoiceState(st.GuildID, discord.UserID(id))
+	if err != nil || u.ChannelID != st.ChannelID {
+		return protocol.Errorf(protocol.CodeInvalidArgument, "camera participant is not in the current room")
+	}
+	if !n.Offline().HasPermissions(st.ChannelID, discord.PermissionViewChannel|discord.PermissionConnect) {
+		return protocol.Errorf(protocol.CodeForbidden, "no permission to watch this room")
+	}
+	return nil
+}
 func (m *Manager) voiceUserAudio(req *protocol.Request, set bool) (any, *protocol.Error) {
 	v, e := m.liveVoice()
 	if e != nil {
@@ -152,6 +179,9 @@ func (m *Manager) onVoiceState(v voice.State) {
 	if m.voiceState == v {
 		return
 	}
+	if m.video != nil && (v.Status != voice.StatusConnected || v.ChannelID != m.voiceState.ChannelID) {
+		m.video.invalidate()
+	}
 	m.voiceState = v
 	m.bump()
 }
@@ -205,6 +235,12 @@ func (m *Manager) voiceJoin(ctx context.Context, req *protocol.Request) (any, *p
 	if !off.HasPermissions(chID, discord.PermissionViewChannel|discord.PermissionConnect) {
 		return nil, protocol.Errorf(protocol.CodeForbidden, "no permission to join channel %s", p.ChannelID)
 	}
+	m.mu.Lock()
+	mod := m.video
+	m.mu.Unlock()
+	if mod != nil {
+		mod.close()
+	}
 	if err := v.Join(ctx, guildID, chID); err != nil {
 		return nil, protocol.Errorf(protocol.CodeDiscordError, "voice join failed: %v", err)
 	}
@@ -215,6 +251,12 @@ func (m *Manager) voiceLeave(ctx context.Context) (any, *protocol.Error) {
 	v, e := m.liveVoice()
 	if e != nil {
 		return nil, e
+	}
+	m.mu.Lock()
+	mod := m.video
+	m.mu.Unlock()
+	if mod != nil {
+		mod.close()
 	}
 	if err := v.Leave(ctx); err != nil {
 		return nil, protocol.Errorf(protocol.CodeDiscordError, "voice leave failed: %v", err)

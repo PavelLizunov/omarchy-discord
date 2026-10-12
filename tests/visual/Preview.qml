@@ -30,6 +30,10 @@ Rectangle {
     readonly property var backend: model
     function sendCommand(name, fields, callback) {
       note(name, fields.guild_id)
+      if (name === "video_state" || name === "video_watch") {
+        if (callback) callback(true,{choices:root.state === "video-empty" ? [] : [{user_id:"200",kind:"camera"},{user_id:"200",kind:"screen"}],streams:[],kind:"camera",user_id:"",image:"",age_ms:-1,error:root.state === "video-error" ? "Screen connection lost. Select it again." : ""},"")
+        return 1
+      }
       if (callback) callback(true, name === "guild_settings" ? {muted:false} : {online_count: Number(fields.guild_id) * 3}, "")
       return 1
     }
@@ -169,6 +173,11 @@ Rectangle {
         client.showServerMenu(model.guilds[0], 160, 120)
         if (root.state === "server-leave") { client.serverMenu.page = "leave"; client.serverMenu.firstFocus() }
         if (root.state === "server-settings") client.serverMenu.page = "settings"
+      }
+      if (root.state.indexOf("video-") === 0) {
+        model.voice = {status:"connected",guildId:"1",channelId:"9002",muted:false,deafened:false,error:""}
+        model.voiceMembers = {"1":[{channel_id:"9002",users:[{id:"200",display_name:"Ada"}]}]}
+        client.openCamera()
       }
       root.ready = true
       stop()

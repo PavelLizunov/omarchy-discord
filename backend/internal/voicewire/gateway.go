@@ -69,10 +69,12 @@ type State struct {
 	GuildID snowflake.ID
 	UserID  snowflake.ID
 
-	ChannelID snowflake.ID
-	SessionID string
-	Token     string
-	Endpoint  string
+	ChannelID    snowflake.ID
+	MediaGroupID snowflake.ID
+	MediaOnly    bool
+	SessionID    string
+	Token        string
+	Endpoint     string
 
 	SelfMute bool
 	SelfDeaf bool
@@ -142,6 +144,9 @@ func (g *gatewayImpl) SSRC() uint32 {
 }
 
 func (g *gatewayImpl) Open(ctx context.Context, state State) error {
+	if state.MediaOnly {
+		return g.open(ctx, state)
+	}
 	return g.doReconnect(ctx, state, 0)
 }
 
@@ -189,7 +194,7 @@ func (g *gatewayImpl) open(ctx context.Context, state State) error {
 		return nil
 	})
 
-	g.daveSession.SetChannelID(godave.ChannelID(state.ChannelID))
+	g.daveSession.SetChannelID(mediaGroup(state))
 	g.conn = conn
 	g.connMu.Unlock()
 
@@ -367,6 +372,10 @@ func nextReconnectDelay(delay time.Duration) time.Duration {
 }
 
 func (g *gatewayImpl) reconnect() {
+	if g.state.MediaOnly {
+		g.closeHandlerFunc(g, errors.New("stream transport lost; select again"))
+		return
+	}
 	if err := g.doReconnect(context.Background(), g.state, maximumReconnectAttempts); err != nil {
 		g.config.Logger.Error("failed to reopen voice gateway", slog.Any("err", err))
 
@@ -498,11 +507,11 @@ func (g *gatewayImpl) listen(conn *websocket.Conn, ready func(error)) {
 				return
 			}
 
-			reconnect := true
+			reconnect := !g.state.MediaOnly
 			var closeError *websocket.CloseError
 			if errors.As(err, &closeError) {
 				closeCode := GatewayCloseEventCodeByCode(closeError.Code)
-				reconnect = closeCode.Reconnect
+				reconnect = closeCode.Reconnect && !g.state.MediaOnly
 
 				msg := "voice gateway close received"
 				args := []any{

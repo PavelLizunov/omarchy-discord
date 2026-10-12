@@ -37,7 +37,7 @@ for (const file of ['ClientView.qml',...fs.readdirSync(path.join(root,'component
   if (file === 'components/CameraView.qml') {
     assert(!text.includes('fetch_media'), 'Camera frames must not enable attachment fetching');
     assert(text.includes('"data:image/jpeg;base64,"'), 'Camera display must use backend frame bytes');
-    assert(text.includes('voice_watch_camera') && text.includes('Component.onDestruction'), 'Camera reception must have an explicit stop path');
+    assert(text.includes('video_watch') && text.includes('Component.onDestruction'), 'Camera reception must have an explicit stop path');
   }
 }
 console.log('PASS: no attachment fetching/queued/cached images; camera is an explicit backend-frame exception');

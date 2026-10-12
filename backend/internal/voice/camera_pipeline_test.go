@@ -125,7 +125,7 @@ func TestCameraPipelineEncryptedFragmentsAndAudio(t *testing.T) {
 			if err = e.WatchCamera(ctx, 123, 1); err != nil {
 				t.Fatal(err)
 			}
-			if g.wants[0]["42"] != 100 || g.wants[0]["10"] != 100 {
+			if g.wants[0]["42"] != float64(100) || g.wants[0]["10"] != float64(100) {
 				t.Fatal(g.wants)
 			}
 			audio := pipelineAudio{seen: make(chan []byte, 1024)}

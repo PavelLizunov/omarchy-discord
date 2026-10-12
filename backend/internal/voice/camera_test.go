@@ -20,13 +20,13 @@ import (
 
 type cameraGatewayProbe struct {
 	dvoice.Gateway
-	wants []map[string]int
+	wants []map[string]any
 }
 
 func (g *cameraGatewayProbe) SSRC() uint32 { return 100 }
 func (g *cameraGatewayProbe) Send(_ context.Context, op dvoice.Opcode, data dvoice.GatewayMessageData) error {
 	if op == dvoice.OpcodeMediaSinkWants {
-		var wants map[string]int
+		var wants map[string]any
 		if err := json.Unmarshal(data.(dvoice.GatewayMessageDataUnknown), &wants); err != nil {
 			return err
 		}
@@ -61,14 +61,20 @@ func TestCameraSubscriptionDoesNotGloballyDisableCallAudio(t *testing.T) {
 		if _, global := wants["any"]; global {
 			t.Fatalf("camera overwrites unspecified media: %v", wants)
 		}
-		if wants["10"] != 100 {
+		if wants["10"] != float64(100) {
 			t.Fatalf("call audio disabled: %v", wants)
 		}
 		want := 100
 		if id == 0 {
 			want = 0
 		}
-		if wants["20"] != want {
+		if id != 0 {
+			pixels, ok := wants["pixelCounts"].(map[string]any)
+			if !ok || pixels["20"] != float64(640*360) {
+				t.Fatal("missing visible pixel hint", wants)
+			}
+		}
+		if wants["20"] != float64(want) {
 			t.Fatalf("camera request not applied: %v", wants)
 		}
 	}
@@ -80,7 +86,7 @@ func TestCameraSinkWantsPreservesAudioAndStopsOnlyVideo(t *testing.T) {
 	v.announce(dvoice.GatewayMessageDataVideo{UserID: 2, AudioSSRC: 11, VideoSSRC: 22})
 	v.announceAudio(12)
 	for _, selected := range []uint32{21, 0} {
-		var wants map[string]int
+		var wants map[string]any
 		if err := json.Unmarshal(v.sinkWants(selected), &wants); err != nil {
 			t.Fatal(err)
 		}
@@ -88,7 +94,7 @@ func TestCameraSinkWantsPreservesAudioAndStopsOnlyVideo(t *testing.T) {
 			t.Fatal("camera must not overwrite unspecified media")
 		}
 		for _, audio := range []string{"10", "11", "12"} {
-			if wants[audio] != 100 {
+			if wants[audio] != float64(100) {
 				t.Fatalf("audio %s disabled: %v", audio, wants)
 			}
 		}
@@ -97,7 +103,7 @@ func TestCameraSinkWantsPreservesAudioAndStopsOnlyVideo(t *testing.T) {
 			if video == "21" && selected == 21 {
 				want = 100
 			}
-			if wants[video] != want {
+			if wants[video] != float64(want) {
 				t.Fatalf("video %s: %v", video, wants)
 			}
 		}

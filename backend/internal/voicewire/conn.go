@@ -87,6 +87,7 @@ func NewConn(guildID snowflake.ID, userID snowflake.ID, voiceStateUpdateFunc Sta
 }
 
 type connImpl struct {
+	mediaOnly            bool
 	config               connConfig
 	voiceStateUpdateFunc StateUpdateFunc
 	removeConnFunc       func()
@@ -323,6 +324,10 @@ func (c *connImpl) handleMessage(gateway Gateway, op Opcode, sequenceNumber int,
 }
 
 func (c *connImpl) handleGatewayClose(_ Gateway, err error) {
+	if c.mediaOnly {
+		_ = c.udp.Close()
+		return // Stream recovery needs a new main-gateway stream handshake, never Voice State Update.
+	}
 	newConnection := true
 	var closeError *websocket.CloseError
 	if errors.As(err, &closeError) {
@@ -384,7 +389,9 @@ func (c *connImpl) Open(ctx context.Context, channelID snowflake.ID, selfMute bo
 }
 
 func (c *connImpl) Close(ctx context.Context) {
-	_ = c.voiceStateUpdateFunc(ctx, c.state.GuildID, nil, false, false)
+	if !c.mediaOnly {
+		_ = c.voiceStateUpdateFunc(ctx, c.state.GuildID, nil, false, false)
+	}
 
 	c.gateway.Close()
 	_ = c.udp.Close()

@@ -1139,10 +1139,10 @@ Item {
           id: cameraButton
           objectName: "camera-button"
           visible: root.ready && root.service && root.service.voice && root.service.voice.status === "connected"
-          text: "Cameras"
+          text: "Video"
           iconOnly: true
           iconName: "camera"
-          tooltipText: "Choose a participant's webcam to watch (H.264 MVP)"
+          tooltipText: "Watch a participant's camera or screen (H.264)"
           focusable: true
           onClicked: root.openCamera()
         }

@@ -53,6 +53,7 @@ type camera struct {
 	dispatched   uint64
 	ssrcMismatch uint64
 	packetAt     time.Time
+	err          string
 }
 
 func newCamera() *camera {
@@ -112,6 +113,7 @@ func (v *camera) close() {
 	v.decoder = nil
 	v.selected = 0
 	v.ssrc = 0
+	v.err = ""
 	v.packets = 0
 	v.packetAt = time.Time{}
 	v.frame = nil
@@ -121,6 +123,7 @@ func (v *camera) close() {
 		d.close()
 	}
 }
+func (v *camera) fail(message string) { v.mu.Lock(); v.err = message; v.mu.Unlock() }
 func (v *camera) selectUser(id snowflake.ID) (uint32, error) {
 	v.close()
 	if id == 0 {
@@ -168,6 +171,10 @@ func (v *camera) snapshot() CameraSnapshot {
 		if s.AgeMS >= 0 && s.AgeMS < 3000 {
 			s.Image = base64.StdEncoding.EncodeToString(d.image)
 		}
+	}
+	if v.err != "" {
+		s.Error = v.err
+		s.Image = ""
 	}
 	return s
 }
@@ -262,7 +269,7 @@ func appendH264(frame *[]byte, p []byte) error {
 func (v *camera) sinkWants(selected uint32) dvoice.GatewayMessageDataUnknown {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	wants := make(map[string]int, len(v.videoSSRCs))
+	wants := make(map[string]any, len(v.videoSSRCs)+1)
 	for ssrc := range v.videoSSRCs {
 		wants[fmt.Sprint(ssrc)] = 0
 	}
@@ -271,6 +278,7 @@ func (v *camera) sinkWants(selected uint32) dvoice.GatewayMessageDataUnknown {
 	}
 	if selected != 0 {
 		wants[fmt.Sprint(selected)] = 100
+		wants["pixelCounts"] = map[string]int{fmt.Sprint(selected): 640 * 360}
 	}
 	data, _ := json.Marshal(wants)
 	return dvoice.GatewayMessageDataUnknown(data)
@@ -382,6 +390,9 @@ func (e *Engine) Cameras() CameraSnapshot {
 func (e *Engine) WatchCamera(ctx context.Context, id snowflake.ID, revision uint64) error {
 	e.opMu.Lock()
 	defer e.opMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	e.mu.Lock()
 	if revision == 0 || revision <= e.watchRevision {
 		e.mu.Unlock()
@@ -395,6 +406,10 @@ func (e *Engine) WatchCamera(ctx context.Context, id snowflake.ID, revision uint
 	}
 	ssrc, err := v.selectUser(id)
 	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		v.close()
 		return err
 	}
 	wants := v.sinkWants(ssrc)
