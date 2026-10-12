@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import "../ui" as PluginTheme
 import QtQuick.Controls as Controls
 import "../ui"
 
@@ -11,7 +12,7 @@ Item {
  property bool deafened:false
  property bool details:false
  signal reconnectRequested()
- property color foreground:Color.foreground
+ property color foreground:PluginTheme.Color.foreground
  property string fontFamily:Style.font.family
  property bool rejoining:false
  property bool deviceDetails:false
@@ -93,15 +94,15 @@ Item {
      Text {width:parent.width;text:modelData.value;wrapMode:Text.WordWrap;color:root.foreground;font.family:root.fontFamily;font.pixelSize:Style.font.body;Accessible.name:modelData.label+": "+text}
     }
    }
-   Rectangle{width:parent.width;height:Style.space(5);color:Util.alpha(Color.foreground,0.15)
-    Rectangle{height:parent.height;width:parent.width*(root.fresh?Math.max(0,Math.min(100,root.sample.input_level))/100:0);color:Color.accent}
+   Rectangle{width:parent.width;height:Style.space(5);color:Util.alpha(PluginTheme.Color.foreground,0.15)
+    Rectangle{height:parent.height;width:parent.width*(root.fresh?Math.max(0,Math.min(100,root.sample.input_level))/100:0);color:PluginTheme.Color.accent}
     Accessible.name:"Microphone level";Accessible.description:root.micText
     MouseArea {id:readingHover;anchors.fill:parent;hoverEnabled:true;acceptedButtons:Qt.NoButton}
     PanelToolTip {visible:readingHover.containsMouse;text:"Sent packets do not confirm remote hearing. No received audio can mean silence or a receive fault. Supplied samples do not confirm audible speakers.";delay:1000}
    }
    Repeater {
     model:[root.error,root.fresh?String(root.sample.device_error||""):""]
-    Text{required property string modelData;visible:!!modelData;width:body.width;text:modelData;textFormat:Text.PlainText;wrapMode:Text.WordWrap;color:Color.urgent;font.family:root.fontFamily;font.pixelSize:Style.font.bodySmall}
+    Text{required property string modelData;visible:!!modelData;width:body.width;text:modelData;textFormat:Text.PlainText;wrapMode:Text.WordWrap;color:PluginTheme.Color.urgent;font.family:root.fontFamily;font.pixelSize:Style.font.bodySmall}
    }
    Button {id:deviceToggle;objectName:"voice-device-details";width:parent.width;text:root.deviceDetails?"Hide devices":"Devices and errors";leftAlign:true;foreground:root.foreground;fontFamily:root.fontFamily;focusable:true;onClicked:root.deviceDetails=!root.deviceDetails}
    Column {

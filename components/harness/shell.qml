@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import "../../ui" as PluginTheme
 import QtQuick.Controls
 import Quickshell
 import Quickshell.Io
@@ -21,12 +22,12 @@ ShellRoot {
   property int nextId: 2000
 
   readonly property var ctx: Fixtures.ctx({
-    mentionColor: Color.accent,
-    mentionBg: Util.alpha(Color.accent, 0.18),
-    linkColor: Color.accent,
-    codeBg: Util.alpha(Color.foreground, 0.08),
-    spoilerColor: Color.muted,
-    mutedColor: Color.muted,
+    mentionColor: PluginTheme.Color.accent,
+    mentionBg: Util.alpha(PluginTheme.Color.accent, 0.18),
+    linkColor: PluginTheme.Color.accent,
+    codeBg: Util.alpha(PluginTheme.Color.foreground, 0.08),
+    spoilerColor: PluginTheme.Color.muted,
+    mutedColor: PluginTheme.Color.muted,
     monoFamily: Style.font.family,
     fontSize: Style.font.body
   })
@@ -122,7 +123,7 @@ ShellRoot {
   FloatingWindow {
     id: window
     title: "Timeline harness"
-    color: Color.background
+    color: PluginTheme.Color.background
     implicitWidth: 760
     implicitHeight: 620
     minimumSize: Qt.size(420, 320)
@@ -139,10 +140,10 @@ ShellRoot {
 
         Row {
           spacing: Style.spacing.controlGap
-          Button { text: "Prepend 30"; foreground: Color.foreground; onClicked: harness.prepend(30) }
-          Button { text: "Append"; foreground: Color.foreground; onClicked: harness.append() }
-          Button { text: harness.active ? "Deactivate" : "Activate"; foreground: Color.foreground; onClicked: harness.active = !harness.active }
-          Button { text: "Focus timeline"; foreground: Color.foreground; onClicked: timeline.forceActiveFocus() }
+          Button { text: "Prepend 30"; foreground: PluginTheme.Color.foreground; onClicked: harness.prepend(30) }
+          Button { text: "Append"; foreground: PluginTheme.Color.foreground; onClicked: harness.append() }
+          Button { text: harness.active ? "Deactivate" : "Activate"; foreground: PluginTheme.Color.foreground; onClicked: harness.active = !harness.active }
+          Button { text: "Focus timeline"; foreground: PluginTheme.Color.foreground; onClicked: timeline.forceActiveFocus() }
         }
 
         Components.Timeline {
@@ -176,7 +177,7 @@ ShellRoot {
           id: logText
           width: parent.width
           text: harness.log.join("\n") || "signals appear here"
-          color: Color.muted
+          color: PluginTheme.Color.muted
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
           wrapMode: Text.NoWrap

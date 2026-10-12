@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import "ui" as PluginTheme
 import Quickshell
 import Quickshell.Io
 import qs.Commons
@@ -93,7 +94,7 @@ Item {
   property var mediaRetried: ({})
   readonly property int avatarSize: 64
   readonly property int emojiSize: 32
-  readonly property color secondaryColor: Api.secondaryColor(Color.muted, Color.foreground, Color.background)
+  readonly property color secondaryColor: Api.secondaryColor(PluginTheme.Color.muted, PluginTheme.Color.foreground, PluginTheme.Color.background)
 
   property var notifyCommand: function(args) { return ["notify-send"].concat(args) }
   readonly property int notifyWindowMs: 3000
@@ -158,11 +159,11 @@ Item {
     channels: channelNames,
     roles: ({}),
     selfId: selfId,
-    mentionColor: Color.accent,
-    mentionBg: Util.alpha(Color.accent, 0.18),
-    linkColor: Color.accent,
-    codeBg: Util.alpha(Color.foreground, 0.08),
-    spoilerColor: Api.blend(secondaryColor, Color.background, secondaryColor.a),
+    mentionColor: PluginTheme.Color.accent,
+    mentionBg: Util.alpha(PluginTheme.Color.accent, 0.18),
+    linkColor: PluginTheme.Color.accent,
+    codeBg: Util.alpha(PluginTheme.Color.foreground, 0.08),
+    spoilerColor: Api.blend(secondaryColor, PluginTheme.Color.background, secondaryColor.a),
     mutedColor: secondaryColor,
     monoFamily: Style.font.family,
     fontSize: Style.font.body,
@@ -222,7 +223,7 @@ Item {
     if (value) next[name] = true
     visibleSurfaces = next
     noteActivity()
-    if (value) ensureBackend()
+    if (value) { ensureBackend(); refreshVoiceMembers(selectedGuildId) }
     if (name === "full-panel") syncMembers()
   }
 
@@ -312,6 +313,27 @@ Item {
 
   function stopBackend() {
     daemonManager.stop()
+  }
+
+  property bool restartBusy: false
+  readonly property string restartBlockedReason: Object.keys(drafts).length || Object.keys(staged).length
+    ? "Finish or clear drafts and staged attachments before restarting."
+    : Object.keys(pendingByNonce).length || Object.keys(uploadChannels).length || qrBusy
+      ? "Wait for messages, uploads or sign-in to finish before restarting." : ""
+  function restartBackend() {
+    if (restartBusy || daemonManager.busy || daemonManager.setupBusy) return false
+    if (restartBlockedReason) { fail(restartBlockedReason); return false }
+    if (!daemonManager.runtimeAvailable) { fail("The Discord backend is not installed yet"); return false }
+    restartBusy = true
+    backendClient.wanted = false
+    if (!daemonManager.restart()) {
+      restartBusy = false
+      backendClient.wanted = daemonManager.running
+      return false
+    }
+    noteActivity()
+    statusMessage = "Restarting Discord…"
+    return true
   }
 
   function stopBackendIfDisabled() {
@@ -431,6 +453,7 @@ Item {
         var next = Api.shallowCopy(root.channelsByGuild)
         next[id] = result.channels
         root.channelsByGuild = next
+        root.refreshVoiceMembers(id)
       }
       root.resolveGuildEntry()
     })
@@ -555,10 +578,19 @@ Item {
   function applyVoiceState(raw) {
     var next = readVoice(raw)
     if (next.status !== "connected") speaking = ({})
+    var previousRoom = String(voice.channelId || "")
     voice = next
+    if (next.guildId && next.status === "connected" && previousRoom !== next.channelId) refreshVoiceMembers(next.guildId)
     if (next.guildId && channelsByGuild[next.guildId] === undefined) loadChannels(next.guildId)
   }
 
+  function refreshVoiceMembers(guildId) {
+    var id = String(guildId || "")
+    if (!id || !ready) return
+    backendClient.sendCommand("voice_members", {guild_id:id}, function(ok,result) {
+      if (ok && root.ready && result) root.applyVoiceMembers(result)
+    })
+  }
   function applyVoiceMembers(message) {
     var guildId = String(message.guild_id || "")
     if (!guildId) return
@@ -1790,10 +1822,22 @@ Item {
   }
 
   Timer {
+    id: voiceRosterRefresh
+    interval: 3000
+    repeat: true
+    triggeredOnStart: true
+    running: root.ready && (root.uiVisible || root.inCall) && !root.restartBusy
+    onTriggered: {
+      root.refreshVoiceMembers(root.selectedGuildId)
+      if (root.voice.guildId && root.voice.guildId !== root.selectedGuildId) root.refreshVoiceMembers(root.voice.guildId)
+    }
+  }
+
+  Timer {
     id: keepAliveTimer
     interval: 5000
     repeat: true
-    running: daemonManager.runtimeAvailable && !backendClient.connected
+    running: !root.restartBusy && daemonManager.runtimeAvailable && !backendClient.connected
       && (root.stayConnected || root.uiVisible)
     triggeredOnStart: true
     onTriggered: {
@@ -1827,6 +1871,11 @@ Item {
 
   Connections {
     target: daemonManager
+    function onRestartFinished(ok) {
+      root.restartBusy = false
+      backendClient.wanted = daemonManager.running
+      if (ok) { root.statusMessage = "Discord restarted. Rejoin your voice room."; statusClearTimer.restart() }
+    }
     function onSetupSucceeded() { root.ensureBackend() }
     function onSetupFailed(reason) { root.fail(reason) }
     function onLastErrorChanged() {
@@ -1880,10 +1929,15 @@ Item {
     function toggle(): string { return root.togglePanel() }
     function open(): string { return root.openPanel(null) }
     function close(): string { return root.closePanel() }
+    function restart(): string { return root.restartBackend() ? "started" : "blocked" }
+    function refreshVoice(): string { root.refreshVoiceMembers(root.voice.guildId || root.selectedGuildId); return "requested" }
     function status(): string {
       return JSON.stringify({ pluginDir: root.pluginDir, textOnly: root.textOnly,
         mediaQueued: Object.keys(root.mediaWanted).length, mediaPending: Object.keys(root.mediaPending).length,
         runtimeAvailable: daemonManager.runtimeAvailable,
+        voiceGuild: root.voice.guildId, voiceChannel: root.voice.channelId,
+        voicePeople: root.voiceUsers(root.voice.guildId, root.voice.channelId).length,
+        rosterKeys: Object.keys(root.voiceMembers).length, uiVisible: root.uiVisible,
         running: daemonManager.running, connected: root.connected, lifecycle: root.lifecycle,
         error: Api.redact(daemonManager.lastError || root.lastError) })
     }
@@ -1985,6 +2039,6 @@ Item {
 
   BackendClient {
     id: backendClient
-    wanted: daemonManager.running
+    wanted: daemonManager.running && !root.restartBusy
   }
 }

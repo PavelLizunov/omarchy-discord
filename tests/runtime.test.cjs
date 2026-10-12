@@ -22,6 +22,9 @@ case "$2" in
    --property=LoadState) echo "$TEST_LOAD";;
    --property=ActiveState) echo "$TEST_ACTIVE";;
  esac;;
+ cat) exit 0;;
+ restart) printf restart >> "$TEST_LOG"; exit "\${TEST_RESTART_EXIT:-0}";;
+ is-active) [ "$TEST_ACTIVE" = active ];;
  stop) printf stop >> "$TEST_LOG"; exit "$TEST_STOP_EXIT";;
  daemon-reload) exit 0;;
  *) exit 2;;
@@ -38,6 +41,7 @@ esac
   const files = [path.join(config, 'systemd/user/omarchy-discord.service'),
     path.join(config, 'omarchy-discord/preferences'), path.join(runtime, 'omarchy-discord-backend')];
   for (const file of files) fs.writeFileSync(file, 'inert fixture');
+  fs.chmodSync(files[2], 0o755);
   const env = {HOME: dir, XDG_CONFIG_HOME: config, XDG_CACHE_HOME: cache,
     OMARCHY_DISCORD_RUNTIME_DIR: runtime, PATH: bin + ':/usr/bin:/bin',
     TEST_LOAD: 'loaded', TEST_ACTIVE: 'inactive', TEST_STOP_EXIT: '0', TEST_LOG: path.join(dir, 'stop.log')};
@@ -62,6 +66,13 @@ test('missing unit is harmless but unavailable systemd is not success', t => {
   assert.equal(f.run('backend-runtime.sh', ['stop'], {TEST_LOAD: 'not-found'}).status, 0);
   assert.equal(fs.existsSync(f.env.TEST_LOG), false);
   assert.notEqual(f.run('backend-runtime.sh', ['stop'], {TEST_BUS_FAIL: '1'}).status, 0);
+});
+
+test('restart is exact-unit, propagates failure and verifies active state', t => {
+  const f = fixture(t);
+  assert.equal(f.run('backend-runtime.sh',['restart'],{TEST_ACTIVE:'active'}).status,0);
+  assert.equal(f.run('backend-runtime.sh',['restart'],{TEST_RESTART_EXIT:'7'}).status,7);
+  assert.notEqual(f.run('backend-runtime.sh',['restart'],{TEST_ACTIVE:'inactive'}).status,0);
 });
 
 test('removal preserves integration and user data when shutdown fails', t => {

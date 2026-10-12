@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import "ui" as PluginTheme
 import QtQuick.Controls
 import QtQuick.Window
 import "ui"
@@ -61,15 +62,15 @@ Item {
 
   readonly property string pluginId: manifest && manifest.id
     ? String(manifest.id) : "quickshell.discord"
-  readonly property color foreground: Color.foreground
-  readonly property color muted: Api.secondaryColor(Color.muted, Color.foreground,
-    Api.blend(Style.selectedFillFor(Color.foreground, Color.accent), Color.popups.background, Style.selectedFillAlpha))
-  readonly property color background: Color.background
-  readonly property color accent: Color.accent
+  readonly property color foreground: PluginTheme.Color.foreground
+  readonly property color muted: Api.secondaryColor(PluginTheme.Color.muted, PluginTheme.Color.foreground,
+    Api.blend(Style.selectedFillFor(PluginTheme.Color.foreground, PluginTheme.Color.accent), PluginTheme.Color.popups.background, Style.selectedFillAlpha))
+  readonly property color background: PluginTheme.Color.background
+  readonly property color accent: PluginTheme.Color.accent
   readonly property string fontFamily: Style.font.family
   readonly property int voiceAvatarSize: Style.space(16)
   readonly property int voiceOccupantHeight: Style.space(22)
-  readonly property var panelBorderSpec: Border.flat(Color.popups.border,
+  readonly property var panelBorderSpec: Border.flat(PluginTheme.Color.popups.border,
     Math.max(1, Style.normalBorderWidth))
   readonly property real controlsRowHeight: Math.max(Style.spacing.controlHeight, headerControls.height)
   readonly property real controlButtonsWidth:
@@ -78,11 +79,13 @@ Item {
     + (quickMuteButton.visible ? quickMuteButton.width + Style.spacing.controlGap : 0)
     + (ready ? searchButton.width + Style.spacing.controlGap : 0)
     + (ready ? optionsButton.width + Style.spacing.controlGap : 0)
-    + navigationButton.width + Style.spacing.controlGap + modeButton.width + Style.spacing.controlGap + closeButton.width
+    + navigationButton.width + Style.spacing.controlGap + modeButton.width + Style.spacing.controlGap
+    + restartButton.width + Style.spacing.controlGap + closeButton.width
   readonly property real channelHeaderRoom: channelHeader.width - Style.spacing.sm * 2
     - Style.spacing.controlGap
   readonly property real channelTitleFloor: Style.space(120)
   readonly property bool controlsInHeader: false
+  readonly property bool crowdedToolbar: width < Style.space(500)
   readonly property real statusWidthBudget: {
     if (!controlsInHeader) return Math.max(0, Math.min(Style.space(200),
       root.width - Style.spacing.panelPadding * 2 - controlButtonsWidth - Style.spacing.controlGap))
@@ -111,7 +114,7 @@ Item {
 
   property string zone: "sidebar"
   property string column: "rail"
-  readonly property bool buttonFocused: navigationButton.activeFocus || optionsButton.activeFocus || closeButton.activeFocus || modeButton.activeFocus
+  readonly property bool buttonFocused: navigationButton.activeFocus || optionsButton.activeFocus || restartButton.activeFocus || closeButton.activeFocus || modeButton.activeFocus
     || quickMuteButton.activeFocus || cameraButton.activeFocus || membersButton.activeFocus || searchButton.activeFocus || optionsHelp.activeFocus || optionsLogout.activeFocus
     || startBackendButton.activeFocus || dismissErrorButton.activeFocus || joinVoiceButton.activeFocus || callBarFocused
     || filterButtons(serverFilterChips).some(function(button) { return button.activeFocus })
@@ -781,11 +784,11 @@ Item {
       }
     }
     var stops = ["rail", "serverChips", "serverTools", "serverSearch", "serverFilter", "serverSort", "serverRefresh", "channels", "channelChips", "timeline", "composer", "joinVoice", "callbar", "members", "startBackend",
-      "navigation", "quickMute", "search", "camera", "membersButton", "options", "mode", "close", "dismissError"]
+      "navigation", "quickMute", "search", "camera", "membersButton", "options", "mode", "restart", "close", "dismissError"]
     var current = focusedGroup || (joinVoiceButton.activeFocus ? "joinVoice" : dismissErrorButton.activeFocus ? "dismissError" : navigationButton.activeFocus ? "navigation" : serverToolsButton.activeFocus ? "serverTools" : serverSearch.activeFocus ? "serverSearch" : serverFilterControl.activeFocus ? "serverFilter"
       : serverSortControl.activeFocus ? "serverSort" : serverRefresh.activeFocus ? "serverRefresh" : callBarFocused ? "callbar"
       : (buttonFocused
-        ? (quickMuteButton.activeFocus ? "quickMute" : cameraButton.activeFocus ? "camera" : modeButton.activeFocus ? "mode" : closeButton.activeFocus ? "close" : searchButton.activeFocus ? "search" : optionsButton.activeFocus ? "options"
+        ? (restartButton.activeFocus ? "restart" : quickMuteButton.activeFocus ? "quickMute" : cameraButton.activeFocus ? "camera" : modeButton.activeFocus ? "mode" : closeButton.activeFocus ? "close" : searchButton.activeFocus ? "search" : optionsButton.activeFocus ? "options"
           : (membersButton.activeFocus ? "membersButton"
             : (startBackendButton.activeFocus ? "startBackend" : "options")))
         : (zone === "sidebar" ? column : zone)))
@@ -839,6 +842,7 @@ Item {
     if (stop === "search") { searchButton.forceActiveFocus(); return }
     if (stop === "options") { optionsButton.forceActiveFocus(); return }
     if (stop === "quickMute") { quickMuteButton.forceActiveFocus(); return }
+    if (stop === "restart") { restartButton.forceActiveFocus(); return }
     if (stop === "close") { closeButton.forceActiveFocus(); return }
     if (stop === "camera") { cameraButton.forceActiveFocus(); return }
     if (stop === "membersButton") { membersButton.forceActiveFocus(); return }
@@ -1145,7 +1149,7 @@ Item {
         Button {
           id: membersButton
           objectName: "members-button"
-          visible: root.ready && (root.currentChannelId !== "" || root.voicePeopleMode)
+          visible: root.ready && !root.crowdedToolbar && (root.currentChannelId !== "" || root.voicePeopleMode)
           iconOnly: true
           text: root.voicePeopleMode ? "Voice participants" : "Members"
           iconName: "members"
@@ -1172,6 +1176,7 @@ Item {
         Button {
           id: modeButton
           objectName: "layout-mode-button"
+          visible: !root.crowdedToolbar
           iconOnly: true
           iconName: root.compactView ? "expand" : "compact"
           tooltipText: root.compactView ? "Full layout" : "Compact layout"
@@ -1181,9 +1186,21 @@ Item {
           onClicked: root.setCompactMode(!root.compactView)
         }
         Button {
+          id: restartButton
+          objectName: "restart-discord"
+          text: root.service && root.service.restartBusy ? "Restarting…" : "Restart Discord"
+          iconName: "reconnect"
+          iconOnly: root.width < Style.space(600)
+          bordered: true
+          focusable: true
+          enabled: !!root.service && !root.service.restartBusy
+          tooltipText: "Restart Discord backend and reconnect its interface. Ends the call; keeps login and settings."
+          onClicked: root.service.restartBackend()
+        }
+        Button {
           id: closeButton
           objectName: "close-window"
-          iconOnly: false
+          iconOnly: root.width < Style.space(600)
           bordered: true
           tooltipText: "Close window"
           text: "Close"
@@ -1217,7 +1234,7 @@ Item {
         id: optionsBackdrop
         anchors.fill: parent
         z: 21
-        color: Color.menu.scrim
+        color: PluginTheme.Color.menu.scrim
         opacity: optionsMenu.shown ? 1 : 0
         visible: optionsMenu.shown
         Behavior on opacity { NumberAnimation { duration: 140 } }
@@ -1242,8 +1259,8 @@ Item {
         width: Math.min(Style.space(260), parent.width - Style.spacing.panelPadding * 2)
         height: optionsBody.implicitHeight + Style.spacing.md * 2
         radius: Style.cornerRadius
-        color: Color.popups.background
-        borderSpec: Border.flat(Color.popups.border, Math.max(1, Style.normalBorderWidth))
+        color: PluginTheme.Color.popups.background
+        borderSpec: Border.flat(PluginTheme.Color.popups.border, Math.max(1, Style.normalBorderWidth))
         function toggle(corner) { if (shown) hide(); else showAt(corner || "top-right") }
         function show() { showAt("top-right") }
         function showAt(corner) {
@@ -1283,7 +1300,7 @@ Item {
               Text {
                 width: parent.width; elide: Text.ElideRight
                 text: root.service && root.service.user ? String(root.service.user.display_name || root.service.user.username || "Discord user") : "Discord user"
-                color: Color.popups.text
+                color: PluginTheme.Color.popups.text
                 font.family: root.fontFamily; font.pixelSize: Style.font.body; font.bold: true
               }
               Text {
@@ -1295,7 +1312,7 @@ Item {
             }
           }
 
-          Rectangle { width: parent.width; height: 1; color: Color.popups.border; opacity: 0.4 }
+          Rectangle { width: parent.width; height: 1; color: PluginTheme.Color.popups.border; opacity: 0.4 }
 
           Button {
             id: optionsNotifs
@@ -1346,7 +1363,7 @@ Item {
             }
           }
 
-          Rectangle { width: parent.width; height: 1; color: Color.popups.border; opacity: 0.4 }
+          Rectangle { width: parent.width; height: 1; color: PluginTheme.Color.popups.border; opacity: 0.4 }
 
           Button {
             id: optionsHelp
@@ -1366,7 +1383,7 @@ Item {
             leftAlign: true
             iconName: "logout"
             text: "Log out…"
-            foreground: Color.urgent
+            foreground: PluginTheme.Color.urgent
             focusable: true
             onClicked: { optionsMenu.hide(); logoutConfirm.show() }
           }
@@ -1562,7 +1579,7 @@ Item {
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
                 text: root.qrStatusText()
-                color: root.qrStage === "cancelled" ? Color.urgent : root.foreground
+                color: root.qrStage === "cancelled" ? PluginTheme.Color.urgent : root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
               }
@@ -1683,7 +1700,7 @@ Item {
                 : Math.min(Style.space(180), Math.max(Style.space(140), body.width * 0.16))
               height: parent.height
               radius: Style.cornerRadius
-              color: Color.popups.background
+              color: PluginTheme.Color.popups.background
               borderSpec: root.focusedZone === "sidebar" && root.column === "rail"
                 ? Border.controlSpec("focus", root.foreground, root.accent)
                 : root.panelBorderSpec
@@ -1776,7 +1793,7 @@ Item {
                     active: root.serverFilter === "mentions"
                     fontSize: Style.font.caption
                     horizontalPadding: Style.spacing.xs
-                    foreground: root.mentionedServersCount > 0 ? Color.urgent : root.muted
+                    foreground: root.mentionedServersCount > 0 ? PluginTheme.Color.urgent : root.muted
                     onClicked: root.serverFilter = "mentions"
                   }
                   Button {
@@ -1909,7 +1926,7 @@ Item {
                     height: guildRow.sectionHeight
                     Rectangle {
                       anchors.left: parent.left; anchors.right: parent.right
-                      height: 1; color: Color.popups.border
+                      height: 1; color: PluginTheme.Color.popups.border
                     }
                     Text {
                       objectName: "guild-section-heading"
@@ -1997,13 +2014,13 @@ Item {
                     width: Math.max(height, guildBadge.implicitWidth + Style.spacing.sm * 2)
                     height: Style.space(16)
                     radius: height / 2
-                    color: Color.urgent
+                    color: PluginTheme.Color.urgent
 
                     Text {
                       id: guildBadge
                       anchors.centerIn: parent
                       text: guildRow.mentions > 99 ? "99+" : String(guildRow.mentions)
-                      color: Color.popups.background
+                      color: PluginTheme.Color.popups.background
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.caption
                       font.bold: true
@@ -2064,12 +2081,12 @@ Item {
                       anchors.bottom: parent.bottom
                       width: Style.spacing.sm + 2; height: width
                       radius: width / 2
-                      color: Color.popups.background
+                      color: PluginTheme.Color.popups.background
                       Rectangle {
                         anchors.centerIn: parent
                         width: Style.spacing.sm; height: width
                         radius: width / 2
-                        color: root.connected ? Color.accent : Color.urgent
+                        color: root.connected ? PluginTheme.Color.accent : PluginTheme.Color.urgent
                       }
                     }
                   }
@@ -2128,7 +2145,7 @@ Item {
                 : Math.min(Style.space(210), Math.max(Style.space(140), body.width * 0.19))
               height: root.voiceNavigation ? parent.height - channelContent.height - conversationRow.spacing : parent.height
               radius: Style.cornerRadius
-              color: Color.popups.background
+              color: PluginTheme.Color.popups.background
               borderSpec: root.focusedZone === "sidebar" && root.column === "channels"
                 ? Border.controlSpec("focus", root.foreground, root.accent)
                 : root.panelBorderSpec
@@ -2364,13 +2381,13 @@ Item {
                         width: Math.max(height, channelBadgeText.implicitWidth + Style.spacing.sm * 2)
                         height: Style.space(16)
                         radius: height / 2
-                        color: Color.urgent
+                        color: PluginTheme.Color.urgent
 
                         Text {
                           id: channelBadgeText
                           anchors.centerIn: parent
                           text: channelRow.mentions > 99 ? "99+" : String(channelRow.mentions)
-                          color: Color.popups.background
+                          color: PluginTheme.Color.popups.background
                           font.family: root.fontFamily
                           font.pixelSize: Style.font.caption
                           font.bold: true
@@ -2758,7 +2775,7 @@ Item {
                 wrapMode: Text.WordWrap
                 textFormat: Text.PlainText
                 text: root.errorText
-                color: Color.urgent
+                color: PluginTheme.Color.urgent
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
               }

@@ -1,4 +1,5 @@
 import QtQuick
+import "../../ui" as PluginTheme
 import QtTest
 import "../../ui"
 
@@ -411,7 +412,7 @@ TestCase {
   verify(mode!==null)
   verify(mode.tooltipText!=="")
   verify(mode.tooltipItem!==null && mode.tooltipItem!==undefined)
-  compare(String(mode.tooltipItem.panelBackground),String(Color.tooltip.background))
+  compare(String(mode.tooltipItem.panelBackground),String(PluginTheme.Color.tooltip.background))
  }
  function test_empty_channel_screen_has_browse_and_find_buttons_in_compact(){
   tests.width=520;tests.height=560;preview.client.setCompactMode(true)

@@ -1,16 +1,17 @@
 import QtQuick
+import "." as PluginTheme
 import QtQuick.Controls
 
 ToolTip {
   id: root
 
-  property color panelForeground: Color.tooltip.text
-  property color panelBackground: Color.tooltip.background
-  property color panelBorder: Color.tooltip.border
+  property color panelForeground: PluginTheme.Color.tooltip.text
+  property color panelBackground: PluginTheme.Color.tooltip.background
+  property color panelBorder: PluginTheme.Color.tooltip.border
   property string fontFamily: Style.font.family
   property real fontSize: Style.font.bodySmall
 
-  readonly property var panelBorderSpec: Border.localOrSurfaceSpec("tooltip", "border", panelBorder, Color.tooltip.border, Style.normalBorderWidth)
+  readonly property var panelBorderSpec: Border.localOrSurfaceSpec("tooltip", "border", panelBorder, PluginTheme.Color.tooltip.border, Style.normalBorderWidth)
 
   delay: 400
   padding: 0

@@ -1,4 +1,5 @@
 import QtQuick
+import "../ui" as PluginTheme
 import "../ui"
 
 import "../Api.js" as Api
@@ -9,7 +10,7 @@ Item {
   property var service: null
   property string url: ""
   property string name: ""
-  property color foreground: Color.foreground
+  property color foreground: PluginTheme.Color.foreground
   property string fontFamily: Style.font.family
 
   readonly property string path: ""

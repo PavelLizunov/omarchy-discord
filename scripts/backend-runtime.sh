@@ -3,7 +3,7 @@ set -euo pipefail
 
 action=${1:-}
 if (( $# != 1 )); then
-  echo "Usage: scripts/backend-runtime.sh check|unit|status|start|stop|sync" >&2
+  echo "Usage: scripts/backend-runtime.sh check|unit|status|start|stop|restart|sync" >&2
   exit 2
 fi
 
@@ -75,6 +75,11 @@ case $action in
         *) echo "backend-runtime.sh: backend is not stopped ($active_state)" >&2; exit 1 ;;
       esac
     fi
+    ;;
+  restart)
+    runtime_ready || exit 1
+    systemctl --user restart "$backend_unit"
+    systemctl --user is-active --quiet "$backend_unit"
     ;;
   sync)
     was_ready=0

@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import "../../ui" as PluginTheme
 import Quickshell
 import QtTest
 import qs.Commons
@@ -20,12 +21,12 @@ ShellRoot {
   readonly property string longUrl: "https://login.composio.dev/oauth2/authorize?response_type=code&client_id=01234567-89ab-cdef-0123-456789abcdef&redirect_uri=https%3A%2F%2Fbackend.composio.dev%2Fapi%2Fv3%2Ftoolkits%2Fauth%2Fcallback&state=zzzz0000zzzz0000zzzz0000zzzz0000"
 
   readonly property var ctx: Fixtures.ctx({
-    mentionColor: Color.accent,
-    mentionBg: Util.alpha(Color.accent, 0.18),
-    linkColor: Color.accent,
-    codeBg: Util.alpha(Color.foreground, 0.08),
-    spoilerColor: Color.muted,
-    mutedColor: Color.muted,
+    mentionColor: PluginTheme.Color.accent,
+    mentionBg: Util.alpha(PluginTheme.Color.accent, 0.18),
+    linkColor: PluginTheme.Color.accent,
+    codeBg: Util.alpha(PluginTheme.Color.foreground, 0.08),
+    spoilerColor: PluginTheme.Color.muted,
+    mutedColor: PluginTheme.Color.muted,
     monoFamily: Style.font.family,
     fontSize: Style.font.body
   })
@@ -113,7 +114,7 @@ ShellRoot {
   FloatingWindow {
     id: window
     title: "Selection harness"
-    color: Color.background
+    color: PluginTheme.Color.background
     implicitWidth: 720
     implicitHeight: 620
 

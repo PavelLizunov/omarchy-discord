@@ -1,5 +1,6 @@
 pragma Singleton
 import QtQuick
+import "." as PluginTheme
 import "BorderGeometry.js" as Geometry
 
 QtObject {
@@ -18,7 +19,7 @@ QtObject {
   }
 
   function value(section, key) {
-    var v = Color.shellValues[section + "." + key]
+    var v = PluginTheme.Color.shellValues[section + "." + key]
     return (v === undefined || v === null) ? "" : v
   }
 
@@ -35,7 +36,7 @@ QtObject {
     var seen = {}
     while (s.match(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/) && !seen[s]) {
       seen[s] = true
-      var next = Color.shellValues[s]
+      var next = PluginTheme.Color.shellValues[s]
       if (next === undefined || next === null || String(next).length === 0) break
       s = String(next).replace(/^\s+|\s+$/g, "")
     }
@@ -64,10 +65,10 @@ QtObject {
 
     var s = String(color || "").replace(/^\s+|\s+$/g, "")
     var role = s.toLowerCase()
-    if (role === "foreground" || role === "text") return cssColor(Color.foreground, a)
-    if (role === "accent") return cssColor(Color.accent, a)
-    if (role === "urgent") return cssColor(Color.urgent, a)
-    if (role === "background") return cssColor(Color.background, a)
+    if (role === "foreground" || role === "text") return cssColor(PluginTheme.Color.foreground, a)
+    if (role === "accent") return cssColor(PluginTheme.Color.accent, a)
+    if (role === "urgent") return cssColor(PluginTheme.Color.urgent, a)
+    if (role === "background") return cssColor(PluginTheme.Color.background, a)
     if (role === "transparent") return "transparent"
     return Geometry.canonicalColor(s, a)
   }

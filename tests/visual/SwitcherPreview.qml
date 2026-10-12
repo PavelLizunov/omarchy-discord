@@ -1,4 +1,5 @@
 import QtQuick
+import "../../ui" as PluginTheme
 import "../../" as Discord
 import "../../ui"
 import "../../components/harness" as Harness
@@ -7,7 +8,7 @@ Rectangle {
   id: root
   width: 900
   height: 600
-  color: Color.background
+  color: PluginTheme.Color.background
   property bool ready: false
   property bool lightTheme: false
   Harness.MockService {
@@ -22,8 +23,8 @@ Rectangle {
   Discord.SwitcherView { id: switcher; anchors.fill: parent; service: model }
   Component.onCompleted: {
     if (lightTheme) {
-      Color.background = "#f5f4f0"; Color.foreground = "#242424"
-      Color.muted = "#565656"; Color.accent = "#235a81"; Color.urgent = "#a02030"
+      PluginTheme.Color.background = "#f5f4f0"; PluginTheme.Color.foreground = "#242424"
+      PluginTheme.Color.muted = "#565656"; PluginTheme.Color.accent = "#235a81"; PluginTheme.Color.urgent = "#a02030"
     }
     switcher.open(); settle.start()
   }

@@ -1,4 +1,5 @@
 import QtQuick
+import "../ui" as PluginTheme
 import QtQuick.Controls as Controls
 import "../ui"
 
@@ -50,7 +51,7 @@ Column {
   }
   Text {
     width: parent.width; text: root.userName; textFormat: Text.PlainText
-    elide: Text.ElideRight; color: Color.foreground
+    elide: Text.ElideRight; color: PluginTheme.Color.foreground
     font.family: Style.font.family; font.pixelSize: Style.font.bodySmall
   }
   Button {
@@ -64,7 +65,7 @@ Column {
   }
   Text {
     width: parent.width; text: "Volume · " + Math.round(level.value) + "%"
-    color: Color.foreground; font.family: Style.font.family; font.pixelSize: Style.font.bodySmall
+    color: PluginTheme.Color.foreground; font.family: Style.font.family; font.pixelSize: Style.font.bodySmall
   }
   Controls.Slider {
     id: level; objectName: "participant-volume"; width: parent.width
@@ -77,20 +78,20 @@ Column {
     onPressedChanged: if (!pressed && enabled) root.setAudio({volume:Math.round(value)})
     background: Rectangle {
       x: level.leftPadding; y: level.topPadding + (level.availableHeight-height)/2
-      width: level.availableWidth; height: Style.space(4); color: Color.muted
-      Rectangle {width: level.visualPosition*parent.width;height: parent.height;color: Color.accent}
+      width: level.availableWidth; height: Style.space(4); color: PluginTheme.Color.muted
+      Rectangle {width: level.visualPosition*parent.width;height: parent.height;color: PluginTheme.Color.accent}
     }
     handle: BorderSurface {
       x: level.leftPadding+level.visualPosition*(level.availableWidth-width)
       y: level.topPadding+(level.availableHeight-height)/2
-      width: Style.space(16); height: width; radius: width/2; color: Color.foreground
-      borderSpec: level.activeFocus ? Border.controlSpec("focus",Color.foreground,Color.accent) : Border.none()
+      width: Style.space(16); height: width; radius: width/2; color: PluginTheme.Color.foreground
+      borderSpec: level.activeFocus ? Border.controlSpec("focus",PluginTheme.Color.foreground,PluginTheme.Color.accent) : Border.none()
     }
   }
   Text {
     width: parent.width; visible: root.errorText !== ""; text: root.errorText
     textFormat: Text.PlainText; wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
-    color: Color.urgent; font.family: Style.font.family; font.pixelSize: Style.font.bodySmall
+    color: PluginTheme.Color.urgent; font.family: Style.font.family; font.pixelSize: Style.font.bodySmall
   }
   Button {id:close;objectName:"participant-audio-close";width:parent.width;text:"Back to people";iconName:"back";focusable:true;onActiveFocusChanged:if(activeFocus)root.focusRequested(close);onClicked:root.closed()}
   Keys.onEscapePressed: function(event) {root.closed();event.accepted=true}

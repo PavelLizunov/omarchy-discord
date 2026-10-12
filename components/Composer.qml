@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import "../ui" as PluginTheme
 import QtQuick.Controls
 import "../ui"
 
@@ -48,9 +49,9 @@ FocusScope {
   signal membersRequested()
   signal voiceRequested(string action)
 
-  readonly property color foreground: Color.foreground
-  readonly property color muted: Api.secondaryColor(Color.muted, Color.foreground, Color.background)
-  readonly property color accent: Color.accent
+  readonly property color foreground: PluginTheme.Color.foreground
+  readonly property color muted: Api.secondaryColor(PluginTheme.Color.muted, PluginTheme.Color.foreground, PluginTheme.Color.background)
+  readonly property color accent: PluginTheme.Color.accent
   readonly property string fontFamily: Style.font.family
   readonly property int lineHeight: Math.ceil(metrics.height)
 
@@ -350,7 +351,7 @@ FocusScope {
       color: Style.controlFill(composer.inputFocused, composer.active, composer.foreground, composer.accent)
       borderSpec: composer.active
         ? Border.controlSpec("focus", composer.foreground, composer.accent)
-        : Border.flat(Color.popups.border, Math.max(1, Style.normalBorderWidth))
+        : Border.flat(PluginTheme.Color.popups.border, Math.max(1, Style.normalBorderWidth))
 
       Flickable {
         id: flick

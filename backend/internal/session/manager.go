@@ -589,6 +589,23 @@ func (m *Manager) Handle(ctx context.Context, req *protocol.Request) (any, *prot
 		return m.voiceUserAudio(req, false)
 	case "voice_user_set":
 		return m.voiceUserAudio(req, true)
+	case "voice_members":
+		var p protocol.ListChannelsParams
+		if e := req.Params(&p); e != nil {
+			return nil, e
+		}
+		sf, e := parseSnowflake(p.GuildID, "guild_id")
+		if e != nil {
+			return nil, e
+		}
+		n, e := m.cachedSession()
+		if e != nil {
+			return nil, e
+		}
+		if _, err := n.Cabinet.Guild(discord.GuildID(sf)); err != nil {
+			return nil, protocol.Errorf(protocol.CodeUnknownGuild, "guild is not in this session")
+		}
+		return VoiceMembers(n.Offline(), discord.GuildID(sf)), nil
 	case "voice_cameras":
 		return m.voiceCameras(ctx, req, false)
 	case "voice_watch_camera":

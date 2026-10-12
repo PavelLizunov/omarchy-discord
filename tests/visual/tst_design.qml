@@ -1,4 +1,5 @@
 import QtQuick
+import "../../ui" as PluginTheme
 import QtTest
 import "../../" as Discord
 import "../../ui"
@@ -166,12 +167,12 @@ TestCase {
   bar.rejoining=false
  }
  function test_composited_text_contrast(){
-  var oldBg=Color.background,oldFg=Color.foreground,oldMuted=Color.muted,oldAccent=Color.accent
-  Color.background="#111c18";Color.foreground="#c1c497";Color.muted="#53685b";Color.accent="#509475";row.cursor=true
+  var oldBg=PluginTheme.Color.background,oldFg=PluginTheme.Color.foreground,oldMuted=PluginTheme.Color.muted,oldAccent=PluginTheme.Color.accent
+  PluginTheme.Color.background="#111c18";PluginTheme.Color.foreground="#c1c497";PluginTheme.Color.muted="#53685b";PluginTheme.Color.accent="#509475";row.cursor=true
   verify(Api.contrastRatio(Api.blend(row.linkColor,row.paintedBackground,row.linkColor.a),row.paintedBackground)>=4.5)
   verify(Api.contrastRatio(Api.blend(row.muted,row.paintedBackground,row.muted.a),row.paintedBackground)>=4.5)
-  var badge=Api.blend(Color.accent,row.paintedBackground,.2)
-  verify(Api.contrastRatio(Api.textColor(Color.accent,Color.foreground,badge),badge)>=4.5)
-  Color.background=oldBg;Color.foreground=oldFg;Color.muted=oldMuted;Color.accent=oldAccent
+  var badge=Api.blend(PluginTheme.Color.accent,row.paintedBackground,.2)
+  verify(Api.contrastRatio(Api.textColor(PluginTheme.Color.accent,PluginTheme.Color.foreground,badge),badge)>=4.5)
+  PluginTheme.Color.background=oldBg;PluginTheme.Color.foreground=oldFg;PluginTheme.Color.muted=oldMuted;PluginTheme.Color.accent=oldAccent
  }
 }

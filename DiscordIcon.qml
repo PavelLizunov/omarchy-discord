@@ -1,4 +1,5 @@
 import QtQuick
+import "ui" as PluginTheme
 import "ui"
 import "ui/Icons.js" as Icons
 
@@ -6,7 +7,7 @@ import "ui/Icons.js" as Icons
 Item {
   id: root
   property real iconSize: Style.font.icon
-  property color color: Color.foreground
+  property color color: PluginTheme.Color.foreground
   readonly property int iconStatus: drawing.status
   implicitWidth: iconSize
   implicitHeight: iconSize

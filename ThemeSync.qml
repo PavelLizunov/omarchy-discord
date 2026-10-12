@@ -1,11 +1,12 @@
 import QtQuick
+import "ui" as PluginTheme
 import "ui"
 
 QtObject {
   id: root
   required property QtObject hostColor
   required property QtObject hostStyle
-  property QtObject colorAdapter: Color
+  property QtObject colorAdapter: PluginTheme.Color
   property QtObject styleAdapter: Style
 
   function sync() {

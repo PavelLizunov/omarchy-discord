@@ -1,4 +1,5 @@
 import QtQuick
+import "ui" as PluginTheme
 import Quickshell
 import Quickshell.Hyprland
 import qs.Commons as Host
@@ -83,7 +84,7 @@ Item {
     id: window
     title: "Omarchy Discord"
     visible: root.persistent ? root.persistentVisible : view.opened
-    color: Color.background
+    color: PluginTheme.Color.background
     implicitWidth: Style.space(view.compactMode ? 520 : 1040)
     implicitHeight: Style.space(view.compactMode ? 560 : 680)
     minimumSize: Qt.size(Style.space(view.compactMode ? 420 : 640), Style.space(420))

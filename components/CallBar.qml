@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import "../ui" as PluginTheme
 import "../ui"
 
 import "../Api.js" as Api
@@ -71,9 +72,9 @@ Item {
   readonly property var roomUsers: service && voice.channelId
     ? service.voiceUsers(String(voice.guildId || ""), String(voice.channelId)) : []
   readonly property alias roster: voiceRoster
-  property color foreground: Color.foreground
-  property color secondary: Color.foreground
-  property color accent: Color.accent
+  property color foreground: PluginTheme.Color.foreground
+  property color secondary: PluginTheme.Color.foreground
+  property color accent: PluginTheme.Color.accent
   property string fontFamily: Style.font.family
 
   readonly property var voice: service && service.voice ? service.voice : ({})
@@ -136,7 +137,7 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             width: Style.space(16)
             height: width
-            source: Icons.source("headphones", root.failed ? Color.urgent : (root.connected ? root.accent : root.secondary))
+            source: Icons.source("headphones", root.failed ? PluginTheme.Color.urgent : (root.connected ? root.accent : root.secondary))
             sourceSize: Qt.size(width * 2, height * 2)
           }
 
@@ -179,7 +180,7 @@ Item {
         visible: !root.connected || root.expanded
         wrapMode: Text.WordWrap
         text: root.statusText
-        color: root.failed ? Color.urgent : root.secondary
+        color: root.failed ? PluginTheme.Color.urgent : root.secondary
         font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall
       }
@@ -301,7 +302,7 @@ Item {
           text: "Leave"
           iconName: "leave"
           focusable: true
-          foreground: Color.urgent
+          foreground: PluginTheme.Color.urgent
           fontFamily: root.fontFamily
           tooltipText: "Leave the voice channel (Ctrl+Shift+H)"
           onClicked: if (root.service) root.service.voiceLeave()

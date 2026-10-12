@@ -1,4 +1,5 @@
 import QtQuick
+import "." as PluginTheme
 import QtQuick.Controls
 
 ComboBox {
@@ -11,7 +12,7 @@ ComboBox {
   contentItem: Text {
     id: label
     text: root.displayText
-    color: Color.foreground
+    color: PluginTheme.Color.foreground
     elide: Text.ElideRight
     verticalAlignment: Text.AlignVCenter
     font: root.font
@@ -19,11 +20,11 @@ ComboBox {
   indicator: Text {
     x: root.width - width - Style.spacing.sm
     y: (root.height-height)/2
-    text: "⌄"; color: Color.foreground; font: root.font
+    text: "⌄"; color: PluginTheme.Color.foreground; font: root.font
   }
   background: BorderSurface {
-    color: Style.controlFill(root.activeFocus, root.hovered, Color.foreground, Color.accent)
-    borderSpec: Border.controlSpec(root.activeFocus ? "focus" : (root.hovered ? "hover-cursor" : "normal"), Color.foreground, Color.accent)
+    color: Style.controlFill(root.activeFocus, root.hovered, PluginTheme.Color.foreground, PluginTheme.Color.accent)
+    borderSpec: Border.controlSpec(root.activeFocus ? "focus" : (root.hovered ? "hover-cursor" : "normal"), PluginTheme.Color.foreground, PluginTheme.Color.accent)
     radius: Style.cornerRadius
   }
   delegate: ItemDelegate {
@@ -32,10 +33,10 @@ ComboBox {
     width: root.width
     highlighted: root.highlightedIndex === index
     contentItem: Text {
-      text: String(modelData); color: Color.foreground; font: root.font; elide: Text.ElideRight
+      text: String(modelData); color: PluginTheme.Color.foreground; font: root.font; elide: Text.ElideRight
     }
     background: Rectangle {
-      color: highlighted ? Style.selectedFillFor(Color.foreground, Color.accent) : Color.popups.background
+      color: highlighted ? Style.selectedFillFor(PluginTheme.Color.foreground, PluginTheme.Color.accent) : PluginTheme.Color.popups.background
     }
   }
   popup: Popup {
@@ -54,9 +55,9 @@ ComboBox {
       boundsBehavior: Flickable.StopAtBounds
     }
     background: BorderSurface {
-      color: Color.popups.background
+      color: PluginTheme.Color.popups.background
       radius: Style.cornerRadius
-      borderSpec: Border.flat(Color.popups.border, Math.max(1, Style.normalBorderWidth))
+      borderSpec: Border.flat(PluginTheme.Color.popups.border, Math.max(1, Style.normalBorderWidth))
     }
   }
 }

@@ -1,4 +1,5 @@
 import QtQuick
+import "../../ui" as PluginTheme
 import "../../" as Discord
 import "../../ui"
 import "../../components/harness" as Harness
@@ -8,7 +9,7 @@ Rectangle {
   id: root
   width: 1040
   height: 680
-  color: Color.background
+  color: PluginTheme.Color.background
   property string state: "chat"
   property bool lightTheme: false
   property bool serverListFixture: false
@@ -35,8 +36,8 @@ Rectangle {
     function send(name, fields, callback) { return sendCommand(name, fields, callback) }
     property var knownUsers: ({"202":"Known fixture contact"})
     readonly property var markdownCtx: ({ users:{"100":"Matt","200":"Ada","300":"Lin"},channels:{"9001":"development"},roles:{"5001":"maintainers"},selfId:selfId,
-      linkColor:String(Color.accent),mentionColor:String(Color.accent),mentionBg:Util.alpha(Color.accent,0.18),
-      spoilerColor:String(Color.foreground),codeBg:Util.alpha(Color.foreground,0.08),mutedColor:String(Color.muted),monoFamily:Style.font.family,fontSize:Style.font.body })
+      linkColor:String(PluginTheme.Color.accent),mentionColor:String(PluginTheme.Color.accent),mentionBg:Util.alpha(PluginTheme.Color.accent,0.18),
+      spoilerColor:String(PluginTheme.Color.foreground),codeBg:Util.alpha(PluginTheme.Color.foreground,0.08),mutedColor:String(PluginTheme.Color.muted),monoFamily:Style.font.family,fontSize:Style.font.body })
     property var guildStats: ({"1":{online_count:12}, "2":{online_count:0}, "4":{online_count:120}})
     property var guildMute: ({"1":false})
     property bool guildStatsBusy: false
@@ -75,11 +76,11 @@ Rectangle {
   Component.onCompleted: {
     Style.cornerRadius = themeRadius
     if (lightTheme) {
-      Color.background = "#f5f4f0"
-      Color.foreground = "#242424"
-      Color.muted = "#565656"
-      Color.accent = "#235a81"
-      Color.urgent = "#a02030"
+      PluginTheme.Color.background = "#f5f4f0"
+      PluginTheme.Color.foreground = "#242424"
+      PluginTheme.Color.muted = "#565656"
+      PluginTheme.Color.accent = "#235a81"
+      PluginTheme.Color.urgent = "#a02030"
     }
     model.user = {username:"fixture",display_name:"Fixture user"}
     model.channelNames = {"9000":"general","9001":"development","9002":"Voice lounge"}

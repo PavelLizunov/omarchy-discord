@@ -1,4 +1,5 @@
 import QtQuick
+import "../ui" as PluginTheme
 import "../ui"
 import "../Markdown.js" as Markdown
 
@@ -14,9 +15,9 @@ Item {
   implicitHeight: label.implicitHeight + Style.spacing.sm * 2
   BorderSurface {
     anchors.fill: parent
-    color: root.cursor ? Style.hoverFillFor(Color.foreground, Color.accent) : "transparent"
+    color: root.cursor ? Style.hoverFillFor(PluginTheme.Color.foreground, PluginTheme.Color.accent) : "transparent"
     radius: Style.cornerRadius
-    borderSpec: Border.flat(Color.popups.border, 1)
+    borderSpec: Border.flat(PluginTheme.Color.popups.border, 1)
   }
   MouseArea { anchors.fill: parent; onClicked: root.clicked() }
   Text {
@@ -29,7 +30,7 @@ Item {
     text: String(root.item.filename || "attachment") + " · "
       + (root.uploading ? Math.round(root.progress * 100) + "%" : Markdown.formatSize(root.item.size))
     elide: Text.ElideMiddle
-    color: Color.foreground
+    color: PluginTheme.Color.foreground
     font.family: Style.font.family
     font.pixelSize: Style.font.caption
   }

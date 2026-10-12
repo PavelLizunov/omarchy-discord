@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import "../ui" as PluginTheme
 import "../ui"
 import "../Markdown.js" as Markdown
 import "../Api.js" as Api
@@ -33,13 +34,13 @@ Item {
   readonly property var embeds: Array.isArray(message.embeds) ? message.embeds : []
   readonly property var reactions: Array.isArray(message.reactions) ? message.reactions : []
   readonly property bool showHeader: !grouped && !system
-  readonly property color foreground: Color.foreground
+  readonly property color foreground: PluginTheme.Color.foreground
   readonly property color paintedBackground: Api.blend(root.cursor || hover.hovered
-    ? Style.hoverFillFor(Color.foreground, Color.accent)
-    : root.mentionsSelf ? Util.alpha(Color.urgent, 0.08) : Qt.rgba(0, 0, 0, 0), Color.background,
+    ? Style.hoverFillFor(PluginTheme.Color.foreground, PluginTheme.Color.accent)
+    : root.mentionsSelf ? Util.alpha(PluginTheme.Color.urgent, 0.08) : Qt.rgba(0, 0, 0, 0), PluginTheme.Color.background,
     root.cursor || hover.hovered ? Style.hoverFillAlpha : root.mentionsSelf ? 0.08 : 0)
-  readonly property color muted: Api.secondaryColor(Color.muted, Color.foreground, paintedBackground)
-  readonly property color linkColor: Api.textColor(Color.accent, Color.foreground, paintedBackground)
+  readonly property color muted: Api.secondaryColor(PluginTheme.Color.muted, PluginTheme.Color.foreground, paintedBackground)
+  readonly property color linkColor: Api.textColor(PluginTheme.Color.accent, PluginTheme.Color.foreground, paintedBackground)
   readonly property string rawContent: String(message.content || "")
   readonly property string html: markdownRenderer(rawContent, Object.assign({}, ctx,
     {linkColor:String(root.linkColor),emojiPath:undefined}))
@@ -51,9 +52,9 @@ Item {
   BorderSurface {
     anchors.fill: parent
     radius: Style.cornerRadius
-    color: root.cursor || hover.hovered ? Style.hoverFillFor(Color.foreground, Color.accent)
-      : root.mentionsSelf ? Util.alpha(Color.urgent, 0.08) : "transparent"
-    borderSpec: root.cursor ? Border.controlSpec("hover-cursor", Color.foreground, Color.accent) : Border.none()
+    color: root.cursor || hover.hovered ? Style.hoverFillFor(PluginTheme.Color.foreground, PluginTheme.Color.accent)
+      : root.mentionsSelf ? Util.alpha(PluginTheme.Color.urgent, 0.08) : "transparent"
+    borderSpec: root.cursor ? Border.controlSpec("hover-cursor", PluginTheme.Color.foreground, PluginTheme.Color.accent) : Border.none()
   }
   MouseArea { anchors.fill: parent; onClicked: root.clicked() }
   HoverHandler { id: hover }
@@ -103,7 +104,7 @@ Item {
         text: String(root.author.display_name || root.author.username || "unknown")
         textFormat: Text.PlainText
         elide: Text.ElideRight
-        color: Api.authorColor(root.author.id, root.paintedBackground, Color.foreground)
+        color: Api.authorColor(root.author.id, root.paintedBackground, PluginTheme.Color.foreground)
         font.family: Style.font.family
         font.pixelSize: Style.font.body
         font.bold: true
@@ -116,12 +117,12 @@ Item {
         height: Style.space(14)
         width: botText.implicitWidth + Style.spacing.xs * 2
         radius: Style.space(3)
-        color: Util.alpha(Color.accent, 0.2)
+        color: Util.alpha(PluginTheme.Color.accent, 0.2)
         Text {
           id: botText
           anchors.centerIn: parent
           text: "BOT"
-          color: Api.textColor(Color.accent, Color.foreground, Api.blend(Color.accent, root.paintedBackground, 0.2))
+          color: Api.textColor(PluginTheme.Color.accent, PluginTheme.Color.foreground, Api.blend(PluginTheme.Color.accent, root.paintedBackground, 0.2))
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
           font.bold: true
@@ -147,8 +148,8 @@ Item {
       selectByKeyboard: false
       activeFocusOnPress: false
       persistentSelection: true
-      selectionColor: Style.selectionFillFor(Color.foreground, Color.accent)
-      selectedTextColor: Color.foreground
+      selectionColor: Style.selectionFillFor(PluginTheme.Color.foreground, PluginTheme.Color.accent)
+      selectedTextColor: PluginTheme.Color.foreground
       textFormat: root.system ? TextEdit.PlainText : TextEdit.RichText
       wrapMode: TextEdit.Wrap
       text: root.system ? String(root.message.content || "") : root.html
@@ -227,7 +228,7 @@ Item {
       visible: root.armedDelete
       text: "D again to delete · Esc cancels"
       wrapMode: Text.Wrap
-      color: Color.urgent
+      color: PluginTheme.Color.urgent
       font.family: Style.font.family
       font.pixelSize: Style.font.caption
     }

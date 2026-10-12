@@ -1,4 +1,5 @@
 import QtQuick
+import "../ui" as PluginTheme
 import "../ui"
 
 FocusScope {
@@ -49,9 +50,9 @@ FocusScope {
     height: body.implicitHeight + Style.spacing.lg * 2
     x: Math.max(Style.spacing.panelPadding, Math.min(root.anchorX, root.width - width - Style.spacing.panelPadding))
     y: Math.max(Style.spacing.panelPadding, Math.min(root.anchorY, root.height - height - Style.spacing.panelPadding))
-    color: Color.popups.background
+    color: PluginTheme.Color.popups.background
     radius: Style.cornerRadius
-    borderSpec: Border.flat(Color.popups.border, Math.max(1, Style.normalBorderWidth))
+    borderSpec: Border.flat(PluginTheme.Color.popups.border, Math.max(1, Style.normalBorderWidth))
     MouseArea { anchors.fill: parent }
     Column {
       id: body
@@ -63,7 +64,7 @@ FocusScope {
         text: root.guild ? String(root.guild.name || "Unnamed server") : ""
         textFormat: Text.PlainText
         wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
-        color: Color.foreground
+        color: PluginTheme.Color.foreground
         font.family: Style.font.family; font.pixelSize: Style.font.subtitle; font.bold: true
       }
       Text {
@@ -71,14 +72,14 @@ FocusScope {
         visible: root.page !== "menu"
         text: root.page === "leave" ? "Leave this server? You will need an invitation to join again. Server owners must transfer ownership first."
           : "Mute this server for your Discord account. Administration and roles are not available in Omacord."
-        color: Color.foreground; font.family: Style.font.family; font.pixelSize: Style.font.bodySmall
+        color: PluginTheme.Color.foreground; font.family: Style.font.family; font.pixelSize: Style.font.bodySmall
       }
       Text {
         width: parent.width; wrapMode: Text.WordWrap
         text: root.service ? String(root.service.actionError || "") : ""
         textFormat: Text.PlainText
         visible: text !== ""
-        color: Color.urgent; font.family: Style.font.family; font.pixelSize: Style.font.bodySmall
+        color: PluginTheme.Color.urgent; font.family: Style.font.family; font.pixelSize: Style.font.bodySmall
       }
       Button {
         id: settings; objectName: "server-settings"
@@ -105,14 +106,14 @@ FocusScope {
       }
       Button {
         id: leave; objectName: "server-leave"
-        width: parent.width; visible: root.page === "menu"; text: "Leave server…"; foreground: Color.urgent; focusable: true
+        width: parent.width; visible: root.page === "menu"; text: "Leave server…"; foreground: PluginTheme.Color.urgent; focusable: true
         onClicked: { root.page = "leave"; root.firstFocus() }
       }
       Text {
         width: parent.width; wrapMode: Text.WordWrap; textFormat: Text.PlainText
         visible: root.page === "settings" && text !== ""
         text: root.service ? String(root.service.settingsError || "") : ""
-        color: Color.urgent; font.family: Style.font.family; font.pixelSize: Style.font.bodySmall
+        color: PluginTheme.Color.urgent; font.family: Style.font.family; font.pixelSize: Style.font.bodySmall
       }
       Button {
         id: mute; objectName: "server-mute"
@@ -130,7 +131,7 @@ FocusScope {
       Button {
         id: confirm; objectName: "server-leave-confirm"
         width: parent.width; visible: root.page === "leave"; text: root.busy ? "Leaving…" : "Leave server"
-        enabled: !root.busy; foreground: Color.urgent; focusable: true
+        enabled: !root.busy; foreground: PluginTheme.Color.urgent; focusable: true
         onClicked: root.action("leave_guild", {confirmed:true})
       }
     }

@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import "../ui" as PluginTheme
 import QtQuick.Controls as Controls
 import "../ui"
 import "../Api.js" as Api
@@ -62,12 +63,12 @@ Item {
  Timer {id:deadline;interval:5000;onTriggered:{root.generation++;root.busy=false;root.selecting=false;root.error="Camera request timed out"}}
  Keys.onEscapePressed: function(event) {root.hide();event.accepted=true}
  BorderSurface {
-  anchors.fill:parent;color:Color.popups.background;radius:Style.cornerRadius;borderSpec:Border.none()
+  anchors.fill:parent;color:PluginTheme.Color.popups.background;radius:Style.cornerRadius;borderSpec:Border.none()
   Column {
    id:body;anchors.fill:parent;anchors.margins:Style.spacing.sm;spacing:Style.spacing.sm
    Item {
     width:parent.width;height:Style.spacing.controlHeight
-    Text {anchors.left:parent.left;anchors.right:closeButton.left;anchors.verticalCenter:parent.verticalCenter;text:"Cameras · H.264 preview";elide:Text.ElideRight;color:Color.foreground;font.family:Style.font.family;font.pixelSize:Style.font.body;font.bold:true}
+    Text {anchors.left:parent.left;anchors.right:closeButton.left;anchors.verticalCenter:parent.verticalCenter;text:"Cameras · H.264 preview";elide:Text.ElideRight;color:PluginTheme.Color.foreground;font.family:Style.font.family;font.pixelSize:Style.font.body;font.bold:true}
     Button {id:closeButton;objectName:"camera-close";anchors.right:parent.right;text:"Close";focusable:true;tooltipText:"Stop watching and return to the channel";onClicked:root.hide()}
    }
    Controls.ScrollView {
@@ -91,7 +92,7 @@ Item {
      color:"white";font.family:Style.font.family;font.pixelSize:Style.font.bodySmall
     }
    }
-   Text {id:footer;width:parent.width;text:root.error && root.imageSource ? root.error : "One camera. No recording. Close stops reception.";wrapMode:Text.WordWrap;color:Color.foreground;font.family:Style.font.family;font.pixelSize:Style.font.bodySmall}
+   Text {id:footer;width:parent.width;text:root.error && root.imageSource ? root.error : "One camera. No recording. Close stops reception.";wrapMode:Text.WordWrap;color:PluginTheme.Color.foreground;font.family:Style.font.family;font.pixelSize:Style.font.bodySmall}
   }
  }
 }

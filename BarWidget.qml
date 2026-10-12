@@ -1,4 +1,5 @@
 import QtQuick
+import "ui" as PluginTheme
 import Quickshell
 import qs.Commons
 import qs.Ui
@@ -12,7 +13,7 @@ BarWidget {
 
   readonly property var discord: bar && bar.shell
     ? bar.shell.serviceFor("quickshell.discord") : null
-  readonly property color foreground: bar ? bar.foreground : Color.foreground
+  readonly property color foreground: bar ? bar.foreground : PluginTheme.Color.foreground
   readonly property var hostWindow: QsWindow.window
   readonly property string screenName: hostWindow && hostWindow.screen
     ? String(hostWindow.screen.name || "") : ""
@@ -145,7 +146,7 @@ BarWidget {
       sourceSize.width: Math.ceil(width * 2)
       sourceSize.height: Math.ceil(height * 2)
       source: Icons.source(root.discord && root.discord.voice.muted ? "microphoneOff" : "microphone",
-        root.discord && root.discord.voice.muted ? Color.urgent : root.foreground)
+        root.discord && root.discord.voice.muted ? PluginTheme.Color.urgent : root.foreground)
     }
     active: !!(root.discord && root.discord.voice.muted)
     tooltipText: root.discord && root.discord.voice.muted ? "Unmute microphone" : "Mute microphone"
@@ -214,7 +215,7 @@ BarWidget {
         anchors.verticalCenter: parent.verticalCenter
         visible: root.badgeText !== ""
         text: root.badgeText
-        color: Color.urgent
+        color: PluginTheme.Color.urgent
         font.family: root.bar ? root.bar.fontFamily : Style.font.family
         font.pixelSize: Style.font.bodySmall
         font.bold: true

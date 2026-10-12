@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import "../ui" as PluginTheme
 import QtQuick.Controls as Controls
 import "../ui"
 
@@ -72,7 +73,7 @@ Item {
       Text {
         width: Math.max(0, parent.width - full.width - close.width - (root.guildId ? back.width : 0) - parent.spacing * (root.guildId ? 3 : 2))
         anchors.verticalCenter: parent.verticalCenter
-        text: "Omacord"; color: Color.foreground; font.family: Style.font.family; font.pixelSize: Style.font.body
+        text: "Omacord"; color: PluginTheme.Color.foreground; font.family: Style.font.family; font.pixelSize: Style.font.body
       }
       Button {id:full; objectName:"quick-full";text:"Open window";iconName:"expand";focusable:true;onClicked:root.fullRequested({})}
       Button {id:close; objectName:"quick-close";text:"Close";iconOnly:true;iconName:"close";tooltipText:"Close compact panel";focusable:true;onClicked:root.closeRequested()}
@@ -132,7 +133,7 @@ Item {
         anchors.centerIn:parent;visible:list.count===0;width:parent.width
         horizontalAlignment:Text.AlignHCenter;wrapMode:Text.WordWrap
         text:!root.ready?"Open the window to sign in":root.guildId&&root.service.isLoadingChannels(root.guildId)?"Loading channels…":"No matching conversations"
-        color:Color.foreground;font.family:Style.font.family;font.pixelSize:Style.font.body
+        color:PluginTheme.Color.foreground;font.family:Style.font.family;font.pixelSize:Style.font.body
       }
     }
   }

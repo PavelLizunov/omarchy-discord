@@ -3,6 +3,7 @@ import QtTest
 import "../../" as Discord
 import "../../components/harness" as Harness
 import "../../ui"
+import "../../ui" as PluginTheme
 
 TestCase {
   id: tests
@@ -31,7 +32,12 @@ TestCase {
     var oldWidth=tests.width;tests.width=420
     preview.client.open("{}");preview.model.voice={status:"connected",guildId:"1",channelId:"9002",muted:false,deafened:false}
     preview.model.reset();wait(30)
-    var mute=findChild(preview.client,"quick-microphone"),close=findChild(preview.client,"close-window")
+    var mute=findChild(preview.client,"quick-microphone"),close=findChild(preview.client,"close-window"),restart=findChild(preview.client,"restart-discord")
+    verify(restart.visible);verify(restart.mapToItem(preview.client,0,0).x>=0)
+    verify(close.mapToItem(preview.client,close.width,0).x<=preview.client.width+1)
+    mouseClick(restart,restart.width/2,restart.height/2);compare(preview.model.callCount("restartBackend"),1)
+    restart.forceActiveFocus();keyClick(Qt.Key_Return);compare(preview.model.callCount("restartBackend"),2)
+    preview.model.restartBusy=true;wait(10);verify(!restart.enabled);preview.model.restartBusy=false
     verify(mute.visible);verify(close.visible)
     verify(mute.mapToItem(preview.client,0,0).x>=0)
     verify(close.mapToItem(preview.client,close.width,0).x<=preview.client.width+1)
@@ -39,6 +45,11 @@ TestCase {
     close.forceActiveFocus();keyClick(Qt.Key_Return);verify(!preview.client.opened)
     compare(preview.model.voice.status,"connected");compare(preview.model.callCount("voiceLeave"),0)
     preview.client.open("{}");tests.width=oldWidth;preview.model.voice={status:"idle"}
+  }
+  function test_palette_is_defined_after_component_load() {
+    compare(String(PluginTheme.Color.background), "#101315")
+    verify(PluginTheme.Color.popups.background !== undefined)
+    verify(findChild(preview.client,"close-window").visible)
   }
   function test_ack_requires_visible_active_window() {
     preview.client.mapped = true

@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import "../ui" as PluginTheme
 import QtQuick.Controls
 import "../ui"
 
@@ -46,9 +47,9 @@ FocusScope {
     : Api.memberRows(list)
   property string cursorId: ""
   readonly property int cursor: indexOfId(rows, cursorId)
-  readonly property color foreground: Color.popups.text
-  readonly property color muted: Api.secondaryColor(Color.muted, Color.popups.text,
-    Api.blend(Style.hoverFillFor(Color.popups.text, Color.accent), Color.popups.background, Style.hoverFillAlpha))
+  readonly property color foreground: PluginTheme.Color.popups.text
+  readonly property color muted: Api.secondaryColor(PluginTheme.Color.muted, PluginTheme.Color.popups.text,
+    Api.blend(Style.hoverFillFor(PluginTheme.Color.popups.text, PluginTheme.Color.accent), PluginTheme.Color.popups.background, Style.hoverFillAlpha))
   readonly property string fontFamily: Style.font.family
   readonly property bool dense: width < Style.space(170)
   readonly property int avatarSize: Style.space(dense ? 18 : 24)
@@ -73,9 +74,9 @@ FocusScope {
 
   function statusColor(status) {
     switch (String(status || "")) {
-      case "online": return Color.accent
+      case "online": return PluginTheme.Color.accent
       case "idle": return root.muted
-      case "dnd": return Color.urgent
+      case "dnd": return PluginTheme.Color.urgent
       default: return Util.alpha(root.foreground, 0.35)
     }
   }
@@ -147,10 +148,10 @@ FocusScope {
     id: pane
     anchors.fill: parent
     radius: Style.cornerRadius
-    color: Color.popups.background
+    color: PluginTheme.Color.popups.background
     borderSpec: root.active
-      ? Border.controlSpec("focus", root.foreground, Color.accent)
-      : Border.flat(Color.popups.border, Math.max(1, Style.normalBorderWidth))
+      ? Border.controlSpec("focus", root.foreground, PluginTheme.Color.accent)
+      : Border.flat(PluginTheme.Color.popups.border, Math.max(1, Style.normalBorderWidth))
     padding: Style.spacing.sm
 
     Column {
@@ -261,9 +262,9 @@ FocusScope {
             anchors.fill: parent
             radius: Style.cornerRadius
             color: memberRow.hasCursor || rowMouse.containsMouse
-              ? Style.hoverFillFor(root.foreground, Color.accent) : "transparent"
+              ? Style.hoverFillFor(root.foreground, PluginTheme.Color.accent) : "transparent"
             borderSpec: memberRow.hasCursor
-              ? Border.controlSpec("hover-cursor", root.foreground, Color.accent)
+              ? Border.controlSpec("hover-cursor", root.foreground, PluginTheme.Color.accent)
               : Border.none()
 
             Avatar {
@@ -287,7 +288,7 @@ FocusScope {
                 width: Style.spacing.lg + Style.spacing.xxs * 2
                 height: width
                 radius: width / 2
-                color: Color.popups.background
+                color: PluginTheme.Color.popups.background
                 Rectangle {
                   anchors.centerIn: parent
                   width: Style.spacing.lg

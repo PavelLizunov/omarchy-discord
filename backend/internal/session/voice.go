@@ -249,12 +249,31 @@ func voiceUser(n *ningen.State, guildID discord.GuildID, vs discord.VoiceState) 
 	if mem == nil {
 		mem, _ = n.Cabinet.Member(guildID, vs.UserID)
 	}
-	if mem == nil {
+	var cachedUser discord.User
+	if mem != nil {
+		cachedUser = mem.User
+	}
+	if !cachedUser.ID.IsValid() || cachedUser.Username == "" {
+		if channels, err := n.Cabinet.PrivateChannels(); err == nil {
+			for _, channel := range channels {
+				for _, user := range channel.DMRecipients {
+					if user.ID == vs.UserID {
+						cachedUser = user
+						break
+					}
+				}
+				if cachedUser.ID == vs.UserID && cachedUser.Username != "" {
+					break
+				}
+			}
+		}
+	}
+	if !cachedUser.ID.IsValid() {
 		return protocol.User{ID: vs.UserID.String(), Status: userPresence(n, guildID, vs.UserID)}
 	}
-	u := wireUser(mem.User)
+	u := wireUser(cachedUser)
 	u.Status = userPresence(n, guildID, vs.UserID)
-	if mem.Nick != "" {
+	if mem != nil && mem.Nick != "" {
 		u.DisplayName = mem.Nick
 	}
 	return u
@@ -320,6 +339,25 @@ func (m *Manager) pushVoiceMembersLocked(n *ningen.State) {
 }
 
 func (m *Manager) installVoiceHandlers(n *ningen.State) {
+	// READY precedes the supplemental voice cache on user sessions.
+	n.State.AddSyncHandler(func(ev *gateway.ReadySupplementalEvent) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if m.n != n || m.lifecycle != protocol.LifecycleReady {
+			return
+		}
+		for _, guild := range ev.Guilds {
+			m.push(VoiceMembers(n.Offline(), guild.ID))
+		}
+	})
+	n.State.AddSyncHandler(func(ev *gateway.GuildCreateEvent) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if m.n != n || m.lifecycle != protocol.LifecycleReady {
+			return
+		}
+		m.push(VoiceMembers(n.Offline(), ev.ID))
+	})
 	addSyncHandler(n, "voice_presence_update", func(ev *gateway.PresenceUpdateEvent) {
 		m.mu.Lock()
 		live := m.n == n && m.lifecycle == protocol.LifecycleReady
