@@ -217,6 +217,9 @@ func TestCameraPipelineEncryptedFragmentsAndAudio(t *testing.T) {
 					nal := encrypted[r.Offset+4 : end]
 					for off := 1; off < len(nal); {
 						n := min(700, len(nal)-off)
+						if off == 1 && n == len(nal)-1 && n > 1 {
+							n--
+						}
 						fu := []byte{(nal[0] & 0xe0) | 28, nal[0] & 31}
 						if off == 1 {
 							fu[1] |= 0x80
@@ -225,8 +228,14 @@ func TestCameraPipelineEncryptedFragmentsAndAudio(t *testing.T) {
 							fu[1] |= 0x40
 						}
 						fu = append(fu, nal[off:off+n]...)
+						if off == 1 && off+n == len(nal) {
+							fu = append([]byte(nil), nal...)
+						} // Tiny NAL: single-packet format, not illegal S+E FU-A.
 						last := i == len(clear)-1 && off+n == len(nal)
 						send(dvoice.H264PayloadType, fu, last, true, true)
+						if !last {
+							send(dvoice.H264PayloadType, nil, false, true, true)
+						} // Padding-only sequence between authenticated fragments.
 						off += n
 					}
 				}

@@ -126,6 +126,12 @@ func openScreen(ctx context.Context, state dvoice.State, user snowflake.ID, log 
 			}
 			if p.Type == dvoice.H264PayloadType {
 				s.video.receive(p, c.DAVE())
+				if transport, ok := c.UDP().(interface{ SendNACK(uint32, []uint16) error }); ok {
+					ssrc, missing := s.video.missingPackets()
+					if len(missing) > 0 {
+						_ = transport.SendNACK(ssrc, missing)
+					}
+				}
 			}
 		}
 	}()

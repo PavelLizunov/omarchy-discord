@@ -18,7 +18,7 @@ import (
 	dvoice "github.com/mattcalayo/omarchy-discord/backend/internal/voicewire"
 )
 
-// ponytail: one H264 camera, no RTX or recording; add recovery/codecs after live acceptance.
+// ponytail: one bounded H264 viewer; no recording or other-codec fallback.
 const cameraFrameLimit = 4 << 20
 
 type CameraStream struct {
@@ -26,16 +26,20 @@ type CameraStream struct {
 	SSRC   uint32 `json:"ssrc"`
 }
 type CameraSnapshot struct {
-	Streams      []CameraStream `json:"streams"`
-	UserID       string         `json:"user_id"`
-	Image        string         `json:"image"`
-	Sequence     uint64         `json:"sequence"`
-	Packets      uint64         `json:"packets"`
-	Dispatched   uint64         `json:"dispatched"`
-	SSRCMismatch uint64         `json:"ssrc_mismatch"`
-	PacketAgeMS  int64          `json:"packet_age_ms"`
-	AgeMS        int64          `json:"age_ms"`
-	Error        string         `json:"error"`
+	Streams          []CameraStream `json:"streams"`
+	UserID           string         `json:"user_id"`
+	Image            string         `json:"image"`
+	Sequence         uint64         `json:"sequence"`
+	Packets          uint64         `json:"packets"`
+	Dispatched       uint64         `json:"dispatched"`
+	SSRCMismatch     uint64         `json:"ssrc_mismatch"`
+	PacketAgeMS      int64          `json:"packet_age_ms"`
+	AgeMS            int64          `json:"age_ms"`
+	Error            string         `json:"error"`
+	AssemblyFrames   uint64         `json:"assembly_frames"`
+	AssemblyDropped  uint64         `json:"assembly_dropped"`
+	ReorderWaits     uint64         `json:"reorder_waits"`
+	DuplicatePackets uint64         `json:"duplicate_packets"`
 }
 type camera struct {
 	mu           sync.Mutex
@@ -45,15 +49,12 @@ type camera struct {
 	selected     snowflake.ID
 	ssrc         uint32
 	decoder      *cameraDecoder
-	frame        []byte
-	timestamp    uint32
-	sequence     uint16
-	assembling   bool
 	packets      uint64
 	dispatched   uint64
 	ssrcMismatch uint64
 	packetAt     time.Time
 	err          string
+	assembly     h264Assembly
 }
 
 func newCamera() *camera {
@@ -92,8 +93,7 @@ func (v *camera) announce(d dvoice.GatewayMessageDataVideo) {
 	}
 	if v.selected == d.UserID && v.ssrc != ssrc {
 		v.ssrc = ssrc
-		v.frame = nil
-		v.assembling = false
+		v.assembly.reset()
 		if v.decoder != nil {
 			v.decoder.setError("Camera changed. Select it again.")
 		}
@@ -116,8 +116,7 @@ func (v *camera) close() {
 	v.err = ""
 	v.packets = 0
 	v.packetAt = time.Time{}
-	v.frame = nil
-	v.assembling = false
+	v.assembly.reset()
 	v.mu.Unlock()
 	if d != nil {
 		d.close()
@@ -150,6 +149,10 @@ func (v *camera) snapshot() CameraSnapshot {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	s := CameraSnapshot{Streams: []CameraStream{}, AgeMS: -1, Packets: v.packets, Dispatched: v.dispatched, SSRCMismatch: v.ssrcMismatch, PacketAgeMS: -1}
+	s.AssemblyFrames = v.assembly.completed
+	s.AssemblyDropped = v.assembly.dropped
+	s.ReorderWaits = v.assembly.reordered
+	s.DuplicatePackets = v.assembly.duplicates
 	if !v.packetAt.IsZero() {
 		s.PacketAgeMS = time.Since(v.packetAt).Milliseconds()
 	}
@@ -178,6 +181,11 @@ func (v *camera) snapshot() CameraSnapshot {
 	}
 	return s
 }
+func (v *camera) missingPackets() (uint32, []uint16) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.ssrc, v.assembly.missing(time.Now())
+}
 func (v *camera) receive(p *dvoice.Packet, ds godave.Session) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -188,36 +196,21 @@ func (v *camera) receive(p *dvoice.Packet, ds godave.Session) {
 	}
 	v.packets++
 	v.packetAt = time.Now()
-	if !v.assembling || p.Timestamp != v.timestamp {
-		v.frame = nil
-		v.timestamp = p.Timestamp
-		v.sequence = p.Sequence
-		v.assembling = true
-	} else if p.Sequence != v.sequence+1 {
-		v.frame = nil
-		v.assembling = false
-		return
-	} else {
-		v.sequence = p.Sequence
-	}
-	if err := appendH264(&v.frame, p.Opus); err != nil {
-		v.frame = nil
-		v.assembling = false
+	frame, err := v.assembly.push(p, time.Now())
+	if err != nil {
 		v.decoder.setError(err.Error())
 		return
 	}
-	if !p.Marker {
+	if len(frame) == 0 {
 		return
 	}
-	frame := v.frame
-	v.frame = nil
-	v.assembling = false
 	plain := make([]byte, ds.MaxDecryptedFrameSize(godave.UserID(v.selected.String()), len(frame)))
 	n, err := ds.Decrypt(godave.UserID(v.selected.String()), frame, plain)
 	if err != nil {
 		v.decoder.setError("Camera frame decryption failed")
 		return
 	}
+	v.assembly.accept(v.assembly.candidateTimestamp)
 	select {
 	case v.decoder.frames <- plain[:n]:
 	default:

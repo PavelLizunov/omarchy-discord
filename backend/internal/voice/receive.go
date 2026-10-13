@@ -360,6 +360,12 @@ func (d *rxDriver) loop(ctx context.Context) {
 		if p.Type == dvoice.H264PayloadType {
 			if d.video != nil {
 				d.video.receive(p, d.conn.DAVE())
+				if transport, ok := d.conn.UDP().(interface{ SendNACK(uint32, []uint16) error }); ok {
+					ssrc, missing := d.video.missingPackets()
+					if len(missing) > 0 {
+						_ = transport.SendNACK(ssrc, missing)
+					}
+				}
 			}
 			continue
 		}

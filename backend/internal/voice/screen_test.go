@@ -128,6 +128,9 @@ func TestScreenTransportReceivesFrameAndClosesWithoutVoice(t *testing.T) {
 		for j, nal := range nals {
 			for off := 1; off < len(nal); {
 				n := min(600, len(nal)-off)
+				if off == 1 && n == len(nal)-1 && n > 1 {
+					n--
+				}
 				fu := []byte{(nal[0] & 0xe0) | 28, nal[0] & 31}
 				if off == 1 {
 					fu[1] |= 128
@@ -136,6 +139,9 @@ func TestScreenTransportReceivesFrameAndClosesWithoutVoice(t *testing.T) {
 					fu[1] |= 64
 				}
 				fu = append(fu, nal[off:off+n]...)
+				if off == 1 && off+n == len(nal) {
+					fu = append([]byte(nil), nal...)
+				} // Tiny NAL uses single-packet format.
 				h := make([]byte, 12)
 				h[0] = 0x80
 				h[1] = dvoice.H264PayloadType

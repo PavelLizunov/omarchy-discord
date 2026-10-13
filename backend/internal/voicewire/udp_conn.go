@@ -524,6 +524,10 @@ func (u *udpConnImpl) ReadPacket() (*Packet, error) {
 			if cameraPacket {
 				u.cameraStage("empty")
 			}
+			if packetType == H264PayloadType {
+				p.Opus = nil
+				return &p, nil
+			} // Sequence-only authenticated probe, never a codec frame.
 			continue
 		}
 

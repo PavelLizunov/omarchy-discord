@@ -129,6 +129,12 @@ func TestPaddingProbeAcknowledgedButNotDelivered(t *testing.T) {
 				_, e = writer.Write(enc.Encrypt(h, []byte{0x65, 1, 2}))
 				errs <- e
 			}()
+			for i := 0; i < 2; i++ {
+				p, e := u.ReadPacket()
+				if e != nil || len(p.Opus) != 0 {
+					t.Fatal("padding became media", p, e)
+				}
+			}
 			p, e := u.ReadPacket()
 			if e != nil {
 				t.Fatal(e)
