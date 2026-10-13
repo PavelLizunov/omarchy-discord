@@ -5,6 +5,7 @@ import qs.Commons
 import qs.Ui
 import Quickshell.Io
 import "ui/Icons.js" as Icons
+import "components" as Components
 
 BarWidget {
   id: root
@@ -93,6 +94,8 @@ BarWidget {
   implicitWidth: vertical ? button.implicitWidth : button.implicitWidth + quickMute.implicitWidth
   implicitHeight: button.implicitHeight + (vertical ? quickMute.implicitHeight : 0)
 
+  Components.BarAudioControl { id: audioControl; service: root.discord }
+
   QuickPopup {
     id: popup
     anchorItem: button
@@ -120,7 +123,9 @@ BarWidget {
         voiceRoom:String(root.discord && root.discord.voice ? root.discord.voice.channelId || "" : ""),
         rosterCount:popup.content.callPanel.roster.rows.length,
         singleClickAudio:popup.content.callPanel.roster.singleClickAudio,
-        microphoneIcon:root.discord && root.discord.voice.muted ? "microphoneOff" : "microphone"})
+        unreadDot:root.unreadDot, unreadDotVisible:unreadDrawing.visible, mentionCount:root.mentionCount,
+        deafened:!!(root.discord && root.discord.voice.deafened), audioBusy:audioControl.busy,
+        microphoneIcon:root.discord && root.discord.voice.deafened ? "headphonesOff" : root.discord && root.discord.voice.muted ? "microphoneOff" : "microphone"})
     }
   }
 
@@ -131,13 +136,13 @@ BarWidget {
     objectName: "bar-quick-mute"
     bar: root.bar
     visible: true
-    enabled: !!(root.discord && root.discord.ready && root.inCall)
+    enabled: audioControl.available && !audioControl.busy
     dimmed: !root.inCall
     activeFocusOnTab: true
     Accessible.role: Accessible.Button
     Accessible.name: tooltipText
-    Keys.onReturnPressed: triggerPress(Qt.LeftButton)
-    Keys.onSpacePressed: triggerPress(Qt.LeftButton)
+    Keys.onReturnPressed: function(event) { triggerPress(event.modifiers & Qt.ShiftModifier ? Qt.RightButton : Qt.LeftButton) }
+    Keys.onSpacePressed: function(event) { triggerPress(event.modifiers & Qt.ShiftModifier ? Qt.RightButton : Qt.LeftButton) }
     x: root.vertical ? 0 : button.width
     y: root.vertical ? button.height : 0
     fixedWidth: root.vertical ? root.barSize : Style.bar.statusSlot
@@ -154,12 +159,19 @@ BarWidget {
       height: width
       sourceSize.width: Math.max(1, Math.ceil(width * Screen.devicePixelRatio))
       sourceSize.height: Math.max(1, Math.ceil(height * Screen.devicePixelRatio))
-      source: Icons.source(root.discord && root.discord.voice.muted ? "barMicrophoneOff" : "barMicrophone",
-        root.discord && root.discord.voice.muted ? PluginTheme.Color.urgent : root.foreground, sourceSize.width)
+      source: Icons.source(root.discord && root.discord.voice.deafened ? "barHeadphonesOff" : root.discord && root.discord.voice.muted ? "barMicrophoneOff" : "barMicrophone",
+        root.callSilent ? PluginTheme.Color.urgent : root.foreground, sourceSize.width)
     }
-    active: !!(root.discord && root.discord.voice.muted)
-    tooltipText: !root.inCall ? "Microphone unavailable · join a voice channel" : root.discord && root.discord.voice.muted ? "Unmute microphone" : "Mute microphone"
-    onPressed: function(mouseButton) { if (mouseButton === Qt.LeftButton && enabled && root.discord) root.discord.toggleMute() }
+    active: root.callSilent
+    tooltipText: !root.inCall ? "Audio controls unavailable · join a voice channel"
+      : root.discord.voice.deafened ? "Discord sound off · right click or Shift+Return to restore sound"
+      : (root.discord.voice.muted ? "Left click: unmute microphone" : "Left click: mute microphone")
+        + " · Right click or Shift+Return: mute microphone and Discord sound"
+    onPressed: function(mouseButton) {
+      if (!enabled) return
+      if (mouseButton === Qt.LeftButton) audioControl.toggleMicrophone()
+      else if (mouseButton === Qt.RightButton) audioControl.toggleSilence()
+    }
     Rectangle {anchors.fill:parent;visible:quickMute.activeFocus;color:"transparent";border.width:1;border.color:root.foreground}
   }
 
@@ -211,6 +223,7 @@ BarWidget {
         }
 
         Rectangle {
+          id: unreadDrawing
           objectName: "bar-unread-dot"
           visible: root.unreadDot
           anchors.right: parent.right

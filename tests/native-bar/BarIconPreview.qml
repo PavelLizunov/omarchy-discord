@@ -8,6 +8,7 @@ Rectangle {
  id:root
  width:320;height:110
  property bool muted:false
+ property bool deafened:false
  property bool idle:false
  property bool light:false
  property bool auditReady:false
@@ -21,7 +22,9 @@ Rectangle {
   property int totalMentionCount:root.mentions
   property bool anyUnread:root.unread
   function applySettings(values){}
-  function toggleMute(){note("toggleMute");voice=Object.assign({},voice,{muted:!voice.muted});return true}
+  property var backend:service
+  function fail(error){throw Error(error)}
+  function sendCommand(name,fields,callback){note(name,JSON.stringify(fields));voice=Object.assign({},voice,fields);callback(true,{},"")}
  }
  QtObject {
   id:host
@@ -44,24 +47,33 @@ Rectangle {
   function releasePopout(item){if(activePopout===item)activePopout=null}
  }
  Plugin.BarWidget {id:widget;bar:host;x:14;y:20}
- Text {x:14;y:68;text:root.idle?"No call · microphone disabled":root.muted?"Microphone muted":"Microphone on";color:root.ink;font.pixelSize:13}
+ Text {x:14;y:68;text:root.idle?"No call · microphone disabled":root.deafened?"Microphone and Discord sound off":root.muted?"Microphone muted":"Microphone on";color:root.ink;font.pixelSize:13}
  function find(item,name){if(item.objectName===name)return item;for(var i=0;i<item.children.length;i++){var r=find(item.children[i],name);if(r)return r}return null}
  function check(){
-  service.voice={status:root.idle?"idle":"connected",guildId:"1",channelId:root.idle?"":"2",muted:root.muted,deafened:false}
+  service.voice={status:root.idle?"idle":"connected",guildId:"1",channelId:root.idle?"":"2",muted:root.muted,deafened:root.deafened}
   var mic=find(widget,"bar-quick-mute")
   if(!mic || !mic.visible)throw Error("microphone missing")
   if(mic.enabled===root.idle)throw Error("microphone admission incorrect")
-  var before=service.callCount("toggleMute")
+  var before=service.callCount("voice_set")
   mic.triggerPress(Qt.LeftButton)
-  if(root.idle){if(service.callCount("toggleMute")!==before)throw Error("idle microphone changed flags")}
+  if(root.idle || root.deafened){if(service.callCount("voice_set")!==before)throw Error("unavailable microphone changed flags")}
   else {
-   if(service.callCount("toggleMute")!==before+1 || service.voice.muted===root.muted)throw Error("mute did not toggle")
+   if(service.callCount("voice_set")!==before+1 || service.voice.muted===root.muted)throw Error("mute did not toggle")
    if(widget.opened || service.voice.deafened || service.voice.channelId!=="2")throw Error("microphone changed unrelated state")
    mic.triggerPress(Qt.LeftButton)
    if(service.voice.muted!==root.muted)throw Error("second click did not restore")
   }
+  var current=service.callCount("voice_set")
   mic.triggerPress(Qt.RightButton)
-  if(service.callCount("toggleMute")!==before+(root.idle?0:2))throw Error("right click toggled microphone")
+  if(root.idle){if(service.callCount("voice_set")!==current)throw Error("idle right click changed flags")}
+  else {
+   if(service.voice.deafened===root.deafened)throw Error("right click did not toggle listening")
+   if(!root.deafened && !service.voice.muted)throw Error("silence left microphone on")
+   if(!root.deafened){mic.triggerPress(Qt.LeftButton);if(!service.voice.muted)throw Error("left click escaped silence")}
+   mic.triggerPress(Qt.RightButton)
+   if(!root.deafened && service.voice.muted!==root.muted)throw Error("silence did not restore previous mute")
+  }
+  service.voice={status:root.idle?"idle":"connected",guildId:"1",channelId:root.idle?"":"2",muted:root.muted,deafened:root.deafened}
   readyTimer.start()
  }
  Timer{id:start;interval:30;running:true;onTriggered:root.check()}

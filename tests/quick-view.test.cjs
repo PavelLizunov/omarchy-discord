@@ -31,9 +31,10 @@ test('bar mark uses compact padding without overlapping the microphone target', 
 
 test('bar microphone remains discoverable but idle clicks cannot change the call', () => {
  const mute=source.slice(source.indexOf('id: quickMute'),source.indexOf('onSettingsChanged:'));
- assert(mute.includes('visible: true'));assert(mute.includes('enabled: !!(root.discord && root.discord.ready && root.inCall)'));
+ assert(mute.includes('visible: true'));assert(mute.includes('enabled: audioControl.available && !audioControl.busy'));
  assert(mute.includes('Keys.onReturnPressed')&&mute.includes('Keys.onSpacePressed'));
- assert(mute.includes('enabled && root.discord'));
+ assert(mute.includes('if (!enabled) return'));
+ assert(mute.includes('Qt.RightButton) audioControl.toggleSilence()'));
  assert(mute.includes('barMicrophoneOff')&&mute.includes('barMicrophone'));
 });
 
@@ -54,6 +55,6 @@ test('persistent close does not depend on focus, and quick mute does not deafen 
   assert(close.includes('if (persistent)'));
   assert(!close.includes('persistent && opened'));
   const mute=source.slice(source.indexOf('id: quickMute'),source.indexOf('onSettingsChanged:'));
-  assert(mute.includes('toggleMute()'));
-  assert(!mute.includes('toggleDeafen')&&!mute.includes('voiceLeave'));
+  assert(mute.includes('audioControl.toggleMicrophone()'));
+  assert(mute.includes('audioControl.toggleSilence()'));assert(!mute.includes('voiceLeave'));
 });

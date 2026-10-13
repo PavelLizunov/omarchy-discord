@@ -5,6 +5,7 @@ var paths = {
   omacord: '<path fill-rule="evenodd" d="M4 2H12V3H14V5H15V12H13V14H10V12H6V14H3V12H1V5H2V3H4Z M4 6V9H7V6Z M9 6V9H12V6Z M4 10V11H12V10Z"/>',
   barMicrophone: '<path d="M6 1H10V2H11V8H10V9H6V8H5V2H6Z M3 6H4V10H6V11H10V10H12V6H13V11H11V12H9V14H12V15H4V14H7V12H5V11H3Z"/>',
   barMicrophoneOff: '<path d="M6 1H10V2H11V7H9V5H7V3H5V2H6Z M5 6H7V8H9V9H6V8H5Z M3 6H4V10H6V11H9V12H9V14H12V15H4V14H7V12H5V11H3Z M12 6H13V10H12Z M1 1H3V3H5V5H7V7H9V9H11V11H13V13H15V15H13V13H11V11H9V9H7V7H5V5H3V3H1Z"/>',
+  barHeadphonesOff: '<path d="M4 2H12V3H14V5H15V14H11V9H13V5H11V4H5V5H3V9H5V14H1V5H2V3H4Z M1 1H3V3H5V5H7V7H9V9H11V11H13V13H15V15H13V13H11V11H9V9H7V7H5V5H3V3H1Z"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"/>',
   back: '<path d="m15 18-6-6 6-6"/>',
   all: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>',
@@ -53,7 +54,7 @@ function svg(name, color, pixelSize) {
   } else {
     strokeStr = 'stroke="' + String(color) + '"'
   }
-  if(name === "omacord" || name === "barMicrophone" || name === "barMicrophoneOff") {
+  if(name === "omacord" || name === "barMicrophone" || name === "barMicrophoneOff" || name === "barHeadphonesOff") {
     var size = Math.max(1, Math.min(512, Math.ceil(Number(pixelSize) || 16)))
     return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="'+size+'" height="'+size+'" '
       + strokeStr.replace('stroke=', 'fill=').replace('stroke-opacity=', 'fill-opacity=') + '>' + paths[name] + '</svg>'
