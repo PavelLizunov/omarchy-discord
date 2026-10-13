@@ -12,13 +12,14 @@ Rectangle {
  property bool light:false
  property bool auditReady:false
  property int mentions:0
+ property bool unread:false
  property color ink:light?"#242424":"#d8dee9"
  color:light?"#fafafa":"#2e3440"
  Harness.MockService {
   id:service
   property bool ready:true
   property int totalMentionCount:root.mentions
-  property bool anyUnread:false
+  property bool anyUnread:root.unread
   function applySettings(values){}
   function toggleMute(){note("toggleMute");voice=Object.assign({},voice,{muted:!voice.muted});return true}
  }
@@ -74,7 +75,12 @@ Rectangle {
    if(mic.x<main.x+main.width)throw Error("click targets overlap")
    if(root.mentions===0){
     var gap=b.mapToItem(widget,0,0).x-a.mapToItem(widget,a.width,0).x
-    if(gap>Host.Style.space(7)+0.5 || gap<0)throw Error("bar icons too far apart or overlapping")
+    if(Math.abs(gap)>0.5)throw Error("bar icons must have zero canvas gap")
+   }
+   var dot=root.find(widget,"bar-unread-dot")
+   if(dot.visible){
+    var d=dot.mapToItem(widget,dot.width,dot.height),m=b.mapToItem(widget,0,0)
+    if(d.x>m.x && d.y>m.y)throw Error("unread dot overlaps microphone")
    }
    root.auditReady=true;stop()
   }

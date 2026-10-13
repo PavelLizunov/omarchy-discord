@@ -112,6 +112,7 @@ BarWidget {
         popupMapped:popup.backingWindowVisible, focusPrimed:popup.focusPrimed,
         compactWidth:popup.contentWidth, compactHeight:popup.contentHeight,
         quickMuteVisible:quickMute.visible, muteIconCount:quickMute.visible ? 1 : 0,
+        iconGap:root.vertical ? null : muteDrawing.mapToItem(root,0,0).x-mark.mapToItem(root,mark.width,0).x,
         iconSize:mark.width, iconReady:mark.iconStatus===Image.Ready, microphoneEnabled:quickMute.enabled, muteIconSize:muteDrawing.width, muteIconReady:muteDrawing.status === Image.Ready, inCall:root.inCall,
         muted:!!(root.discord && root.discord.voice && root.discord.voice.muted),
         backendReady:!!(root.discord && root.discord.ready),
@@ -146,6 +147,7 @@ BarWidget {
     hasVisualContent: true
     Image {
       id: muteDrawing
+      anchors.horizontalCenterOffset: root.vertical || root.badgeText ? 0 : -Style.space(5)
       objectName: "bar-mute-icon"
       anchors.centerIn: parent
       width: Math.round(Style.bar.iconCanvas * 0.75)
@@ -190,6 +192,7 @@ BarWidget {
     fixedHeight: root.vertical ? Style.bar.statusSlot : -1
 
     Row {
+      anchors.horizontalCenterOffset: root.vertical || root.badgeText ? 0 : Style.space(2)
       anchors.centerIn: parent
       spacing: Style.space(4)
       enabled: false
@@ -208,10 +211,12 @@ BarWidget {
         }
 
         Rectangle {
+          objectName: "bar-unread-dot"
           visible: root.unreadDot
           anchors.right: parent.right
           anchors.top: parent.top
-          anchors.margins: -Style.space(1)
+          anchors.topMargin: -Style.space(1)
+          anchors.rightMargin: 0
           width: Style.space(5)
           height: width
           radius: width / 2
@@ -220,6 +225,7 @@ BarWidget {
       }
 
       Text {
+        objectName: "bar-mention-count"
         anchors.verticalCenter: parent.verticalCenter
         visible: root.badgeText !== ""
         text: root.badgeText
