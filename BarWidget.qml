@@ -192,7 +192,7 @@ BarWidget {
     fixedHeight: root.vertical ? Style.bar.statusSlot : -1
 
     Row {
-      anchors.horizontalCenterOffset: root.vertical || root.badgeText ? 0 : Style.space(2)
+      anchors.horizontalCenterOffset: root.vertical || root.badgeText ? 0 : Style.space(1)
       anchors.centerIn: parent
       spacing: Style.space(4)
       enabled: false

@@ -75,7 +75,7 @@ Rectangle {
    if(mic.x<main.x+main.width)throw Error("click targets overlap")
    if(root.mentions===0){
     var gap=b.mapToItem(widget,0,0).x-a.mapToItem(widget,a.width,0).x
-    if(Math.abs(gap)>0.5)throw Error("bar icons must have zero canvas gap")
+    if(Math.abs(gap-Host.Style.space(1))>0.5)throw Error("bar icons must have one pixel canvas gap")
    }
    var dot=root.find(widget,"bar-unread-dot")
    if(dot.visible){

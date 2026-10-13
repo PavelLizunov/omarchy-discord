@@ -26,7 +26,7 @@ test('bar mark uses compact padding without overlapping the microphone target', 
  assert(source.includes('+ Style.space(5))'));assert(!source.includes('+ Style.space(17))'));
  assert(source.includes('x: root.vertical ? 0 : button.width'));
  assert(source.includes('root.vertical || root.badgeText ? 0 : -Style.space(5)'));
- assert(source.includes('root.vertical || root.badgeText ? 0 : Style.space(2)'));
+ assert(source.includes('root.vertical || root.badgeText ? 0 : Style.space(1)'));
 });
 
 test('bar microphone remains discoverable but idle clicks cannot change the call', () => {
