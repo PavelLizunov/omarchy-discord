@@ -13,6 +13,7 @@ Rectangle {
   property string state: "chat"
   property bool lightTheme: false
   property bool serverListFixture: false
+  property var cachedVoiceMembers: null
   property bool useRealServerActions: false
   property int themeRadius: 0
   property bool ready: false
@@ -30,6 +31,10 @@ Rectangle {
     readonly property var backend: model
     function sendCommand(name, fields, callback) {
       note(name, fields.guild_id)
+      if (name === "voice_members") {
+        if (callback) callback(true, {guild_id:fields.guild_id, channels:(root.cachedVoiceMembers || voiceMembers)[String(fields.guild_id)] || []}, "")
+        return 1
+      }
       if (name === "video_state" || name === "video_watch") {
         if (callback) callback(true,{choices:root.state === "video-empty" ? [] : [{user_id:"200",kind:"camera"},{user_id:"200",kind:"screen"}],streams:[],kind:"camera",user_id:"",image:"",age_ms:-1,error:root.state === "video-error" ? "Screen connection lost. Select it again." : ""},"")
         return 1
@@ -38,6 +43,11 @@ Rectangle {
       return 1
     }
     function send(name, fields, callback) { return sendCommand(name, fields, callback) }
+    function applyVoiceMembers(message) {
+      var next = Object.assign({}, voiceMembers)
+      next[String(message.guild_id)] = message.channels
+      voiceMembers = next
+    }
     property var knownUsers: ({"202":"Known fixture contact"})
     readonly property var markdownCtx: ({ users:{"100":"Matt","200":"Ada","300":"Lin"},channels:{"9001":"development"},roles:{"5001":"maintainers"},selfId:selfId,
       linkColor:String(PluginTheme.Color.accent),mentionColor:String(PluginTheme.Color.accent),mentionBg:Util.alpha(PluginTheme.Color.accent,0.18),

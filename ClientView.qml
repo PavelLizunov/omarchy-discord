@@ -18,6 +18,7 @@ Item {
   property var manifest: null
   property var service: null
   Components.DMPresence { id:dmPresence;service:root.service;active:root.opened }
+  Components.VoiceRosterSync { service: root.service; active: root.opened }
   property bool compactMode: false
   readonly property bool compactView: compactMode
   property bool compactChatOpen: false
