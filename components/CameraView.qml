@@ -20,6 +20,22 @@ Item {
  property string requestedUser: ""
  property string requestedKind: "camera"
  property string imageSource: ""
+ property int frontImage: 0
+ readonly property var displayedFrame: frontImage===0 ? frame : pendingFrame
+ readonly property var loadingFrame: frontImage===0 ? pendingFrame : frame
+ readonly property bool imageReady: displayedFrame.status === Image.Ready
+ function clearImage() {imageSource="";frame.source="";pendingFrame.source="";frontImage=0}
+ function displayImage(image) {
+  var source="data:image/jpeg;base64,"+image
+  if(source===String(displayedFrame.source) || source===String(loadingFrame.source))return
+  loadingFrame.source=source
+  commitImage(loadingFrame)
+ }
+ function commitImage(loaded) {
+  if(loaded!==loadingFrame || loaded.status!==Image.Ready || !shown)return
+  imageSource=String(loaded.source)
+  frontImage=frontImage===0 ? 1 : 0
+ }
  property double selectedAt: 0
  property double clock: Date.now()
  property double requestRevision: 0
@@ -31,7 +47,7 @@ Item {
   for (var i=0;i<users.length;i++) if(String(users[i].id)===id) return Api.userLabel(users[i],service.knownUsers)
   return id
  }
- function reset() {generation++;deadline.stop();busy=false;selecting=false;requestedUser="";selectedAt=0;sample=({streams:[],user_id:"",image:"",age_ms:-1});imageSource="";error="";actionError=""}
+ function reset() {generation++;deadline.stop();busy=false;selecting=false;requestedUser="";selectedAt=0;sample=({streams:[],user_id:"",image:"",age_ms:-1});clearImage();error="";actionError=""}
  function open() {if(shown)return;reset();shown=true;poll();closeButton.forceActiveFocus()}
  function hide() {
   var stop=!!(requestedUser || sample.user_id)
@@ -50,13 +66,13 @@ Item {
    if(ok) {
     root.sample=result || ({streams:[]})
     root.error=String(root.sample.error || root.actionError || "")
-    root.imageSource=root.sample.image ? "data:image/jpeg;base64,"+root.sample.image : ""
+    if(root.sample.image)root.displayImage(root.sample.image)
     if(name==="video_watch")root.selectedAt=Date.now()
    }
   })
  }
  function poll() {if(shown && voice.status==="connected")command("video_state",{})}
- function watch(id,kind) {if(busy)return;actionError="";requestedUser=id;requestedKind=kind || "camera";selectedAt=Date.now();imageSource="";selecting=true;command("video_watch",{kind:requestedKind,user_id:id,revision:revision()})}
+ function watch(id,kind) {if(busy)return;actionError="";requestedUser=id;requestedKind=kind || "camera";selectedAt=Date.now();clearImage();selecting=true;command("video_watch",{kind:requestedKind,user_id:id,revision:revision()})}
  onIdentityChanged: {reset();if(shown)poll()}
  onVisibleChanged: if(!visible && (requestedUser || sample.user_id)) hide()
  Component.onDestruction: {
@@ -88,7 +104,8 @@ Item {
    Item {
     id:picture;objectName:"camera-picture";width:parent.width;height:Math.max(0,body.height-y-footer.height-body.spacing);clip:true
     Rectangle {anchors.fill:parent;color:"black"}
-    Image {id:frame;objectName:"camera-frame";anchors.fill:parent;source:root.imageSource;fillMode:Image.PreserveAspectFit;cache:false;asynchronous:true;Accessible.name:(root.sample.kind==="screen" ? "Screen of " : "Camera of ")+root.label(String(root.sample.user_id || ""))}
+    Image {id:frame;objectName:root.frontImage===0?"camera-frame":"camera-pending-frame";anchors.fill:parent;visible:root.frontImage===0;fillMode:Image.PreserveAspectFit;cache:false;asynchronous:true;onStatusChanged:root.commitImage(frame);Accessible.name:(root.sample.kind==="screen" ? "Screen of " : "Camera of ")+root.label(String(root.sample.user_id || ""))}
+    Image {id:pendingFrame;objectName:root.frontImage===1?"camera-frame":"camera-pending-frame";anchors.fill:parent;visible:root.frontImage===1;fillMode:Image.PreserveAspectFit;cache:false;asynchronous:true;onStatusChanged:root.commitImage(pendingFrame);Accessible.name:frame.Accessible.name}
     Text {
      anchors.centerIn:parent;width:Math.max(0,parent.width-Style.spacing.sm*2);horizontalAlignment:Text.AlignHCenter;wrapMode:Text.WordWrap;visible:!root.imageSource
      text:root.error || (root.voice.status!=="connected" ? "Join voice to watch video" : (root.sample.user_id || root.requestedUser) ? (root.clock-root.selectedAt>10000 ? "No video frames received. H.264 only. Select again to retry." : "Waiting for video…") : (root.sample.choices || []).length ? "Choose a camera or screen above" : "No cameras or screen shares announced in this call")

@@ -39,6 +39,7 @@ type receiver struct {
 	mix     []int32
 	frame   []int16
 	pending []int16
+	screen  *receiver
 }
 
 type user struct {
@@ -213,6 +214,22 @@ func (r *receiver) mixLocked() {
 		for i, s := range u.pcm {
 			r.mix[i] += int32(s) * int32(level.Volume) / 100
 		}
+	}
+	if r.screen != nil {
+		stream := r.screen
+		stream.mu.Lock()
+		if !stream.closed {
+			stream.mixLocked()
+			for id := range stream.users {
+				level := userAudio(r.levels, id)
+				if !level.Muted && !r.deafened.Load() {
+					for i, s := range stream.frame {
+						r.mix[i] += int32(s) * int32(level.Volume) / 100
+					}
+				}
+			}
+		}
+		stream.mu.Unlock()
 	}
 	for i, s := range r.mix {
 		r.frame[i] = saturate(s)

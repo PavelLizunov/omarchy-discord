@@ -18,6 +18,7 @@ type Screen struct {
 	mu        sync.Mutex
 	conn      dvoice.Conn
 	video     *camera
+	audio     *screenAudio
 	cancel    context.CancelFunc
 	done      chan struct{}
 	closeOnce sync.Once
@@ -32,7 +33,7 @@ func openScreen(ctx context.Context, state dvoice.State, user snowflake.ID, log 
 	if log == nil {
 		log = slog.Default()
 	}
-	s := &Screen{video: newCamera(), done: make(chan struct{})}
+	s := &Screen{video: newCamera(), audio: newScreenAudio(log, user), done: make(chan struct{})}
 	opts := []dvoice.ConnConfigOpt{dvoice.WithConnLogger(log), dvoice.WithConnDaveSessionCreateFunc(davesession.CreateFunc()), dvoice.WithConnGatewayConfigOpts(dvoice.WithGatewayCloseObserver(func(error) { s.fail("Screen connection lost. Select it again.") })), dvoice.WithConnEventHandlerFunc(func(g dvoice.Gateway, op dvoice.Opcode, seq int, data dvoice.GatewayMessageData) {
 		if d, ok := data.(dvoice.GatewayMessageDataVideo); ok {
 			s.video.announce(d)
@@ -124,6 +125,7 @@ func openScreen(ctx context.Context, state dvoice.State, user snowflake.ID, log 
 				}
 				continue
 			}
+			s.audio.receive(c.UserIDBySSRC(p.SSRC), p)
 			if p.Type == dvoice.H264PayloadType {
 				s.video.receive(p, c.DAVE())
 				if transport, ok := c.UDP().(interface{ SendNACK(uint32, []uint16) error }); ok {
@@ -150,15 +152,23 @@ type ScreenSnapshot struct {
 	ScreenObservation
 }
 type ScreenObservation struct {
-	PacketHeaders   map[string]uint64 `json:"packet_headers"`
-	ReceiveStages   map[string]uint64 `json:"receive_stages"`
-	EncryptionReady bool              `json:"encryption_ready"`
+	PacketHeaders     map[string]uint64 `json:"packet_headers"`
+	ReceiveStages     map[string]uint64 `json:"receive_stages"`
+	EncryptionReady   bool              `json:"encryption_ready"`
+	AudioPackets      uint64            `json:"audio_packets"`
+	AudioErrors       uint64            `json:"audio_errors"`
+	AudioDecodedAgeMS int64             `json:"audio_decoded_age_ms"`
 }
 
 func (s *Screen) Snapshot() ScreenSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r := ScreenSnapshot{CameraSnapshot: s.video.snapshot()}
+	if s.audio != nil {
+		r.AudioPackets = s.audio.packets.Load()
+		r.AudioErrors = s.audio.errors.Load() + s.audio.rx.metrics.decodeErrors.Load()
+		r.AudioDecodedAgeMS = age(time.Now().UnixMilli(), s.audio.rx.metrics.decodedAt.Load())
+	}
 	if s.err != "" {
 		r.Error = s.err
 		r.Image = ""
@@ -208,6 +218,9 @@ func (s *Screen) close() {
 		ctx, stop := context.WithTimeout(context.Background(), 3*time.Second)
 		c.Close(ctx)
 		stop()
+	}
+	if s.audio != nil {
+		s.audio.rx.Close()
 	}
 	s.video.close()
 }

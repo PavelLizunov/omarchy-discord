@@ -220,6 +220,9 @@ func (m *Manager) videoSnapshot() (any, *protocol.Error) {
 		mod.mu.Lock()
 		s := mod.screen
 		mod.mu.Unlock()
+		if sink, ok := v.(interface{ SetScreenAudio(*voice.Screen) }); ok {
+			sink.SetScreenAudio(s)
+		}
 		if s != nil {
 			r.Kind = "screen"
 			snapshot := s.Snapshot()
@@ -263,6 +266,11 @@ func (m *Manager) watchVideo(ctx context.Context, req *protocol.Request) (any, *
 	}
 	defer mod.op.Unlock()
 	mod.reset()
+	if v, e := m.liveVoice(); e == nil {
+		if sink, ok := v.(interface{ SetScreenAudio(*voice.Screen) }); ok {
+			sink.SetScreenAudio(nil)
+		}
+	}
 	bound, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	mod.mu.Lock()

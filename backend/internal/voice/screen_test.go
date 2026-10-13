@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/disgoorg/godave"
+	"github.com/disgoorg/snowflake/v2"
+	"github.com/hraban/opus"
 	dvoice "github.com/mattcalayo/omarchy-discord/backend/internal/voicewire"
 	"golang.org/x/crypto/chacha20poly1305"
 )
@@ -44,7 +46,7 @@ func (g *screenGatewayFixture) Open(ctx context.Context, st dvoice.State) error 
 	g.state = st
 	g.handler(g, dvoice.OpcodeReady, 1, dvoice.GatewayMessageDataReady{IP: "127.0.0.1", Port: g.port, SSRC: 100, Modes: []dvoice.EncryptionMode{dvoice.EncryptionModeAEADXChaCha20Poly1305RTPSize}})
 	g.handler(g, dvoice.OpcodeSessionDescription, 2, dvoice.GatewayMessageDataSessionDescription{Mode: dvoice.EncryptionModeAEADXChaCha20Poly1305RTPSize, SecretKey: g.key})
-	g.handler(g, dvoice.OpcodeVideo, 3, dvoice.GatewayMessageDataVideo{UserID: 123, VideoSSRC: 42})
+	g.handler(g, dvoice.OpcodeVideo, 3, dvoice.GatewayMessageDataVideo{UserID: 123, VideoSSRC: 42, AudioSSRC: 43})
 	return nil
 }
 func (g *screenGatewayFixture) Send(_ context.Context, op dvoice.Opcode, _ dvoice.GatewayMessageData) error {
@@ -184,6 +186,51 @@ func TestScreenTransportReceivesFrameAndClosesWithoutVoice(t *testing.T) {
 			t.Fatal("no screen JPEG", snapshot)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+	// Independent authenticated stream UDP must route real Opus to call output.
+	enc, err := opus.NewEncoder(sampleRate, channels, opus.AppAudio)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pcm := make([]int16, frameLen)
+	for i := range pcm {
+		pcm[i] = int16((i%100)*40 - 2000)
+	}
+	data := make([]byte, maxOpusBytes)
+	size, err := enc.Encode(pcm, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 6; i++ {
+		h := make([]byte, 12)
+		h[0] = 0x80
+		h[1] = 120
+		binary.BigEndian.PutUint16(h[2:], uint16(i))
+		binary.BigEndian.PutUint32(h[8:], 43)
+		nonce := make([]byte, 24)
+		binary.LittleEndian.PutUint32(nonce, nonceID)
+		nonceID++
+		wire := aead.Seal(h, nonce, data[:size], h)
+		wire = append(wire, nonce[:4]...)
+		if _, err = udp.WriteToUDP(wire, addr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	until = time.Now().Add(time.Second)
+	for screen.Snapshot().AudioPackets < 6 {
+		if time.Now().After(until) {
+			t.Fatal("stream Opus not routed", screen.Snapshot())
+		}
+		time.Sleep(time.Millisecond)
+	}
+	output := newReceiver(slog.Default(), func(snowflake.ID, bool) {})
+	defer output.Close()
+	engine := &Engine{audio: &audio{rx: output}}
+	engine.SetScreenAudio(screen)
+	mixed := make([]int16, frameLen)
+	output.read(mixed)
+	if rms(mixed) == 0 || screen.Snapshot().AudioDecodedAgeMS < 0 {
+		t.Fatal("stream audio not decoded/mixed")
 	}
 	// Terminal loss must reap the decoder without a Close action from the UI.
 	screen.video.mu.Lock()
