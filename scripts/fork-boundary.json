@@ -1,0 +1,507 @@
+{
+  "baseline": "7eef78b507f0dbaf578042876ca424f46d0be085",
+  "derived": [
+    "backend/internal/voicewire/"
+  ],
+  "derived_preserved": {
+    "backend/internal/voicewire/LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "backend/internal/voicewire/OMACORD-PATCH.md": "fe31bb25c25b92c09c4543fc0379d7237860673b5977d9ca0cc4e7e305608fa9",
+    "backend/internal/voicewire/audio_receiver.go": "96f0287b936663975cbdb65a8ea97429892946e6f9173931801b5eb9053dbffe",
+    "backend/internal/voicewire/audio_sender.go": "ee0e642c4a8d7a19aacfc32a576697fca9b91ddfc87b7ef44465f62389507027",
+    "backend/internal/voicewire/camera_stages_test.go": "646e05c32cfb8f19bc5141119056bd8dc633c9e52847c27dea6e0d8677f0ce1c",
+    "backend/internal/voicewire/camera_transport_test.go": "18264828a859d86c485e97e2e6694933ee3d30e02e7bc7b21b96829f51c9157a",
+    "backend/internal/voicewire/conn.go": "fd3cc6d4a241c059fe14f6cd121629167314dacdbad168e1f28ad77dec7a2789",
+    "backend/internal/voicewire/conn_config.go": "b67e80bd1b9be415b4f7357b429bdc4cdf0d3ed90072ee4e27a92f088a4d090a",
+    "backend/internal/voicewire/doc.go": "d22716c2347955e8b79199f2c427919d7cb4d22ae7291c5739f4e1b7b51d4bcb",
+    "backend/internal/voicewire/encryption_modes.go": "cdd4390abfb03acfd0cb8cb5d836df04b2d58878682c394c603aeb5099d82f17",
+    "backend/internal/voicewire/feedback.go": "210c53874b73f8283de0f7df6dc5289ec5111d837f093c697ea7ae136a42bebb",
+    "backend/internal/voicewire/feedback_test.go": "68d70372b7198981ba7d80dd03fb739bcfede8f64386dc278e9dd8dab5921af4",
+    "backend/internal/voicewire/gateway.go": "7dbabb65da84d5a9eb7f7f889b8cba4b60546116f235f4cdb156a74ebad3d8d6",
+    "backend/internal/voicewire/gateway_config.go": "e4963353d47789b3f0f1d5f5d553d618e7581f4716f608c4e2c7071ea49787a4",
+    "backend/internal/voicewire/gateway_messages.go": "18f1d779d52a705ef230a27d92bddf5df02e96b598c1ea974283b2b91c8f4d35",
+    "backend/internal/voicewire/gateway_opcodes.go": "e28dbe052b7f8d89d3a4677bafc7654b97e397de9a8c11ae97a981c1c144499e",
+    "backend/internal/voicewire/manager.go": "845080b9b459100f7fdb095d123b063c28ba671fd4131dea76a819ebc7fc2711",
+    "backend/internal/voicewire/manager_config.go": "b22a5cd931fbb5b3ef27d62c3383ec2ae0ae4be60f87881bef43f2f2bedf0733",
+    "backend/internal/voicewire/media.go": "be907e41b3ba5c83f54b51310f3c1464e19d1620a1820e62ce9951f11f4d8cc2",
+    "backend/internal/voicewire/media_test.go": "30ac5a484870e0cb96b82c60e4bacd681dce0534cb0fb809a4ef37b7c1697ccf",
+    "backend/internal/voicewire/nack.go": "43056e587156ed1b24d2dfbec9981cd210b16bf895e5fca4c6553f831748173d",
+    "backend/internal/voicewire/nack_test.go": "0f5afec2cb7e24024ade63e47bcf10de5a30aed4313e528d491285759274bde6",
+    "backend/internal/voicewire/opus.go": "b9af6b28c956a801759f7864f0d6e9d0fc2877e7f663a18fe5be92d866978000",
+    "backend/internal/voicewire/rtx_test.go": "1d21f10363f5731de3abf3097dd3b09adef882fdc048daae692d5dec398a25fe",
+    "backend/internal/voicewire/udp_conn.go": "c6fb4f0a642b03f845a1f6f19ec34e1ddb2f63bf3a0fb98e02817920ea23481f",
+    "backend/internal/voicewire/udp_conn_config.go": "957434ba87a62d9d2f3e6174568bef494fa102393e6dd97067fbb5807b82d013",
+    "backend/internal/voicewire/udp_observation_test.go": "fbd0582a0d12c517838fe641edff6ddc5c6f46204cd17af40035320a7d3d8f74"
+  },
+  "documentation_restructure": "README fork-layer details moved losslessly to docs; reviewed hygiene snapshot",
+  "hooks": {
+    "Api.js": {
+      "added": 85,
+      "removed": 76
+    },
+    "BackendClient.qml": {
+      "added": 1,
+      "removed": 16
+    },
+    "BarWidget.qml": {
+      "added": 114,
+      "removed": 37
+    },
+    "DaemonManager.qml": {
+      "added": 29,
+      "removed": 23
+    },
+    "DiscordIcon.qml": {
+      "added": 14,
+      "removed": 39
+    },
+    "Emoji.js": {
+      "added": 0,
+      "removed": 36
+    },
+    "Keymap.js": {
+      "added": 103,
+      "removed": 229
+    },
+    "Markdown.js": {
+      "added": 0,
+      "removed": 51
+    },
+    "Panel.qml": {
+      "added": 71,
+      "removed": 2227
+    },
+    "QuickSwitch.qml": {
+      "added": 19,
+      "removed": 367
+    },
+    "README.md": {
+      "added": 25,
+      "removed": 519
+    },
+    "Service.qml": {
+      "added": 87,
+      "removed": 415
+    },
+    "backend/cmd/omarchy-discord-backend/main.go": {
+      "added": 5,
+      "removed": 27
+    },
+    "backend/dist/x86_64/omarchy-discord-backend": {
+      "added": null,
+      "removed": null,
+      "sha256": "87cf3af54776f5d1d2412dffce6650b124f882426e483d3893c61049748b2007"
+    },
+    "backend/internal/keyring/keyring.go": {
+      "added": 4,
+      "removed": 19
+    },
+    "backend/internal/keyring/keyring_test.go": {
+      "added": 2,
+      "removed": 3
+    },
+    "backend/internal/media/media.go": {
+      "added": 7,
+      "removed": 41
+    },
+    "backend/internal/media/media_test.go": {
+      "added": 1,
+      "removed": 7
+    },
+    "backend/internal/panics/panics.go": {
+      "added": 0,
+      "removed": 12
+    },
+    "backend/internal/protocol/golden_test.go": {
+      "added": 1,
+      "removed": 23
+    },
+    "backend/internal/protocol/protocol.go": {
+      "added": 0,
+      "removed": 28
+    },
+    "backend/internal/protocol/wire.go": {
+      "added": 46,
+      "removed": 139
+    },
+    "backend/internal/redact/redact.go": {
+      "added": 0,
+      "removed": 14
+    },
+    "backend/internal/redact/redact_test.go": {
+      "added": 0,
+      "removed": 2
+    },
+    "backend/internal/remoteauth/qr.go": {
+      "added": 0,
+      "removed": 2
+    },
+    "backend/internal/remoteauth/remoteauth.go": {
+      "added": 26,
+      "removed": 74
+    },
+    "backend/internal/remoteauth/remoteauth_test.go": {
+      "added": 2,
+      "removed": 16
+    },
+    "backend/internal/session/emoji.go": {
+      "added": 0,
+      "removed": 8
+    },
+    "backend/internal/session/events.go": {
+      "added": 0,
+      "removed": 12
+    },
+    "backend/internal/session/handlers.go": {
+      "added": 0,
+      "removed": 6
+    },
+    "backend/internal/session/manager.go": {
+      "added": 72,
+      "removed": 108
+    },
+    "backend/internal/session/manager_test.go": {
+      "added": 3,
+      "removed": 21
+    },
+    "backend/internal/session/mediacmd.go": {
+      "added": 0,
+      "removed": 2
+    },
+    "backend/internal/session/members.go": {
+      "added": 33,
+      "removed": 127
+    },
+    "backend/internal/session/members_test.go": {
+      "added": 1,
+      "removed": 33
+    },
+    "backend/internal/session/messages.go": {
+      "added": 30,
+      "removed": 51
+    },
+    "backend/internal/session/messages_test.go": {
+      "added": 8,
+      "removed": 70
+    },
+    "backend/internal/session/phase3_test.go": {
+      "added": 2,
+      "removed": 45
+    },
+    "backend/internal/session/qr.go": {
+      "added": 8,
+      "removed": 48
+    },
+    "backend/internal/session/qr_test.go": {
+      "added": 8,
+      "removed": 38
+    },
+    "backend/internal/session/quickswitch.go": {
+      "added": 1,
+      "removed": 30
+    },
+    "backend/internal/session/selfmember.go": {
+      "added": 1,
+      "removed": 11
+    },
+    "backend/internal/session/selfmember_test.go": {
+      "added": 0,
+      "removed": 14
+    },
+    "backend/internal/session/structure.go": {
+      "added": 6,
+      "removed": 16
+    },
+    "backend/internal/session/structure_test.go": {
+      "added": 11,
+      "removed": 29
+    },
+    "backend/internal/session/threads.go": {
+      "added": 0,
+      "removed": 7
+    },
+    "backend/internal/session/upload.go": {
+      "added": 1,
+      "removed": 11
+    },
+    "backend/internal/session/upload_test.go": {
+      "added": 2,
+      "removed": 9
+    },
+    "backend/internal/session/voice.go": {
+      "added": 209,
+      "removed": 36
+    },
+    "backend/internal/session/voice_test.go": {
+      "added": 7,
+      "removed": 45
+    },
+    "backend/internal/session/write.go": {
+      "added": 39,
+      "removed": 45
+    },
+    "backend/internal/session/write_test.go": {
+      "added": 1,
+      "removed": 10
+    },
+    "backend/internal/socket/server.go": {
+      "added": 34,
+      "removed": 85
+    },
+    "backend/internal/socket/server_test.go": {
+      "added": 5,
+      "removed": 40
+    },
+    "backend/internal/voice/audio.go": {
+      "added": 27,
+      "removed": 47
+    },
+    "backend/internal/voice/gateway.go": {
+      "added": 0,
+      "removed": 11
+    },
+    "backend/internal/voice/receive.go": {
+      "added": 84,
+      "removed": 41
+    },
+    "backend/internal/voice/voice.go": {
+      "added": 111,
+      "removed": 97
+    },
+    "backend/internal/voice/voice_test.go": {
+      "added": 140,
+      "removed": 38
+    },
+    "components/AttachmentChip.qml": {
+      "added": 28,
+      "removed": 125
+    },
+    "components/Avatar.qml": {
+      "added": 4,
+      "removed": 51
+    },
+    "components/CallBar.qml": {
+      "added": 214,
+      "removed": 43
+    },
+    "components/Cheatsheet.qml": {
+      "added": 7,
+      "removed": 14
+    },
+    "components/Composer.qml": {
+      "added": 75,
+      "removed": 49
+    },
+    "components/EmojiPicker.qml": {
+      "added": 11,
+      "removed": 41
+    },
+    "components/MemberList.qml": {
+      "added": 141,
+      "removed": 49
+    },
+    "components/MessageRow.qml": {
+      "added": 157,
+      "removed": 650
+    },
+    "components/Timeline.qml": {
+      "added": 157,
+      "removed": 134
+    },
+    "components/harness/Fixtures.js": {
+      "added": 0,
+      "removed": 5
+    },
+    "components/harness/MockService.qml": {
+      "added": 29,
+      "removed": 14
+    },
+    "components/harness/QuickSwitchStub.qml": {
+      "added": 0,
+      "removed": 4
+    },
+    "components/harness/api.test.js": {
+      "added": 14,
+      "removed": 9
+    },
+    "components/harness/markdown.test.js": {
+      "added": 0,
+      "removed": 15
+    },
+    "components/harness/panel.qml": {
+      "added": 0,
+      "removed": 46
+    },
+    "components/harness/run-panel.sh": {
+      "added": 2,
+      "removed": 32
+    },
+    "components/harness/run-selection.sh": {
+      "added": 0,
+      "removed": 8
+    },
+    "components/harness/run.sh": {
+      "added": 0,
+      "removed": 10
+    },
+    "components/harness/selection.qml": {
+      "added": 8,
+      "removed": 34
+    },
+    "components/harness/shell.qml": {
+      "added": 13,
+      "removed": 22
+    },
+    "manifest.json": {
+      "added": 7,
+      "removed": 7
+    },
+    "scripts/backend-runtime.sh": {
+      "added": 15,
+      "removed": 24
+    },
+    "scripts/build-backend.sh": {
+      "added": 14,
+      "removed": 18
+    },
+    "scripts/install-local.sh": {
+      "added": 5,
+      "removed": 10
+    },
+    "scripts/remove-runtime.sh": {
+      "added": 3,
+      "removed": 2
+    },
+    "scripts/setup.sh": {
+      "added": 0,
+      "removed": 21
+    }
+  },
+  "preserved": {
+    ".gitignore": "157f22ffc633e3eb65c10b7998c892ac68ff354b30cd3f7bca19b2303dfac4bf",
+    "LICENSE": "1cc4c5c12876b712b46988be352e712408f9208debabcc461908cdc8a2f97f5d",
+    "backend/.gitignore": "4ce02b2dbde06fd21ffd2c3bb307cb4ad83a06eb5b39fb230b423a5a8f7d7e5a",
+    "backend/go.mod": "042a6b576c9940afcf15c6043ff40080550cc55364e70b2d50bcdb899b44b2cd",
+    "backend/go.sum": "ffed8ca04886f2a97611dfa7366d3acbb36da3f4d57f6052b0694f7efab53755",
+    "backend/internal/protocol/testdata/event_channel_update_delete.json": "b6b1e6b55872364d753daa1752ad00e901603dfbfd7b467aac3d58742a5b9704",
+    "backend/internal/protocol/testdata/event_channel_update_thread_archived.json": "3f8bb1369f67816a8cefddcba0d673f96f6e1af1551ec4d60fb746554c614c71",
+    "backend/internal/protocol/testdata/event_channel_update_thread_create.json": "3c76e170270a07b57cb09453a0aa06f1f81a90213eb688e3976e7bafe54341df",
+    "backend/internal/protocol/testdata/event_guilds_synced.json": "baec24a98ed3107ab8e478fb51bb6af620d02c2f1fb70cb9e65985c391c598a2",
+    "backend/internal/protocol/testdata/event_guilds_synced_empty.json": "1937d96d3f8f6408511244309adf28c3211b43532319186f01e831fb5ba50a56",
+    "backend/internal/protocol/testdata/event_media_ready.json": "1cd8cb30a2f1d5d2b791beba2f7f2eee86b42278f3903715a446426949cab1eb",
+    "backend/internal/protocol/testdata/event_media_ready_failed.json": "a5efcfe695e128e9601019c14be94b4bb44aae4800b0ba80a0e7a0a454d65e0e",
+    "backend/internal/protocol/testdata/event_member_list_update.json": "23004139600a64a3bea7fa8ef7c79e9adf252e24c3462579b912acc848c2f0d9",
+    "backend/internal/protocol/testdata/event_member_list_update_dm.json": "66e9c40a655c6759bed46214c652f40be52667f35a60e0d9f3fea85bade5183c",
+    "backend/internal/protocol/testdata/event_member_list_update_empty.json": "fccf66ef2e89256f68e2c617c959f55223d5827cab9b06d99652dfddc38a292f",
+    "backend/internal/protocol/testdata/event_message_create.json": "da56d795131d0d7c34c7cd0535de69f637bc63e97ef6fef5bcf25e134daa7e7b",
+    "backend/internal/protocol/testdata/event_message_create_own_echo.json": "bf12482baf17caf1bf0b14a2f95799856d20c51e333c37c145e4f9fe47c7bdf5",
+    "backend/internal/protocol/testdata/event_message_delete.json": "f88965d56ba35be8878432068a719ba954cc34aa9ace8c8957ba9de07e18db7f",
+    "backend/internal/protocol/testdata/event_message_delete_dm.json": "349dc3093e06e687250cddbd2993b19a5ea63d3e88b2a008707c6a49b06a3505",
+    "backend/internal/protocol/testdata/event_message_update.json": "baf5b01268a3df64db19237ff26bf49c0bc6393b1b4cef73ebac4fbc094bfd73",
+    "backend/internal/protocol/testdata/event_presence_update.json": "cea7d7026ef7a69ca1fba3ff305c9ca7db04243f35f79e6c545d733046a91ed4",
+    "backend/internal/protocol/testdata/event_presence_update_offline.json": "911e972ead0754da52e9f94e045fb7b659379c93eae64cfcbca7d881988b65ca",
+    "backend/internal/protocol/testdata/event_qr_approved.json": "88fef01793897fb1eba4d8a6b14cdec1e34934cddbc982642c499127a60ff06f",
+    "backend/internal/protocol/testdata/event_qr_cancelled_declined.json": "9a5587b4f75c8318756a4ce9666f9cf6afa07cf1e8f7dbe0e296bbe6000d96e8",
+    "backend/internal/protocol/testdata/event_qr_cancelled_error.json": "414e6dbb25b5d5f5cdbce2c29b8b1b23573eac5072a3d654f93eff96b11c35fc",
+    "backend/internal/protocol/testdata/event_qr_cancelled_expired.json": "18178c41f2b39cf78417500b6cf4844538fb8a2f9c3c9a13611d09ffc7a54ae0",
+    "backend/internal/protocol/testdata/event_qr_code.json": "f7b674bbb722bc8a6ef60934d4213c7550eac5b0e86665e1679495c78448a064",
+    "backend/internal/protocol/testdata/event_qr_scanned.json": "0985469e337db75c6fff2e0b8005fc78e71082b9bfa4cac310a39cd2e3b42f55",
+    "backend/internal/protocol/testdata/event_read_state_changed.json": "b49050b2c482ee04a1fe29fd356e0d7502818cd2ca9dded68fa364f3080d6cc8",
+    "backend/internal/protocol/testdata/event_read_state_changed_dm_ack.json": "e6b05ec1ce27e2827ceb91e09ddc52cdfa0528231058570046692ff6a2dd2e8e",
+    "backend/internal/protocol/testdata/event_state_changed.json": "b120006b9632d358f4dda65ffa8211d77d63754d2822036dccb9c7e05591563e",
+    "backend/internal/protocol/testdata/event_typing_start.json": "170c35e22d276ea803f2c5e08a3dd4e268728b319297f1d45aa00f752528a7f7",
+    "backend/internal/protocol/testdata/event_upload_progress.json": "8a7c1ca2289f3ffb962978ce4e33c95b0b9e5487aba6cf1812c5e1cecb1f8ac4",
+    "backend/internal/protocol/testdata/event_upload_progress_final.json": "dde1d622f5fffa74169bb5702ee93abccd6e7b7b22db52b3ad6390d024b48650",
+    "backend/internal/protocol/testdata/event_voice_members.json": "fd1607a7802104bfcff5619da54302c08d5769c1149cf2c99efba0a45818e555",
+    "backend/internal/protocol/testdata/event_voice_members_empty.json": "44833de353bbcc2d4554e32a5afd5b673d27e71c1280ea94e3b84ccb78aa0a22",
+    "backend/internal/protocol/testdata/event_voice_speaking.json": "fa9b37786aacb68ebc0e37ad028ab2deff63fbdcee780cf3619773e5543dfb21",
+    "backend/internal/protocol/testdata/request_ack.json": "cc2c937e2a7f5f3eb89ef8fc7719a55742e65faa4a7020df9b3c7c39e705b151",
+    "backend/internal/protocol/testdata/request_cancel_qr_login.json": "a958202f1fcf85639913a04afab669418f0f9e6ebc48e933607188952f8442fb",
+    "backend/internal/protocol/testdata/request_close_channel.json": "c7f40c89a29757bdfe80d251cc87a38b402eff428ce895186c3d34733214d38b",
+    "backend/internal/protocol/testdata/request_delete.json": "47ac98803bb0aa457e5c75d9dea90160507fd4e817dd40fea48566c12acfc670",
+    "backend/internal/protocol/testdata/request_edit.json": "9f351c6c20ef8be435954d253f34d415ee46e8db72f92600baa63ec663b53de7",
+    "backend/internal/protocol/testdata/request_fetch_media.json": "66ca1058ec1d6956404db773c1b15757fb9ff0a96dbba6c7da87a80080003a6d",
+    "backend/internal/protocol/testdata/request_get_state.json": "f2fa15db7b9571c9eeab422da9e04da73ced61568c19ced1de7a070411c8d3ea",
+    "backend/internal/protocol/testdata/request_hello.json": "220e3efdf70f02852aafcf9c625edafc08ab785e7f2f6f7e4be5883749d40e21",
+    "backend/internal/protocol/testdata/request_history.json": "b9b98d09c541f11c572ba82af46a009efb0eff8304330e87a9831647fdf7bd88",
+    "backend/internal/protocol/testdata/request_history_default_limit.json": "9dc29a32e4dddda33e26f44beddc374916ad03439247e772dd503d1d31c12a73",
+    "backend/internal/protocol/testdata/request_list_channels.json": "b56472f447318bceaecbf37ba844b7ec84179ae022f1bc2172a5f5d0f151d4f4",
+    "backend/internal/protocol/testdata/request_list_dms.json": "94d17eb6ff35771565e675bbc92bb038aaf86a3c5372cc61596af5316b831c7f",
+    "backend/internal/protocol/testdata/request_list_emoji.json": "dcd27527c2600eb349593b2dd122deee9236a519057cef415004b118f0356f18",
+    "backend/internal/protocol/testdata/request_list_guilds.json": "7b3dc84b8fa374afb34e6f90ad2e1e592f73bcc6dfcd647504224a5008563f77",
+    "backend/internal/protocol/testdata/request_list_threads.json": "a0f9a42deba7808f528885d6dfffafb242e7b7b949e6993975606566f3905b6a",
+    "backend/internal/protocol/testdata/request_login.json": "e57c5617ead7a544d5f8f159fa759a5bbe2f12708b2bfed2ef40555f481b49b6",
+    "backend/internal/protocol/testdata/request_logout.json": "14d86798ac1c70a3ee8c26376f081f44351df2443fed3ab0c5cb6bf77f97c18d",
+    "backend/internal/protocol/testdata/request_open_channel.json": "503837107bff8402e425959dca9571e5ce29aefd232f884b35ea47ae2d7041a4",
+    "backend/internal/protocol/testdata/request_ping.json": "5dee81bd3707a8272084325d7ef5ddabf88ef9348c1fc5f2ed58a8fc8fc88b57",
+    "backend/internal/protocol/testdata/request_quick_switch.json": "9e0953a3e2c56abab9969e5dbd8074987e661e57fbb7e7140b4cbc2780b78e60",
+    "backend/internal/protocol/testdata/request_quick_switch_empty.json": "6fd8a2b99d7d29aaee93962385ea1bae8d6df454ab6349e6ea9dbfac19d9d075",
+    "backend/internal/protocol/testdata/request_react.json": "057f7d82252fedb2b1462faa137d4acb272fe603142a26cc6d10b1fde2b6acfd",
+    "backend/internal/protocol/testdata/request_send.json": "dc5878f5f98ac5e134f6a6554bdb9a72b5f776a293d2ed81d43639316571562c",
+    "backend/internal/protocol/testdata/request_send_no_mention.json": "37f48365ff269d4d84350b30727e8f38b86d3605be7f291240d27070483fc883",
+    "backend/internal/protocol/testdata/request_set_config.json": "bc21d23943a052d0afc9b81fb1591a424ef37a7c93ece9088322e6b4e6f31f7d",
+    "backend/internal/protocol/testdata/request_set_presence.json": "ce72b7c9066fae2c015153e7e962d1ea9cbb20bee03118c948639f2af572a4c9",
+    "backend/internal/protocol/testdata/request_start_qr_login.json": "aa9bdf10b4f49bb16343c7eb62a9e90a97d14b39eaf042de4c863b1472375e9e",
+    "backend/internal/protocol/testdata/request_subscribe_members.json": "ec133b758043274f0c4f84aa9c1081db901825c5d762d93565ff29b6b38b650d",
+    "backend/internal/protocol/testdata/request_typing.json": "d4214c4ce938fbd73a6176a0f623c748069836c9a86b5635d192aaaed7c71e6e",
+    "backend/internal/protocol/testdata/request_unreact_custom.json": "963718a2a1643fe827298730fc101cbd01d028d01a4502edf798ceba3697546a",
+    "backend/internal/protocol/testdata/request_unsubscribe_members.json": "ff682af5a10de79c4ab9c999cf0bef555d3b093fee14d71182ec3fbc22e8e08f",
+    "backend/internal/protocol/testdata/request_upload.json": "005cc0833d715be99778d21fae0a425f342caf8168bbfb7d2e2b43574ff39413",
+    "backend/internal/protocol/testdata/request_voice_join.json": "26dc389b827581749b1c222078df67336ee3f8b6b722afa7bdbeda23ed75cbfb",
+    "backend/internal/protocol/testdata/request_voice_leave.json": "cbd31b2ac3e4bb5dfa96608ca960e6f9f0203bea17736cfae62d86b133f4c9e7",
+    "backend/internal/protocol/testdata/request_voice_set.json": "7491ec57688a448b0f37364693af7beb778bd1e6f87de1f94b9c2291001f31ed",
+    "backend/internal/protocol/testdata/response_ack.json": "0c21df237f0eb77186303f32da0846705c6ac3cfbaf3b80abeccad9b6f8239cc",
+    "backend/internal/protocol/testdata/response_cancel_qr_login.json": "dee980a619512d8e69182caf91e3c60f621281cd10734c04d1575f58f16c68be",
+    "backend/internal/protocol/testdata/response_close_channel.json": "b8e9272c006b0a030df5906de52cbf886405a4796677b5cd2fd8b9af5c8aaa57",
+    "backend/internal/protocol/testdata/response_delete.json": "ed709bf678c49e5b1e08e9bda70dc2cb99e557141d18210d5c1d19035903f51c",
+    "backend/internal/protocol/testdata/response_edit.json": "c395e3ed10d11ffb1b77f74cd789970419f2607a40a9b4e096827e6bf8c07e85",
+    "backend/internal/protocol/testdata/response_empty_dm_refused.json": "9167703e25382dcee0b3e14a275142a615d3f17aec72f3f7695a57399a116c23",
+    "backend/internal/protocol/testdata/response_error.json": "432ebadcbfa0cf96d005b940ecd5c4d401f08371adbdd5244f89f3de322fcd27",
+    "backend/internal/protocol/testdata/response_fetch_media_hit.json": "3a251b9d5b2050676fe335b58689ca4cd16ceaeda390562f347b83afd450bccc",
+    "backend/internal/protocol/testdata/response_fetch_media_miss.json": "91f6a6305eb684cd70c85385d5ccc69caf2efbeeb9159dca2d74d0eae6e1a560",
+    "backend/internal/protocol/testdata/response_forbidden.json": "cd9ff1b511b809930500d2e29f2ddd5bd7a8fa1fe93eedce68f95c3724767d99",
+    "backend/internal/protocol/testdata/response_get_state.json": "39fac24960112f459e0b3b641255d6901651e8e828781a51ddeafaaf1e98d454",
+    "backend/internal/protocol/testdata/response_get_state_logged_out.json": "629260073d33f9f816176ffa38521876fbe008613ab89421911661feef5f3352",
+    "backend/internal/protocol/testdata/response_hello.json": "0840d13f6e717e11607bf2d93d5c92cdbf47b534438b427b172696166918dbd5",
+    "backend/internal/protocol/testdata/response_history.json": "fbf4aef13a1f328eb2ce71d0cb1a8bd5c978d2a559fd1bb8b1c97518e9990f11",
+    "backend/internal/protocol/testdata/response_history_empty.json": "6fded53d8c0d52ccb013f0e4a7da7898bc01c42ce0aa7f1be9e39b0422a057dd",
+    "backend/internal/protocol/testdata/response_invalid_request.json": "a1119f7d5d631227431aba0b81fc8da41e214108bbe6fd8fb298d2459427d735",
+    "backend/internal/protocol/testdata/response_list_channels.json": "6c3790172a1b02a8d8bc753af6d62fd3d1bfa81cb3c2d11acae3d68f143274a4",
+    "backend/internal/protocol/testdata/response_list_dms.json": "3a18430f9f83fc9e5db9ac13937057bfda18756424585681320f1ed3cb853081",
+    "backend/internal/protocol/testdata/response_list_emoji.json": "2c9637c0ac17e004b025d519b98a88c983fe18ea715a7fa46b661f150517952d",
+    "backend/internal/protocol/testdata/response_list_emoji_empty.json": "14cb6d2d0b94af22c58fad80e0198912572973c66876225ac37772e3c7c1ab97",
+    "backend/internal/protocol/testdata/response_list_guilds.json": "c2cf18a4d78a7af60c6d5f403b21c8131ea18dfffbf3ea794a95ac8db30231c7",
+    "backend/internal/protocol/testdata/response_list_threads.json": "4c48c331543d069c5761bde8d9c4fa5c15354896131906cc5b38ce7deba38e9a",
+    "backend/internal/protocol/testdata/response_list_threads_empty.json": "913124b3a4d6205cffe8cab83fc7d2a7f6df11e0abb7c42cc6c95035a0a7eb26",
+    "backend/internal/protocol/testdata/response_login.json": "d3687edd6d15a8460872226ce793a9f9593078aa075734554c91f2f519697891",
+    "backend/internal/protocol/testdata/response_logout.json": "3af0e5a416a3d8d497fb2fd65d753eb3f6713b64cc93d72fdfae0d958d684311",
+    "backend/internal/protocol/testdata/response_media_error.json": "ee29ec62e2593f48584dd4163e76ed152b7dfe2900bdf6c1c366baa66f7b03a4",
+    "backend/internal/protocol/testdata/response_open_channel.json": "bbc97b85dbaeb9365ee028c47857a7ad120b20ca979e2d7bf26bf508dee11df5",
+    "backend/internal/protocol/testdata/response_ping.json": "ceddbcd0f42ee8f64c5b4c4be7dc4d36d237691329087ec8885a4b32cccd6b1e",
+    "backend/internal/protocol/testdata/response_qr_unavailable.json": "c427fa4bf9091ae6faf15c1009b674fa86dda5ea57a55599e0fcab2029c19876",
+    "backend/internal/protocol/testdata/response_quick_switch.json": "c165e0e26e4631676971da3759d6d9da40bea7282508614426257ffa94bcb731",
+    "backend/internal/protocol/testdata/response_quick_switch_empty.json": "39f071e8eefc5d40e230c5a1b1555a493b2931cbfd4679bf3c9df207e452fc34",
+    "backend/internal/protocol/testdata/response_rate_limited.json": "4a69fa3c0927d1e5a2719e85af5754e9e489130fbddb6147ea0e10c6257a29db",
+    "backend/internal/protocol/testdata/response_react.json": "2dd62fc99d129f456ab681ed7c0163f7ee50b428ebc6e4673aa42e68c6a424ab",
+    "backend/internal/protocol/testdata/response_send.json": "d96a8b61d614788d50f85681a75fca3733ad600fba0b4c801573a940cbbe327b",
+    "backend/internal/protocol/testdata/response_set_config.json": "b57472e7cbe60f9dbbf33ed48f5c6ed07a829fad9ee6647cb60aed7727f7a9f1",
+    "backend/internal/protocol/testdata/response_set_presence.json": "fddb4d4567371b4fe18d9b8203b4e8bf654c7c75ea2f7ba34678ed1dd60dd37e",
+    "backend/internal/protocol/testdata/response_start_qr_login.json": "332a0f9a96618b52de31d13777e147ec57d35d5e4131921cb60229dc7f39aea4",
+    "backend/internal/protocol/testdata/response_subscribe_members.json": "5d5920e85d1355e886b35ece9b88150eacb08131d618b24372c892518ae79869",
+    "backend/internal/protocol/testdata/response_typing.json": "a20e94c41624b80f6c356a690511b6e2ca3d3597e77c01723a1ba95f14c42e65",
+    "backend/internal/protocol/testdata/response_unsubscribe_members.json": "b4f2a96a3fa5315666dc00c973663b670dafedf6524c15bce87a4f9db23bd9c0",
+    "backend/internal/protocol/testdata/response_upload.json": "9775f62a33fef550609c0639c253ae1896480c93c37828ecf037a8ddc673b13d",
+    "backend/internal/protocol/testdata/response_upload_too_large.json": "6bbb840ac99c1846555572abb93b17f59597e4313ad18369996643add82eee25",
+    "backend/internal/session/mediacmd_test.go": "db563c8e05b5ffa0e0886fba0759cf31154a7fc4a63363a301f22319899a75db",
+    "backend/internal/session/testdata/ready.json": "b0e1edc6f1340f54abadf20d0dd0e498d1d1b48b0808c851de04d418ae5b687f",
+    "systemd/omarchy-discord.service": "1ea44964b3e95b83292dd9490ab6ebfda38d993266e36da807392233d509abe6"
+  },
+  "removed": [
+    "backend/README.md",
+    "docs/BACKEND_PROTOCOL.md",
+    "docs/CONVENTIONS.md",
+    "docs/PLAN.md",
+    "docs/TECHNICAL.md"
+  ],
+  "schema": 1,
+  "upstream": "215f0ad32fc32d83187e389f118bed4262778451"
+}

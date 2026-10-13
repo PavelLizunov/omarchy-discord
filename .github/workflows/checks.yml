@@ -1,0 +1,40 @@
+name: Fork checks
+on:
+  push:
+    branches: ["checkpoint/**", "feature/**", "work/**", main]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Install native test dependencies
+        run: sudo apt-get update && sudo apt-get install -y libopus-dev ffmpeg
+      - name: Repository boundary and documentation
+        run: python3 scripts/check-repository.py
+      - name: Node and media boundaries
+        run: node --test tests/*.test.cjs components/harness/*.test.js && node tests/no-media.cjs
+      - name: Backend tests
+        working-directory: backend
+        run: go test -mod=readonly -tags nolibopusfile -count=1 -timeout=90s ./...
+      - name: Backend static analysis
+        working-directory: backend
+        run: go vet -mod=readonly -tags nolibopusfile ./...
+      - name: Build backend without changing the bundled artifact
+        working-directory: backend
+        run: go build -mod=readonly -tags nolibopusfile -trimpath -o "$RUNNER_TEMP/omacord-backend" ./cmd/omarchy-discord-backend

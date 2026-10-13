@@ -1,4 +1,6 @@
-# Verification scope
+# Historical verification snapshot
+
+This is retained evidence for the earlier text-UI candidate, not acceptance of the current checkout. The recorded Node/Qt counts and render environment below are historical. Use [current check commands](checks.md) for reproducible checks; distinguish them from actual installed-consumer and physical user acceptance.
 
 The lifecycle, source-freshness, QR event-order and default text-contrast fixes are accompanied by permanent Go and Node regressions. The UI usability fixes are covered by `tests/visual/tst_usability.qml` with inert account/device operations.
 
