@@ -11,7 +11,7 @@ import sys
 ROOT = Path(__file__).resolve().parent.parent
 
 def git(*args):
-    return subprocess.check_output(['git', '-C', str(ROOT), *args], stderr=subprocess.PIPE)
+    return subprocess.check_output(['git', '-C', str(ROOT), '-c', 'diff.algorithm=histogram', *args], stderr=subprocess.PIPE)
 
 def main():
     parser = argparse.ArgumentParser()
