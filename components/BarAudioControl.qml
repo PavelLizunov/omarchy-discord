@@ -65,7 +65,7 @@ Item {
   }
   function timeoutStop() { timeout.stop() }
   function toggleMicrophone() {
-    if (voice.deafened) return false
+    if (voice.deafened) return request({muted: false, deafened: false})
     return request({muted: !voice.muted})
   }
   function toggleSilence() {

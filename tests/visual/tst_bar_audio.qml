@@ -20,7 +20,7 @@ TestCase {
   verify(control.toggleSilence());verify(control.busy);verify(!control.toggleSilence())
   replies.shift()(true,{},"");verify(control.busy)
   service.voice={status:"connected",channelId:"1",muted:true,deafened:true};tryCompare(control,"busy",false)
-  verify(!control.toggleMicrophone());verify(control.toggleSilence());compare(requests[1].muted,false);compare(requests[1].deafened,false)
+  verify(control.toggleMicrophone());compare(requests[1].muted,false);compare(requests[1].deafened,false)
   service.voice={status:"connected",channelId:"1",muted:false,deafened:false};verify(control.busy)
   replies.shift()(true,{},"");tryCompare(control,"busy",false);verify(!control.hasSavedMute)
  }
@@ -29,6 +29,13 @@ TestCase {
   verify(control.toggleSilence());service.voice={status:"connected",channelId:"1",muted:true,deafened:true};replies.shift()(true,{},"")
   verify(control.toggleSilence());compare(requests[1].muted,true)
   service.voice={status:"connected",channelId:"1",muted:true,deafened:false};replies.shift()(true,{},"");verify(!control.hasSavedMute)
+ }
+ function test_left_restore_overrides_prior_muted_state(){
+  service.voice={status:"connected",channelId:"1",muted:true,deafened:false}
+  verify(control.toggleSilence());service.voice={status:"connected",channelId:"1",muted:true,deafened:true};replies.shift()(true,{},"")
+  verify(control.toggleMicrophone());compare(requests[1].muted,false);compare(requests[1].deafened,false)
+  replies.shift()(true,{},"");verify(control.busy)
+  service.voice={status:"connected",channelId:"1",muted:false,deafened:false};tryCompare(control,"busy",false);verify(!control.hasSavedMute)
  }
  function test_disconnect_cancels_late_result(){
   verify(control.toggleSilence());verify(control.busy)

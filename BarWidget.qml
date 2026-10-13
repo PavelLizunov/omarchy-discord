@@ -115,6 +115,7 @@ BarWidget {
         popupMapped:popup.backingWindowVisible, focusPrimed:popup.focusPrimed,
         compactWidth:popup.contentWidth, compactHeight:popup.contentHeight,
         quickMuteVisible:quickMute.visible, muteIconCount:quickMute.visible ? 1 : 0,
+        audioButtonWidth:quickMute.width, trailingPadding:quickMute.width-muteDrawing.x-muteDrawing.width,
         iconGap:root.vertical ? null : muteDrawing.mapToItem(root,0,0).x-mark.mapToItem(root,mark.width,0).x,
         iconSize:mark.width, iconReady:mark.iconStatus===Image.Ready, microphoneEnabled:quickMute.enabled, muteIconSize:muteDrawing.width, muteIconReady:muteDrawing.status === Image.Ready, inCall:root.inCall,
         muted:!!(root.discord && root.discord.voice && root.discord.voice.muted),
@@ -145,14 +146,14 @@ BarWidget {
     Keys.onSpacePressed: function(event) { triggerPress(event.modifiers & Qt.ShiftModifier ? Qt.RightButton : Qt.LeftButton) }
     x: root.vertical ? 0 : button.width
     y: root.vertical ? button.height : 0
-    fixedWidth: root.vertical ? root.barSize : Style.bar.statusSlot
+    fixedWidth: root.vertical ? root.barSize : Style.bar.statusSlot - Style.space(5)
     fixedHeight: root.vertical ? Style.bar.statusSlot : -1
     text: ""
     labelVisible: false
     hasVisualContent: true
     Image {
       id: muteDrawing
-      anchors.horizontalCenterOffset: root.vertical || root.badgeText ? 0 : -Style.space(5)
+      anchors.horizontalCenterOffset: root.vertical || root.badgeText ? 0 : -Style.space(2)
       objectName: "bar-mute-icon"
       anchors.centerIn: parent
       width: Math.round(Style.bar.iconCanvas * 0.75)
@@ -164,7 +165,7 @@ BarWidget {
     }
     active: root.callSilent
     tooltipText: !root.inCall ? "Audio controls unavailable · join a voice channel"
-      : root.discord.voice.deafened ? "Discord sound off · right click or Shift+Return to restore sound"
+      : root.discord.voice.deafened ? "Discord sound off · left click: enable microphone and sound · right click or Shift+Return: restore previous microphone state"
       : (root.discord.voice.muted ? "Left click: unmute microphone" : "Left click: mute microphone")
         + " · Right click or Shift+Return: mute microphone and Discord sound"
     onPressed: function(mouseButton) {

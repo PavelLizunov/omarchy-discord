@@ -16,16 +16,16 @@ test('bar left click opens only compact popup; right/middle keep explicit window
   assert.deepEqual(calls,['compact','full','middle']);
 });
 
-test('bar exposes one smaller SVG microphone without shrinking its click target', () => {
+test('bar exposes one smaller SVG microphone in its trimmed native target', () => {
  assert(!source.includes('id: callMark'));assert(!source.includes('callGlyph'));
  const mute=source.slice(source.indexOf('id: quickMute'),source.indexOf('onSettingsChanged:'));
- assert(mute.includes('width: Math.round(Style.bar.iconCanvas * 0.75)'));assert(mute.includes('height: width'));assert(mute.includes('fixedWidth: root.vertical ? root.barSize : Style.bar.statusSlot'));assert(mute.includes('fixedHeight: root.vertical ? Style.bar.statusSlot : -1'));assert(mute.includes('Icons.source('));assert(mute.includes('labelVisible: false'));
+ assert(mute.includes('width: Math.round(Style.bar.iconCanvas * 0.75)'));assert(mute.includes('height: width'));assert(mute.includes('fixedWidth: root.vertical ? root.barSize : Style.bar.statusSlot - Style.space(5)'));assert(mute.includes('fixedHeight: root.vertical ? Style.bar.statusSlot : -1'));assert(mute.includes('Icons.source('));assert(mute.includes('labelVisible: false'));
 });
 
 test('bar mark uses compact padding without overlapping the microphone target', () => {
  assert(source.includes('+ Style.space(5))'));assert(!source.includes('+ Style.space(17))'));
  assert(source.includes('x: root.vertical ? 0 : button.width'));
- assert(source.includes('root.vertical || root.badgeText ? 0 : -Style.space(5)'));
+ assert(source.includes('root.vertical || root.badgeText ? 0 : -Style.space(2)'));
  assert(source.includes('root.vertical || root.badgeText ? 0 : Style.space(1)'));
 });
 

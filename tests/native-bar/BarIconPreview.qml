@@ -56,22 +56,29 @@ Rectangle {
   if(mic.enabled===root.idle)throw Error("microphone admission incorrect")
   var before=service.callCount("voice_set")
   mic.triggerPress(Qt.LeftButton)
-  if(root.idle || root.deafened){if(service.callCount("voice_set")!==before)throw Error("unavailable microphone changed flags")}
-  else {
+  if(root.idle){if(service.callCount("voice_set")!==before)throw Error("unavailable microphone changed flags")}
+  else if(root.deafened){
+   if(service.voice.muted || service.voice.deafened)throw Error("left click did not restore normal audio")
+  } else {
    if(service.callCount("voice_set")!==before+1 || service.voice.muted===root.muted)throw Error("mute did not toggle")
    if(widget.opened || service.voice.deafened || service.voice.channelId!=="2")throw Error("microphone changed unrelated state")
    mic.triggerPress(Qt.LeftButton)
    if(service.voice.muted!==root.muted)throw Error("second click did not restore")
   }
+  service.voice={status:root.idle?"idle":"connected",guildId:"1",channelId:root.idle?"":"2",muted:root.muted,deafened:root.deafened}
   var current=service.callCount("voice_set")
   mic.triggerPress(Qt.RightButton)
   if(root.idle){if(service.callCount("voice_set")!==current)throw Error("idle right click changed flags")}
   else {
    if(service.voice.deafened===root.deafened)throw Error("right click did not toggle listening")
    if(!root.deafened && !service.voice.muted)throw Error("silence left microphone on")
-   if(!root.deafened){mic.triggerPress(Qt.LeftButton);if(!service.voice.muted)throw Error("left click escaped silence")}
    mic.triggerPress(Qt.RightButton)
    if(!root.deafened && service.voice.muted!==root.muted)throw Error("silence did not restore previous mute")
+   if(!root.deafened){
+    mic.triggerPress(Qt.RightButton)
+    mic.triggerPress(Qt.LeftButton)
+    if(service.voice.muted || service.voice.deafened)throw Error("right then left did not restore normal audio")
+   }
   }
   service.voice={status:root.idle?"idle":"connected",guildId:"1",channelId:root.idle?"":"2",muted:root.muted,deafened:root.deafened}
   readyTimer.start()
@@ -82,7 +89,7 @@ Rectangle {
   if(a&&b&&a.iconStatus===Image.Ready&&b.status===Image.Ready){
    var mic=root.find(widget,"bar-quick-mute")
    if(b.width!==Math.round(a.width*0.75)||b.height!==b.width)throw Error("microphone hierarchy incorrect")
-   if(mic.width!==Host.Style.bar.statusSlot||mic.height!==host.barSize)throw Error("microphone click target shrunk")
+   if(mic.width!==Host.Style.bar.statusSlot-Host.Style.space(5)||mic.height!==host.barSize)throw Error("microphone target size incorrect")
    var main=root.find(widget,"bar-compact-toggle")
    if(mic.x<main.x+main.width)throw Error("click targets overlap")
    if(root.mentions===0){
