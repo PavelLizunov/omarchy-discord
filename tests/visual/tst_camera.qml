@@ -13,18 +13,24 @@ Item {
   property string cameraError:""
   property bool rejectWatch:false
  property string frameImage:""
+ property string selectedUser:""
+ property string selectedKind:"camera"
+ property int selectedQuality:360
+ property bool deferReplies:false
+ property var replies:[]
+ function deliver(){var next=replies[0];replies=replies.slice(1);next.callback(true,next.result,"")}
   function voiceUsers(g,c){return [{id:"123",display_name:"Ada"}]}
-  function sendCommand(name,p,callback){if(name==="video_watch" && rejectWatch && p.kind!=="stop"){callback(false,null,"Screen handshake timed out");return 1}calls=calls.concat([{name:name,user:p.user_id || "",kind:p.kind || ""}]);callback(true,{streams:[{user_id:"123",ssrc:42}],choices:[{user_id:"123",kind:"camera"},{user_id:"123",kind:"screen"}],quality:p.quality || 360,screen:{audio_volume:p.volume===undefined?100:p.volume},kind:p.kind || "camera",user_id:name==="video_watch"?p.user_id:"",image:frameImage,age_ms:-1,error:cameraError},"");return 1}
+  function sendCommand(name,p,callback){if(name==="video_watch" && rejectWatch && p.kind!=="stop"){callback(false,null,"Screen handshake timed out");return 1}calls=calls.concat([{name:name,user:p.user_id || "",kind:p.kind || ""}]);if(name==="video_watch"){selectedUser=p.user_id || "";selectedKind=p.kind || "camera"}if(p.quality!==undefined)selectedQuality=p.quality;var result={streams:[{user_id:"123",ssrc:42}],choices:[{user_id:"123",kind:"camera"},{user_id:"123",kind:"screen"}],quality:selectedQuality,screen:{audio_volume:p.volume===undefined?100:p.volume},kind:selectedKind,user_id:selectedUser,image:frameImage,age_ms:-1,error:cameraError};if(deferReplies)replies=replies.concat([{callback:callback,result:result}]);else callback(true,result,"");return 1}
  }
  Components.CameraView {id:camera;anchors.fill:parent;service:service}
  TestCase {
   name:"CameraMVP";when:windowShown
-  function cleanup(){camera.hide();service.cameraError="";service.rejectWatch=false;service.frameImage=""}
+  function cleanup(){service.deferReplies=false;camera.hide();service.replies=[];service.cameraError="";service.rejectWatch=false;service.frameImage="";service.selectedUser="";service.selectedKind="camera";service.selectedQuality=360}
   function test_backend_error_visible_and_cleared(){
    camera.open();service.cameraError="Camera changed. Select it again.";camera.watch("123")
    compare(camera.error,service.cameraError)
    camera.poll();compare(camera.error,service.cameraError)
-   service.cameraError="";camera.poll();compare(camera.error,"Stream ended or voice reconnected. Select a stream to resume.")
+   service.cameraError="";camera.poll();compare(camera.error,"")
   }
   function test_choose_and_close(){
    camera.open();compare(camera.shown,true);compare(camera.sample.streams.length,1)
@@ -52,6 +58,32 @@ Item {
    camera.open();camera.watch("123","screen")
    camera.settings({volume:35});compare(service.calls[service.calls.length-1].name,"video_settings");compare(camera.sample.screen.audio_volume,35)
    camera.settings({quality:720});compare(camera.sample.quality,720)
+  }
+  function test_choice_click_during_poll_is_not_lost(){
+   camera.open();wait(30);var choice=findChild(camera,"video-choice-screen-123");verify(choice!==null)
+   service.deferReplies=true;camera.poll();verify(camera.busy)
+   mouseClick(choice,choice.width/2,choice.height/2)
+   service.deliver()
+   compare(service.calls[service.calls.length-1].name,"video_watch")
+   compare(service.calls[service.calls.length-1].kind,"screen")
+   service.deliver();compare(camera.sample.kind,"screen")
+   compare(camera.sample.user_id,"123")
+  }
+  function test_choices_are_not_recreated_by_image_polls(){
+   camera.open();var choice=findChild(camera,"video-choice-screen-123")
+   choice.forceActiveFocus();camera.poll();wait(10)
+   compare(findChild(camera,"video-choice-screen-123"),choice);verify(choice.activeFocus)
+  }
+  function test_quality_keys_during_poll_queue_correct_value(){
+   camera.open();camera.watch("123","screen")
+   var quality=findChild(camera,"video-quality");quality.forceActiveFocus()
+   service.deferReplies=true;camera.poll();verify(quality.enabled)
+   keyClick(Qt.Key_Space);tryCompare(quality.popup,"visible",true)
+   keyClick(Qt.Key_Down)
+   service.deliver()
+   keyClick(Qt.Key_Return)
+   compare(service.calls[service.calls.length-1].name,"video_settings")
+   service.deliver();compare(camera.sample.quality,720)
   }
   function test_escape_stops(){camera.open();camera.watch("123");camera.forceActiveFocus();keyClick(Qt.Key_Escape);compare(camera.shown,false);compare(service.calls[service.calls.length-1].user,"")}
  }
