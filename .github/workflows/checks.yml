@@ -38,3 +38,16 @@ jobs:
       - name: Build backend without changing the bundled artifact
         working-directory: backend
         run: go build -mod=readonly -tags nolibopusfile -trimpath -o "$RUNNER_TEMP/omacord-backend" ./cmd/omarchy-discord-backend
+  qml:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install private display dependencies
+        run: sudo apt-get update && sudo apt-get install -y xvfb xauth libgtk-3-0 libxcb-cursor0 libxkbcommon-x11-0
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.12.0'
+          cache: true
+      - name: QML interaction checks in a private display
+        run: QML_TEST_RUNNER="$QT_ROOT_DIR/bin/qmltestrunner" bash scripts/check-qml.sh

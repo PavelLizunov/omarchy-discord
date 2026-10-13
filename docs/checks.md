@@ -1,6 +1,6 @@
 # Checks and troubleshooting
 
-Run these checks in an isolated worker or the repository CI, not against the live account. CI covers the repository guard, Node and Go checks. Host-specific Qt and Quickshell acceptance remains separate.
+Run these checks in an isolated worker or the repository CI, not against the live account. CI covers the repository guard, Node and Go checks. Run QML interaction checks with `bash scripts/check-qml.sh`: it uses a private Xvfb display and the GTK platform theme rather than the live desktop. The plain offscreen runner below does not reproduce GTK activation defaults and can fail keyboard-driven button scenarios. Native Quickshell bar imports remain a separate host check.
 
 ```sh
 python3 scripts/check-repository.py
