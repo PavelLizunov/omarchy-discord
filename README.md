@@ -4,11 +4,13 @@ A text-focused Discord client for Omarchy Quattro, with a native panel, channel 
 
 The plugin runs with your user permissions inside the shared Omarchy shell. The backend connects to Discord, stores a sign-in token through Secret Service, and uses a user systemd service. This is an unofficial client; use it at your own risk.
 
-## First beta: 0.1.0
+## Video prerelease: 0.2.0-beta.1
 
-This is the first Omacord beta checkpoint, published as GitHub tag `v0.1.0` and marked as a prerelease. It is a development baseline, not a stable-release certification. See [CHANGELOG.md](CHANGELOG.md) for included changes and known limitations.
+GitHub tag `v0.2.0-beta.1` freezes the reviewed experimental video checkpoint. Download the complete plugin archive, rather than only the backend binary, and verify it against the release checksums. See [CHANGELOG.md](CHANGELOG.md) for features and known limitations.
 
-The release includes a complete plugin archive with the tested Linux x86_64 backend, plus the backend binary and SHA-256 checksums as separate assets. The binary alone is not the plugin; extract the plugin archive and use the installer below. Voice audio and recovery still need live acceptance. Video, participant streams and remote image previews are not supported.
+Screen video and audio have bounded live evidence, while live webcam delivery and the latest different-sender switching repair remain unverified. Video presentation is limited to 5 JPEG updates per second. Quality is an output cap and server hint, not a promise of remote source detail. This is a prerelease for testing, not stable-release certification.
+
+The earlier immutable `v0.1.0` beta remains available and does not contain video viewing. The forthcoming icon redesign is separate from this release.
 
 ## Requirements and installation
 

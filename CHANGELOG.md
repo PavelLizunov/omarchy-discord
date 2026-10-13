@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.2.0-beta.1 — Video preview
+
+This prerelease freezes the reviewed video development checkpoint. It is available for testing, not a stable or fully verified video client. It does not include the next icon redesign.
+
+### Included
+
+- Experimental authenticated H.264 camera and Go Live receiving paths, with bounded access-unit assembly, explicit RTX mapping and missing-packet feedback.
+- A separate movable video window that remains open when the main client closes or switches Compact.
+- Screen Opus playback through the existing call output, independent stream volume from 0 to 200 percent, and local participant mute/deafen integration.
+- Requested 360p, 720p and 1080p output caps and server pixel hints; the remote sender may supply less detail.
+- Two image slots retain the current frame until the next JPEG is ready.
+- Stream and quality actions queued behind frame polling, with stable stream-choice controls and delayed-response mouse/keyboard regressions.
+- Voice-first compact popup, participant local audio controls, presence display and guarded backend recovery.
+
+### Evidence and limitations
+
+Real authenticated screen video and screen audio decoding/output were observed on this installation. This does not establish physical audibility, uninterrupted voice stability, live webcam delivery or switching between different live senders. The last control repair passed actual offscreen mouse and keyboard checks; no sender was available for its final live switching check.
+
+Presentation remains JPEG-based at up to 5 updates per second, not smooth full-rate video. Only H.264 video is supported. Audio/video synchronization and automatic stream reconnect are not implemented. Discord voice error 4006 and upstream lifecycle problems may still interrupt a call. Attachments remain links, not remote image previews.
+
+Exact release checks are listed in the GitHub release notes. Direct source review is not independent certification. This unofficial client runs inside the shared Omarchy shell with the user's permissions; installation and reload can affect other panels. Original MIT attribution and the pinned transport license are retained.
+
 ## 0.1.0 — First beta
 
 The first published Omacord checkpoint. GitHub tag: `v0.1.0`; prerelease status: beta. This fork builds on the existing Omarchy Discord client; the original MIT attribution is retained.

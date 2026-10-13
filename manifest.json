@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "quickshell.discord",
   "name": "Omarchy Discord",
-  "version": "0.1.0",
+  "version": "0.2.0-beta.1",
   "author": "Matt Calayo",
   "license": "MIT",
-  "description": "Text-only Discord client as an Omarchy shell plugin: themed panel and bar widget in front of a small native backend.",
+  "description": "Discord client for Omarchy with text chat, voice and experimental H.264 screen and camera viewing.",
   "kinds": ["service", "bar-widget", "panel"],
   "keepLoaded": true,
   "entryPoints": {
