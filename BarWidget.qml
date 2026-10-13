@@ -90,8 +90,8 @@ BarWidget {
     if (discord) discord.applySettings(settings)
   }
 
-  implicitWidth: vertical ? button.implicitWidth : button.implicitWidth + (inCall ? quickMute.implicitWidth : 0)
-  implicitHeight: button.implicitHeight + (vertical && inCall ? quickMute.implicitHeight : 0)
+  implicitWidth: vertical ? button.implicitWidth : button.implicitWidth + quickMute.implicitWidth
+  implicitHeight: button.implicitHeight + (vertical ? quickMute.implicitHeight : 0)
 
   QuickPopup {
     id: popup
@@ -112,7 +112,7 @@ BarWidget {
         popupMapped:popup.backingWindowVisible, focusPrimed:popup.focusPrimed,
         compactWidth:popup.contentWidth, compactHeight:popup.contentHeight,
         quickMuteVisible:quickMute.visible, muteIconCount:quickMute.visible ? 1 : 0,
-        iconSize:mark.width, muteIconSize:muteDrawing.width, muteIconReady:muteDrawing.status === Image.Ready, inCall:root.inCall,
+        iconSize:mark.width, iconReady:mark.iconStatus===Image.Ready, microphoneEnabled:quickMute.enabled, muteIconSize:muteDrawing.width, muteIconReady:muteDrawing.status === Image.Ready, inCall:root.inCall,
         muted:!!(root.discord && root.discord.voice && root.discord.voice.muted),
         backendReady:!!(root.discord && root.discord.ready),
         callView:popup.content.callView,
@@ -129,7 +129,14 @@ BarWidget {
     height: implicitHeight
     objectName: "bar-quick-mute"
     bar: root.bar
-    visible: root.inCall
+    visible: true
+    enabled: !!(root.discord && root.discord.ready && root.inCall)
+    dimmed: !root.inCall
+    activeFocusOnTab: true
+    Accessible.role: Accessible.Button
+    Accessible.name: tooltipText
+    Keys.onReturnPressed: triggerPress(Qt.LeftButton)
+    Keys.onSpacePressed: triggerPress(Qt.LeftButton)
     x: root.vertical ? 0 : button.width
     y: root.vertical ? button.height : 0
     fixedWidth: root.vertical ? root.barSize : Style.bar.statusSlot
@@ -143,14 +150,15 @@ BarWidget {
       anchors.centerIn: parent
       width: Style.bar.iconCanvas
       height: width
-      sourceSize.width: Math.ceil(width * 2)
-      sourceSize.height: Math.ceil(height * 2)
-      source: Icons.source(root.discord && root.discord.voice.muted ? "microphoneOff" : "microphone",
-        root.discord && root.discord.voice.muted ? PluginTheme.Color.urgent : root.foreground)
+      sourceSize.width: Math.max(1, Math.ceil(width * Screen.devicePixelRatio))
+      sourceSize.height: Math.max(1, Math.ceil(height * Screen.devicePixelRatio))
+      source: Icons.source(root.discord && root.discord.voice.muted ? "barMicrophoneOff" : "barMicrophone",
+        root.discord && root.discord.voice.muted ? PluginTheme.Color.urgent : root.foreground, sourceSize.width)
     }
     active: !!(root.discord && root.discord.voice.muted)
-    tooltipText: root.discord && root.discord.voice.muted ? "Unmute microphone" : "Mute microphone"
-    onPressed: function(mouseButton) { if (mouseButton === Qt.LeftButton && root.discord) root.discord.toggleMute() }
+    tooltipText: !root.inCall ? "Microphone unavailable · join a voice channel" : root.discord && root.discord.voice.muted ? "Unmute microphone" : "Mute microphone"
+    onPressed: function(mouseButton) { if (mouseButton === Qt.LeftButton && enabled && root.discord) root.discord.toggleMute() }
+    Rectangle {anchors.fill:parent;visible:quickMute.activeFocus;color:"transparent";border.width:1;border.color:root.foreground}
   }
 
   onSettingsChanged: syncSettings()

@@ -22,6 +22,14 @@ test('bar exposes one equal-sized SVG microphone, not a second status glyph', ()
  assert(mute.includes('width: Style.bar.iconCanvas'));assert(mute.includes('height: width'));assert(mute.includes('Icons.source('));assert(mute.includes('labelVisible: false'));
 });
 
+test('bar microphone remains discoverable but idle clicks cannot change the call', () => {
+ const mute=source.slice(source.indexOf('id: quickMute'),source.indexOf('onSettingsChanged:'));
+ assert(mute.includes('visible: true'));assert(mute.includes('enabled: !!(root.discord && root.discord.ready && root.inCall)'));
+ assert(mute.includes('Keys.onReturnPressed')&&mute.includes('Keys.onSpacePressed'));
+ assert(mute.includes('enabled && root.discord'));
+ assert(mute.includes('barMicrophoneOff')&&mute.includes('barMicrophone'));
+});
+
 test('compact popup uses native keyboard ownership and the real search focus target', () => {
   const popup=fs.readFileSync(new URL('../QuickPopup.qml', `file://${__filename}`),'utf8');
   const view=fs.readFileSync(new URL('../components/QuickView.qml', `file://${__filename}`),'utf8');

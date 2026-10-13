@@ -2,6 +2,7 @@ import QtQuick
 import QtTest
 import "../../ui"
 import "../../ui/Icons.js" as Icons
+import "../../" as Plugin
 
 TestCase {
   name: "ActionIcons"
@@ -31,6 +32,16 @@ TestCase {
     button.enabled=false;button.forceActiveFocus();spy.clear()
     keyClick(Qt.Key_Return);keyClick(Qt.Key_Space);mouseClick(button,button.width/2,button.height/2)
     compare(spy.count,0);button.enabled=true
+  }
+  Plugin.DiscordIcon {id:mark;iconSize:16}
+  function test_solid_stepped_mark_and_decode_size(){
+    verify(Icons.svg("omacord","#d8dee9",32).indexOf('viewBox="0 0 16 16"')>=0)
+    verify(Icons.svg("omacord","#d8dee9",32).indexOf('fill-rule="evenodd"')>=0)
+    verify(Icons.svg("barMicrophone","#d8dee9",32)!==Icons.svg("barMicrophoneOff","#d8dee9",32))
+    tryCompare(mark,"iconStatus",Image.Ready)
+    compare(mark.children[0].implicitWidth,Math.ceil(16*Screen.devicePixelRatio))
+    mark.iconSize=64;tryCompare(mark,"iconStatus",Image.Ready)
+    compare(mark.children[0].implicitWidth,Math.ceil(64*Screen.devicePixelRatio))
   }
   SignalSpy { id: spy; target: button; signalName: "clicked" }
 }

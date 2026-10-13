@@ -3,7 +3,7 @@ import "ui" as PluginTheme
 import "ui"
 import "ui/Icons.js" as Icons
 
-// Original outline mark, using the same stroke and palette as action icons.
+// Selected solid stepped mark, preserving the native optical canvas.
 Item {
   id: root
   property real iconSize: Style.font.icon
@@ -16,9 +16,9 @@ Item {
   Image {
     id: drawing
     anchors.fill: parent
-    source: Icons.source("omacord", root.color)
-    sourceSize.width: Math.ceil(root.width * 2)
-    sourceSize.height: Math.ceil(root.height * 2)
+    source: Icons.source("omacord", root.color, sourceSize.width)
+    sourceSize.width: Math.max(1, Math.ceil(root.width * Screen.devicePixelRatio))
+    sourceSize.height: Math.max(1, Math.ceil(root.height * Screen.devicePixelRatio))
     fillMode: Image.PreserveAspectFit
   }
 }
