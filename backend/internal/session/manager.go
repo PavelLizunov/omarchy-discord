@@ -628,6 +628,8 @@ func (m *Manager) Handle(ctx context.Context, req *protocol.Request) (any, *prot
 		return m.videoSnapshot()
 	case "video_watch":
 		return m.watchVideo(ctx, req)
+	case "video_settings":
+		return m.videoSettings(ctx, req)
 	case "voice_cameras":
 		return m.voiceCameras(ctx, req, false)
 	case "voice_watch_camera":

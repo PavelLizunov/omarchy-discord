@@ -423,3 +423,50 @@ func streamState(c streamCreateEvent, s streamServerEvent, self dsnowflake.ID, s
 	// for Go Live MLS, not the enclosing guild voice channel.
 	return dvoice.State{GuildID: server, ChannelID: channel, MediaGroupID: server - 1, MediaOnly: true, UserID: self, SessionID: session, Token: s.Token, Endpoint: host}, nil
 }
+
+func (m *Manager) videoSettings(ctx context.Context, req *protocol.Request) (any, *protocol.Error) {
+	var p struct {
+		Quality *int `json:"quality"`
+		Volume  *int `json:"volume"`
+	}
+	if err := req.Params(&p); err != nil {
+		return nil, err
+	}
+	if (p.Quality == nil && p.Volume == nil) || (p.Quality != nil && *p.Quality != 360 && *p.Quality != 720 && *p.Quality != 1080) || (p.Volume != nil && (*p.Volume < 0 || *p.Volume > 200)) {
+		return nil, protocol.Errorf(protocol.CodeInvalidArgument, "choose quality 360, 720 or 1080 and volume 0 to 200")
+	}
+	m.mu.Lock()
+	mod := m.video
+	m.mu.Unlock()
+	if mod == nil {
+		return nil, protocol.Errorf(protocol.CodeGatewayUnavailable, "video module unavailable")
+	}
+	mod.op.Lock()
+	defer mod.op.Unlock()
+	mod.mu.Lock()
+	screen := mod.screen
+	mod.mu.Unlock()
+	if screen != nil {
+		if err := screen.SetVideoSettings(ctx, p.Quality, p.Volume); err != nil {
+			return nil, protocol.Errorf(protocol.CodeDiscordError, "%v", err)
+		}
+	} else {
+		if p.Volume != nil {
+			return nil, protocol.Errorf(protocol.CodeInvalidArgument, "select a screen before changing stream volume")
+		}
+		v, e := m.liveVoice()
+		if e != nil {
+			return nil, e
+		}
+		sink, ok := v.(interface {
+			SetVideoQuality(context.Context, int) error
+		})
+		if !ok {
+			return nil, protocol.Errorf(protocol.CodeGatewayUnavailable, "video quality unavailable")
+		}
+		if err := sink.SetVideoQuality(ctx, *p.Quality); err != nil {
+			return nil, protocol.Errorf(protocol.CodeDiscordError, "%v", err)
+		}
+	}
+	return m.videoSnapshot()
+}

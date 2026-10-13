@@ -2,15 +2,19 @@ package voice
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"io"
 	"os/exec"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/disgoorg/godave"
@@ -40,6 +44,7 @@ type CameraSnapshot struct {
 	AssemblyDropped  uint64         `json:"assembly_dropped"`
 	ReorderWaits     uint64         `json:"reorder_waits"`
 	DuplicatePackets uint64         `json:"duplicate_packets"`
+	Quality          int            `json:"quality"`
 }
 type camera struct {
 	mu           sync.Mutex
@@ -55,6 +60,7 @@ type camera struct {
 	packetAt     time.Time
 	err          string
 	assembly     h264Assembly
+	quality      int
 }
 
 func newCamera() *camera {
@@ -134,7 +140,10 @@ func (v *camera) selectUser(id snowflake.ID) (uint32, error) {
 	if ssrc == 0 {
 		return 0, errors.New("camera is no longer available")
 	}
-	d, err := newCameraDecoder()
+	v.mu.Lock()
+	quality := v.quality
+	v.mu.Unlock()
+	d, err := newCameraDecoderQuality(quality)
 	if err != nil {
 		return 0, err
 	}
@@ -149,6 +158,10 @@ func (v *camera) snapshot() CameraSnapshot {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	s := CameraSnapshot{Streams: []CameraStream{}, AgeMS: -1, Packets: v.packets, Dispatched: v.dispatched, SSRCMismatch: v.ssrcMismatch, PacketAgeMS: -1}
+	s.Quality = v.quality
+	if s.Quality == 0 {
+		s.Quality = 360
+	}
 	s.AssemblyFrames = v.assembly.completed
 	s.AssemblyDropped = v.assembly.dropped
 	s.ReorderWaits = v.assembly.reordered
@@ -271,13 +284,18 @@ func (v *camera) sinkWants(selected uint32) dvoice.GatewayMessageDataUnknown {
 	}
 	if selected != 0 {
 		wants[fmt.Sprint(selected)] = 100
-		wants["pixelCounts"] = map[string]int{fmt.Sprint(selected): 640 * 360}
+		height := v.quality
+		if height == 0 {
+			height = 360
+		}
+		wants["pixelCounts"] = map[string]int{fmt.Sprint(selected): height * 16 / 9 * height}
 	}
 	data, _ := json.Marshal(wants)
 	return dvoice.GatewayMessageDataUnknown(data)
 }
 
 type cameraDecoder struct {
+	quality  atomic.Int64
 	mu       sync.Mutex
 	image    []byte
 	sequence uint64
@@ -289,14 +307,22 @@ type cameraDecoder struct {
 	done     chan struct{}
 }
 
-func newCameraDecoder() (*cameraDecoder, error) {
+func newCameraDecoder() (*cameraDecoder, error) { return newCameraDecoderQuality(360) }
+func newCameraDecoderQuality(height int) (*cameraDecoder, error) {
+	if height == 0 {
+		height = 360
+	}
+	if height != 360 && height != 720 && height != 1080 {
+		return nil, errors.New("choose 360, 720 or 1080 quality")
+	}
 	path, err := exec.LookPath("ffmpeg")
 	if err != nil {
 		return nil, errors.New("camera viewing requires ffmpeg")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	d := &cameraDecoder{cancel: cancel, frames: make(chan []byte, 4), done: make(chan struct{})}
-	d.cmd = exec.CommandContext(ctx, path, "-hide_banner", "-loglevel", "error", "-threads", "1", "-probesize", "32", "-analyzeduration", "0", "-protocol_whitelist", "pipe", "-max_pixels", "8294400", "-f", "h264", "-i", "pipe:0", "-an", "-vf", "scale=640:360:force_original_aspect_ratio=decrease:force_divisible_by=2", "-threads", "1", "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "5", "pipe:1")
+	d.quality.Store(int64(height))
+	d.cmd = exec.CommandContext(ctx, path, "-hide_banner", "-loglevel", "error", "-threads", "1", "-probesize", "32", "-analyzeduration", "0", "-protocol_whitelist", "pipe", "-max_pixels", "8294400", "-f", "h264", "-i", "pipe:0", "-an", "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2", "-threads", "1", "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "5", "pipe:1")
 	in, err := d.cmd.StdinPipe()
 	if err != nil {
 		cancel()
@@ -357,11 +383,17 @@ func (d *cameraDecoder) readImages(out io.Reader) {
 			}
 			if prev == 0xff && c == 0xd9 {
 				d.mu.Lock()
-				d.image = b
-				d.sequence++
-				d.at = time.Now()
-				d.err = ""
+				due := time.Since(d.at) >= 200*time.Millisecond
 				d.mu.Unlock()
+				if due {
+					resized := resizeVideoJPEG(b, int(d.quality.Load()))
+					d.mu.Lock()
+					d.image = resized
+					d.sequence++
+					d.at = time.Now()
+					d.err = ""
+					d.mu.Unlock()
+				}
 				b = nil
 			}
 		}
@@ -422,4 +454,27 @@ func (e *Engine) WatchCamera(ctx context.Context, id snowflake.ID, revision uint
 		}
 	}
 	return nil
+}
+
+func resizeVideoJPEG(b []byte, height int) []byte {
+	source, err := jpeg.Decode(bytes.NewReader(b))
+	if err != nil {
+		return b
+	}
+	bounds := source.Bounds()
+	if bounds.Dy() <= height {
+		return b
+	}
+	width := bounds.Dx() * height / bounds.Dy()
+	scaled := image.NewRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			scaled.Set(x, y, source.At(bounds.Min.X+x*bounds.Dx()/width, bounds.Min.Y+y*bounds.Dy()/height))
+		}
+	}
+	var out bytes.Buffer
+	if jpeg.Encode(&out, scaled, &jpeg.Options{Quality: 80}) != nil {
+		return b
+	}
+	return out.Bytes()
 }

@@ -14,7 +14,7 @@ Item {
   property bool rejectWatch:false
  property string frameImage:""
   function voiceUsers(g,c){return [{id:"123",display_name:"Ada"}]}
-  function sendCommand(name,p,callback){if(name==="video_watch" && rejectWatch && p.kind!=="stop"){callback(false,null,"Screen handshake timed out");return 1}calls=calls.concat([{name:name,user:p.user_id || "",kind:p.kind || ""}]);callback(true,{streams:[{user_id:"123",ssrc:42}],choices:[{user_id:"123",kind:"camera"},{user_id:"123",kind:"screen"}],kind:p.kind || "camera",user_id:name==="video_watch"?p.user_id:"",image:frameImage,age_ms:-1,error:cameraError},"");return 1}
+  function sendCommand(name,p,callback){if(name==="video_watch" && rejectWatch && p.kind!=="stop"){callback(false,null,"Screen handshake timed out");return 1}calls=calls.concat([{name:name,user:p.user_id || "",kind:p.kind || ""}]);callback(true,{streams:[{user_id:"123",ssrc:42}],choices:[{user_id:"123",kind:"camera"},{user_id:"123",kind:"screen"}],quality:p.quality || 360,screen:{audio_volume:p.volume===undefined?100:p.volume},kind:p.kind || "camera",user_id:name==="video_watch"?p.user_id:"",image:frameImage,age_ms:-1,error:cameraError},"");return 1}
  }
  Components.CameraView {id:camera;anchors.fill:parent;service:service}
  TestCase {
@@ -24,7 +24,7 @@ Item {
    camera.open();service.cameraError="Camera changed. Select it again.";camera.watch("123")
    compare(camera.error,service.cameraError)
    camera.poll();compare(camera.error,service.cameraError)
-   service.cameraError="";camera.poll();compare(camera.error,"")
+   service.cameraError="";camera.poll();compare(camera.error,"Stream ended or voice reconnected. Select a stream to resume.")
   }
   function test_choose_and_close(){
    camera.open();compare(camera.shown,true);compare(camera.sample.streams.length,1)
@@ -47,6 +47,11 @@ Item {
    compare(camera.imageReady,true)
    service.frameImage="";camera.poll();compare(camera.imageReady,true)
    camera.hide();compare(String(camera.displayedFrame.source),"")
+  }
+  function test_settings_use_separate_route(){
+   camera.open();camera.watch("123","screen")
+   camera.settings({volume:35});compare(service.calls[service.calls.length-1].name,"video_settings");compare(camera.sample.screen.audio_volume,35)
+   camera.settings({quality:720});compare(camera.sample.quality,720)
   }
   function test_escape_stops(){camera.open();camera.watch("123");camera.forceActiveFocus();keyClick(Qt.Key_Escape);compare(camera.shown,false);compare(service.calls[service.calls.length-1].user,"")}
  }

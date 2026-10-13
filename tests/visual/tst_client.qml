@@ -46,6 +46,17 @@ TestCase {
     compare(preview.model.voice.status,"connected");compare(preview.model.callCount("voiceLeave"),0)
     preview.client.open("{}");tests.width=oldWidth;preview.model.voice={status:"idle"}
   }
+  function test_video_stays_open_when_compact_client_closes() {
+    preview.model.voice={status:"connected",guildId:"1",channelId:"9002",muted:true,deafened:false}
+    preview.client.setCompactMode(true);preview.client.open("{}");preview.client.openCamera()
+    verify(preview.client.camera.shown)
+    var video=findChild(preview.client,"video-window")
+    verify(video!==null);verify(video.visible);verify(video.width>=420)
+    preview.client.close();verify(!preview.client.opened);verify(preview.client.camera.shown);verify(video.visible)
+    compare(preview.model.callCount("voiceLeave"),0)
+    preview.client.camera.hide();verify(!video.visible)
+    preview.model.voice={status:"idle"};preview.client.open("{}")
+  }
   function test_palette_is_defined_after_component_load() {
     compare(String(PluginTheme.Color.background), "#101315")
     verify(PluginTheme.Color.popups.background !== undefined)

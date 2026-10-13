@@ -155,6 +155,7 @@ type ScreenObservation struct {
 	PacketHeaders     map[string]uint64 `json:"packet_headers"`
 	ReceiveStages     map[string]uint64 `json:"receive_stages"`
 	EncryptionReady   bool              `json:"encryption_ready"`
+	AudioVolume       int               `json:"audio_volume"`
 	AudioPackets      uint64            `json:"audio_packets"`
 	AudioErrors       uint64            `json:"audio_errors"`
 	AudioDecodedAgeMS int64             `json:"audio_decoded_age_ms"`
@@ -165,6 +166,7 @@ func (s *Screen) Snapshot() ScreenSnapshot {
 	defer s.mu.Unlock()
 	r := ScreenSnapshot{CameraSnapshot: s.video.snapshot()}
 	if s.audio != nil {
+		r.AudioVolume = int(s.audio.volume.Load())
 		r.AudioPackets = s.audio.packets.Load()
 		r.AudioErrors = s.audio.errors.Load() + s.audio.rx.metrics.decodeErrors.Load()
 		r.AudioDecodedAgeMS = age(time.Now().UnixMilli(), s.audio.rx.metrics.decodedAt.Load())

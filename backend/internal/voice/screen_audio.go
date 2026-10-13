@@ -14,12 +14,15 @@ type screenAudio struct {
 	user    snowflake.ID
 	packets atomic.Uint64
 	errors  atomic.Uint64
+	volume  atomic.Int64
 }
 
 func newScreenAudio(log *slog.Logger, user snowflake.ID) *screenAudio {
 	r := newReceiver(log, func(snowflake.ID, bool) {})
 	r.metrics = &audioMetrics{}
-	return &screenAudio{rx: r, user: user}
+	a := &screenAudio{rx: r, user: user}
+	a.volume.Store(100)
+	return a
 }
 func (a *screenAudio) receive(user snowflake.ID, p *dvoice.Packet) {
 	if p.Type != 120 || user != a.user || user == 0 {
@@ -42,9 +45,9 @@ func (e *Engine) SetScreenAudio(s *Screen) {
 	r := e.audio.rx
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	var next *receiver
+	var next *screenAudio
 	if s != nil && s.audio != nil {
-		next = s.audio.rx
+		next = s.audio
 	}
 	if r.screen != next {
 		r.pending = nil

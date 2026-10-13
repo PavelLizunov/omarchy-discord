@@ -34,9 +34,10 @@ Item {
   readonly property bool opened: hostOpened
   property bool windowActive: false
   property bool mapped: false
-  readonly property bool reading: opened && mapped && windowActive && !cameraView.shown
+  readonly property bool reading: opened && mapped && windowActive
   property string screenName: ""
   signal closeRequested()
+  signal videoWindowOpened()
   signal linkRequested(string url)
   signal copyRequested(string text)
   readonly property alias timeline: timelineView
@@ -46,8 +47,9 @@ Item {
   readonly property alias members: membersView
   readonly property alias controls: headerControls
   property bool cameraPreviousChat: false
-  function openCamera() {cameraPreviousChat=compactChatOpen;cameraView.open();if(narrowLayout)compactChatOpen=true}
+  function openCamera() {cameraView.open()}
   readonly property alias camera: cameraView
+  readonly property alias videoWindow: videoWindow
   readonly property bool qrImageReady: qrImage.status === Image.Ready
   readonly property alias logoutConfirmation: logoutConfirm
   readonly property alias serverMenu: serverMenu
@@ -55,7 +57,7 @@ Item {
   readonly property alias helpButton: optionsHelp
   readonly property alias logoutButton: optionsLogout
   readonly property alias optionsButton: optionsButton
-  readonly property bool overlayShown: cameraView.shown || cheatsheetView.shown || pickerView.shown || logoutConfirm.shown || serverMenu.shown || optionsMenu.shown
+  readonly property bool overlayShown: cheatsheetView.shown || pickerView.shown || logoutConfirm.shown || serverMenu.shown || optionsMenu.shown
   readonly property bool compactMembers: false
   readonly property bool narrowLayout: compactView || width < Style.space(900)
   property bool navigationShown: false
@@ -1005,7 +1007,7 @@ Item {
   onWindowActiveChanged: publishActive()
   onReadingChanged: if (reading && ready && timelineView.pinned
     && (focusedZone === "timeline" || focusedZone === "composer")) ackTimer.restart()
-  onOpenedChanged: {if (!opened && cameraView.shown) cameraView.hide(); opened ? enter() : leave()}
+  onOpenedChanged: {opened ? enter() : leave()}
 
   onMappedChanged: publishMapped()
   onScreenNameChanged: publishScreen()
@@ -2507,14 +2509,30 @@ Item {
               width: Math.max(0, parent.width - x)
               height: root.voiceNavigation ? Math.min(Style.space(210), parent.height * 0.55) : parent.height
             }
-            Components.CameraView {
-              id: cameraView
-              objectName: "camera-view"
-              parent: channelContent
-              anchors.fill: parent
-              z: 20
-              service: root.service
-              onClosed: {root.compactChatOpen=root.cameraPreviousChat;root.focusZone()}
+            Window {
+              id: videoWindow
+              objectName: "video-window"
+              title: "Omacord Video"
+              transientParent: null
+              flags: Qt.Window | Qt.FramelessWindowHint
+              visible: cameraView.shown
+              width: 800; height: 580
+              minimumWidth: 420; minimumHeight: 360
+              color: PluginTheme.Color.background
+              onClosing: function(event) {cameraView.hide();event.accepted=false}
+              onVisibleChanged: {
+                if(root.service && typeof root.service.setUiVisible==="function")root.service.setUiVisible("video-window",visible)
+                if(visible)root.videoWindowOpened()
+              }
+              Component.onDestruction: if(root.service && typeof root.service.setUiVisible==="function")root.service.setUiVisible("video-window",false)
+              Components.CameraView {
+                id: cameraView
+                objectName: "camera-view"
+                anchors.fill: parent
+                service: root.service
+                onMoveRequested: videoWindow.startSystemMove()
+                onResizeRequested: videoWindow.startSystemResize(Qt.RightEdge | Qt.BottomEdge)
+              }
             }
             Column {
               id: chatColumn
