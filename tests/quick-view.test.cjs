@@ -16,10 +16,10 @@ test('bar left click opens only compact popup; right/middle keep explicit window
   assert.deepEqual(calls,['compact','full','middle']);
 });
 
-test('bar exposes one equal-sized SVG microphone, not a second status glyph', () => {
+test('bar exposes one smaller SVG microphone without shrinking its click target', () => {
  assert(!source.includes('id: callMark'));assert(!source.includes('callGlyph'));
  const mute=source.slice(source.indexOf('id: quickMute'),source.indexOf('onSettingsChanged:'));
- assert(mute.includes('width: Style.bar.iconCanvas'));assert(mute.includes('height: width'));assert(mute.includes('Icons.source('));assert(mute.includes('labelVisible: false'));
+ assert(mute.includes('width: Math.round(Style.bar.iconCanvas * 0.75)'));assert(mute.includes('height: width'));assert(mute.includes('fixedWidth: root.vertical ? root.barSize : Style.bar.statusSlot'));assert(mute.includes('fixedHeight: root.vertical ? Style.bar.statusSlot : -1'));assert(mute.includes('Icons.source('));assert(mute.includes('labelVisible: false'));
 });
 
 test('bar microphone remains discoverable but idle clicks cannot change the call', () => {

@@ -148,7 +148,7 @@ BarWidget {
       id: muteDrawing
       objectName: "bar-mute-icon"
       anchors.centerIn: parent
-      width: Style.bar.iconCanvas
+      width: Math.round(Style.bar.iconCanvas * 0.75)
       height: width
       sourceSize.width: Math.max(1, Math.ceil(width * Screen.devicePixelRatio))
       sourceSize.height: Math.max(1, Math.ceil(height * Screen.devicePixelRatio))

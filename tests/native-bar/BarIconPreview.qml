@@ -65,7 +65,12 @@ Rectangle {
  Timer{id:start;interval:30;running:true;onTriggered:root.check()}
  Timer{id:readyTimer;interval:20;repeat:true;property int ticks:0;onTriggered:{
   var a=root.find(widget,"bar-primary-icon"),b=root.find(widget,"bar-mute-icon")
-  if(a&&b&&a.iconStatus===Image.Ready&&b.status===Image.Ready){root.auditReady=true;stop()}
+  if(a&&b&&a.iconStatus===Image.Ready&&b.status===Image.Ready){
+   var mic=root.find(widget,"bar-quick-mute")
+   if(b.width!==Math.round(a.width*0.75)||b.height!==b.width)throw Error("microphone hierarchy incorrect")
+   if(mic.width!==Host.Style.bar.statusSlot||mic.height!==host.barSize)throw Error("microphone click target shrunk")
+   root.auditReady=true;stop()
+  }
   else if(++ticks>60)throw Error("icons not ready")
  }}
 }
