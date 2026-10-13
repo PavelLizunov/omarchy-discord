@@ -22,6 +22,11 @@ test('bar exposes one smaller SVG microphone without shrinking its click target'
  assert(mute.includes('width: Math.round(Style.bar.iconCanvas * 0.75)'));assert(mute.includes('height: width'));assert(mute.includes('fixedWidth: root.vertical ? root.barSize : Style.bar.statusSlot'));assert(mute.includes('fixedHeight: root.vertical ? Style.bar.statusSlot : -1'));assert(mute.includes('Icons.source('));assert(mute.includes('labelVisible: false'));
 });
 
+test('bar mark uses compact padding without overlapping the microphone target', () => {
+ assert(source.includes('+ Style.space(5))'));assert(!source.includes('+ Style.space(17))'));
+ assert(source.includes('x: root.vertical ? 0 : button.width'));
+});
+
 test('bar microphone remains discoverable but idle clicks cannot change the call', () => {
  const mute=source.slice(source.indexOf('id: quickMute'),source.indexOf('onSettingsChanged:'));
  assert(mute.includes('visible: true'));assert(mute.includes('enabled: !!(root.discord && root.discord.ready && root.inCall)'));

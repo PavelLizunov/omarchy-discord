@@ -11,12 +11,13 @@ Rectangle {
  property bool idle:false
  property bool light:false
  property bool auditReady:false
+ property int mentions:0
  property color ink:light?"#242424":"#d8dee9"
  color:light?"#fafafa":"#2e3440"
  Harness.MockService {
   id:service
   property bool ready:true
-  property int totalMentionCount:0
+  property int totalMentionCount:root.mentions
   property bool anyUnread:false
   function applySettings(values){}
   function toggleMute(){note("toggleMute");voice=Object.assign({},voice,{muted:!voice.muted});return true}
@@ -69,6 +70,12 @@ Rectangle {
    var mic=root.find(widget,"bar-quick-mute")
    if(b.width!==Math.round(a.width*0.75)||b.height!==b.width)throw Error("microphone hierarchy incorrect")
    if(mic.width!==Host.Style.bar.statusSlot||mic.height!==host.barSize)throw Error("microphone click target shrunk")
+   var main=root.find(widget,"bar-compact-toggle")
+   if(mic.x<main.x+main.width)throw Error("click targets overlap")
+   if(root.mentions===0){
+    var gap=b.mapToItem(widget,0,0).x-a.mapToItem(widget,a.width,0).x
+    if(gap>Host.Style.space(7)+0.5 || gap<0)throw Error("bar icons too far apart or overlapping")
+   }
    root.auditReady=true;stop()
   }
   else if(++ticks>60)throw Error("icons not ready")

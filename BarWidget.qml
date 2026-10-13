@@ -186,7 +186,7 @@ BarWidget {
     fixedWidth: root.vertical ? root.barSize
       : Math.max(Style.bar.statusSlot,
         mark.implicitWidth + (root.badgeText ? badgeMetrics.advanceWidth + Style.space(4) : 0)
-          + Style.space(17))
+          + Style.space(5))
     fixedHeight: root.vertical ? Style.bar.statusSlot : -1
 
     Row {
