@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.0-beta.2 — Bar audio and live server counters
+
+This testing prerelease includes the reviewed changes after beta.1. Earlier release tags and assets remain unchanged.
+
+### Included
+
+- The selected solid stepped application mark at 16 pixels, a smaller 12-pixel audio glyph, a 1-pixel canvas gap and reduced trailing padding.
+- Right-click on the bar audio control silences both microphone and Discord playback. Repeating it restores listening and the previous microphone preference. Left-click while silenced explicitly enables both directions. Other applications are unaffected.
+- Single-flight audio actions wait for both the command reply and matching voice state, with room/revision cancellation and a bounded timeout.
+- Active-voice server counts and filters synchronize all cached rosters on client load/open and every 15 seconds while the window is open, without browsing servers, joining voice or acknowledging messages.
+- Superseded server-stat responses cannot replace a newer snapshot after reconnect or service replacement.
+- Shorter installation documentation, preserved detailed guides, a pinned fork-boundary guard and isolated backend/QML continuous checks.
+
+### Evidence and limitations
+
+The installed counter was compared with all 17 backend guild rosters without navigation. Actual QML regressions cover unvisited guilds, repeated timers, delayed events/replies, disconnects and timeouts; the old client fails the new counter regression. Natural remote join/leave while the window is open remains unobserved. Cached rosters depend on upstream Discord events.
+
+The complete release checks are recorded in the GitHub notes. This is not a completed independent repository audit or stable-release certification. Physical bar clicks and audibility, live webcam delivery, different-sender transitions, long-running voice stability and recovery remain incomplete. The video limitations from beta.1 still apply: H.264 only, at most 5 JPEG updates per second, no smooth full-rate presentation, no audio/video synchronization or automatic stream reconnect.
+
 ## 0.2.0-beta.1 — Video preview
 
 This prerelease freezes the reviewed video development checkpoint. It is available for testing, not a stable or fully verified video client. It does not include the next icon redesign.
