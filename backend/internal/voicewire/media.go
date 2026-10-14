@@ -32,6 +32,21 @@ func (c *connImpl) OpenMedia(ctx context.Context, state State) error {
 	}
 }
 
+// OpenMediaSender enables H.264 negotiation only for a connection with an
+// authenticated video adapter. It never changes the main voice state.
+func (c *connImpl) OpenMediaSender(ctx context.Context, state State) error {
+	if _, ok := c.dave.(H264FrameEncryptor); !ok {
+		return errors.New("authenticated H264 sending is not supported by this DAVE adapter")
+	}
+	c.videoSend = true
+	if err := c.OpenMedia(ctx, state); err != nil {
+		c.mediaOnly = true
+		c.Close(context.Background())
+		return err
+	}
+	return nil
+}
+
 // Media group differs from the enclosing voice channel for Go Live.
 func mediaGroup(state State) godave.ChannelID {
 	if state.MediaGroupID != 0 {

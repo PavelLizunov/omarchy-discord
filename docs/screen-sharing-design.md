@@ -1,6 +1,6 @@
 # Outbound Discord screen sharing
 
-Status: implementation design with a tested H.264 RTP payload packetizer, not an available broadcasting feature. Receiving and publishing are different media owners; a working viewer does not imply a working sender.
+Status: portal source-selection helper and tested RTP sender foundations, not an available broadcasting feature. Receiving and publishing are different media owners; a working viewer does not imply a working sender.
 
 ## Product contract
 
@@ -20,7 +20,21 @@ Keep the main voice connection/account. Create an owned outbound stream using th
 
 This transport currently advertises H264 encode:false/decode:true. A sender must deliberately negotiate encode support and validate assigned video/RTX SSRCs; do not guess offsets. Map frame timing to a 90kHz RTP clock, fragment H.264 within MTU, preserve marker/access-unit boundaries, implement RTCP sender reports, PLI/FIR handling and bounded RTX history/NACK replies. The existing UDP Write method is Opus-specific and cannot send video safely. PacketizeH264 now converts one already-encrypted Annex B access unit into bounded single-NAL/FU-A payloads. A synthetic receiver-assembly roundtrip covers multi-packet units, sequence wrap, ownership and malformed/MTU/packet-budget rejection. It is not wired to a sender and does not perform encryption or network transmission. Add a dedicated video writer with separate sequence/timestamp state and shared authenticated transport nonce ownership.
 
-DAVE encrypts complete encoded access units before RTP fragmentation, followed by transport AEAD. The pinned dave-go codec implementation supports H.264 internally, but its godave Session adapter maps only CodecOpus; unknown codecs are not a supported sender route. Extend that owning adapter with a typed H.264 assignment or a small reviewed local wrapper, then test actual encrypted encode/decode. Never reuse Opus assignment or plaintext passthrough to pretend video is encrypted. This is a concrete prerequisite, not a solved feature.
+DAVE encrypts complete encoded access units before RTP fragmentation, followed by transport AEAD. The pinned dave-go version 0.5.1 explicitly rejects video encryption: codecs.supportedForEncrypt permits only Opus and unknown full-encrypt fallback. Its error documentation cites unaudited H.26x nonce retries and potential AES-GCM nonce reuse. The retained H.264 functions are not evidence of supported sending; the earlier design assumption was incorrect. Do not enable those paths by changing a codec constant or bypassing the rejection. A supported, reviewed video-capable DAVE adapter with MLS ownership and safe nonce allocation is the concrete unresolved integration dependency. No libdave shared library is installed here.
+
+VideoWriter now requires an explicit EncryptH264 adapter and ready epoch before fragmenting a complete encrypted access unit. It shares the transport AEAD write lock/nonce space, uses separately supplied video SSRC/timestamp, enforces packet bounds, a finite write deadline and cancellation, and never falls back to Opus or plaintext. OpenMediaSender negotiates H.264 encode only with that adapter and closes its own connection on cancellation. The production audio-only adapter is rejected before opening a network connection. Synthetic fixed-key DAVE frame authentication and both real localhost transport AEAD modes passed roundtrip/tamper/no-fallback checks; this is not live MLS or Discord sender verification. RTCP sender reports, RTX history and congestion adaptation are still pending.
+
+## Implemented source-selection helper
+
+scripts/screen-source.py owns a real ScreenCast portal request/session lifecycle through Gio. It subscribes before calls, verifies request identity, selects exactly one monitor/window without persistent permission, and closes requests/session on cancellation or a finite timeout. Portal revocation and stdin closure release the session and any PipeWire descriptor. OpenPipeWireRemote is an explicit API call, never automatic selection-side capture. The standalone helper only selects and holds the source session; it does not encode, record, create a Discord stream or transmit.
+
+The contract test runs the actual helper against a synthetic portal on a private D-Bus session, including transferred Unix descriptors. It must not run on the production session bus:
+
+```sh
+timeout 12s dbus-run-session -- /usr/bin/python3 -B tests/screen_source_portal.py
+```
+
+Requires Python with PyGObject/Gio and dbus-run-session for the test. No UI Share button invokes the helper yet. Portal selection alone is not successful screen sharing, and synthetic descriptors do not establish real PipeWire capture.
 
 ## State and bounded cleanup
 
