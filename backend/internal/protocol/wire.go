@@ -23,6 +23,8 @@ type User struct {
 	Username    string `json:"username"`
 	DisplayName string `json:"display_name"`
 	AvatarURL   string `json:"avatar_url"`
+	Status      string `json:"status,omitempty"`
+	Activity    string `json:"activity,omitempty"`
 }
 
 type State struct {

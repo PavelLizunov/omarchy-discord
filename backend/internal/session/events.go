@@ -35,6 +35,10 @@ func (m *Manager) installMessageHandlers(n *ningen.State) {
 		notify := off.MessageMentions(&ev.Message).Has(ningen.MessageNotifies)
 		wire := WireMessage(off, &ev.Message)
 		route(ev.ChannelID, notify, protocol.NewMessageCreate(wire, notify, channelName(off, ev.ChannelID)))
+		if ch, err := off.Cabinet.Channel(ev.ChannelID); err == nil && (ch.Type == discord.DirectMessage || ch.Type == discord.GroupDM) {
+			// Activity metadata is global even when notification policy filters content.
+			m.push(protocol.NewChannelUpdate(protocol.ChannelChangeUpdate, wireChannel(off, *ch)))
+		}
 	})
 	addSyncHandler(n, "message_update", func(ev *gateway.MessageUpdateEvent) {
 		if !live() {

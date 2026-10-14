@@ -1,4 +1,5 @@
 import QtQuick
+import "../../ui" as PluginTheme
 import "../../" as Discord
 import "../../ui"
 import "../../components/harness" as Harness
@@ -8,10 +9,11 @@ Rectangle {
   id: root
   width: 1040
   height: 680
-  color: Color.background
+  color: PluginTheme.Color.background
   property string state: "chat"
   property bool lightTheme: false
   property bool serverListFixture: false
+  property var cachedVoiceMembers: null
   property bool useRealServerActions: false
   property int themeRadius: 0
   property bool ready: false
@@ -29,14 +31,27 @@ Rectangle {
     readonly property var backend: model
     function sendCommand(name, fields, callback) {
       note(name, fields.guild_id)
+      if (name === "voice_members") {
+        if (callback) callback(true, {guild_id:fields.guild_id, channels:(root.cachedVoiceMembers || voiceMembers)[String(fields.guild_id)] || []}, "")
+        return 1
+      }
+      if (name === "video_state" || name === "video_watch") {
+        if (callback) callback(true,{choices:root.state === "video-empty" ? [] : [{user_id:"200",kind:"camera"},{user_id:"200",kind:"screen"}],streams:[],kind:"camera",user_id:"",image:"",age_ms:-1,error:root.state === "video-error" ? "Screen connection lost. Select it again." : ""},"")
+        return 1
+      }
       if (callback) callback(true, name === "guild_settings" ? {muted:false} : {online_count: Number(fields.guild_id) * 3}, "")
       return 1
     }
     function send(name, fields, callback) { return sendCommand(name, fields, callback) }
+    function applyVoiceMembers(message) {
+      var next = Object.assign({}, voiceMembers)
+      next[String(message.guild_id)] = message.channels
+      voiceMembers = next
+    }
     property var knownUsers: ({"202":"Known fixture contact"})
     readonly property var markdownCtx: ({ users:{"100":"Matt","200":"Ada","300":"Lin"},channels:{"9001":"development"},roles:{"5001":"maintainers"},selfId:selfId,
-      linkColor:String(Color.accent),mentionColor:String(Color.accent),mentionBg:Util.alpha(Color.accent,0.18),
-      spoilerColor:String(Color.foreground),codeBg:Util.alpha(Color.foreground,0.08),mutedColor:String(Color.muted),monoFamily:Style.font.family,fontSize:Style.font.body })
+      linkColor:String(PluginTheme.Color.accent),mentionColor:String(PluginTheme.Color.accent),mentionBg:Util.alpha(PluginTheme.Color.accent,0.18),
+      spoilerColor:String(PluginTheme.Color.foreground),codeBg:Util.alpha(PluginTheme.Color.foreground,0.08),mutedColor:String(PluginTheme.Color.muted),monoFamily:Style.font.family,fontSize:Style.font.body })
     property var guildStats: ({"1":{online_count:12}, "2":{online_count:0}, "4":{online_count:120}})
     property var guildMute: ({"1":false})
     property bool guildStatsBusy: false
@@ -75,11 +90,11 @@ Rectangle {
   Component.onCompleted: {
     Style.cornerRadius = themeRadius
     if (lightTheme) {
-      Color.background = "#f5f4f0"
-      Color.foreground = "#242424"
-      Color.muted = "#565656"
-      Color.accent = "#235a81"
-      Color.urgent = "#a02030"
+      PluginTheme.Color.background = "#f5f4f0"
+      PluginTheme.Color.foreground = "#242424"
+      PluginTheme.Color.muted = "#565656"
+      PluginTheme.Color.accent = "#235a81"
+      PluginTheme.Color.urgent = "#a02030"
     }
     model.user = {username:"fixture",display_name:"Fixture user"}
     model.channelNames = {"9000":"general","9001":"development","9002":"Voice lounge"}
@@ -168,6 +183,11 @@ Rectangle {
         client.showServerMenu(model.guilds[0], 160, 120)
         if (root.state === "server-leave") { client.serverMenu.page = "leave"; client.serverMenu.firstFocus() }
         if (root.state === "server-settings") client.serverMenu.page = "settings"
+      }
+      if (root.state.indexOf("video-") === 0) {
+        model.voice = {status:"connected",guildId:"1",channelId:"9002",muted:false,deafened:false,error:""}
+        model.voiceMembers = {"1":[{channel_id:"9002",users:[{id:"200",display_name:"Ada"}]}]}
+        client.openCamera()
       }
       root.ready = true
       stop()

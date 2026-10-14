@@ -1,11 +1,12 @@
 import QtQuick
+import "." as PluginTheme
 import QtQuick.Controls
 
 TextField {
   id: root
 
-  property color foreground: Color.foreground
-  property color accent: Color.accent
+  property color foreground: PluginTheme.Color.foreground
+  property color accent: PluginTheme.Color.accent
   property color selectionTint: Style.selectionFillFor(foreground, accent)
   property bool password: false
   property real horizontalPadding: Style.spacing.controlPaddingX

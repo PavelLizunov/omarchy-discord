@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import "../ui" as PluginTheme
 import QtQuick.Controls
 import "../ui"
 
@@ -80,9 +81,9 @@ FocusScope {
     return ""
   }
 
-  readonly property color foreground: Color.foreground
-  readonly property color muted: Api.secondaryColor(Color.muted, Color.foreground, Color.background)
-  readonly property color accent: Color.accent
+  readonly property color foreground: PluginTheme.Color.foreground
+  readonly property color muted: Api.secondaryColor(PluginTheme.Color.muted, PluginTheme.Color.foreground, PluginTheme.Color.background)
+  readonly property color accent: PluginTheme.Color.accent
   readonly property string fontFamily: Style.font.family
   readonly property int groupWindowMs: 10 * 60 * 1000
   readonly property int historyThreshold: Style.space(120)
@@ -524,10 +525,10 @@ FocusScope {
     id: frame
     anchors.fill: parent
     radius: Style.cornerRadius
-    color: Color.popups.background
+    color: PluginTheme.Color.popups.background
     borderSpec: timeline.active
       ? Border.controlSpec("focus", timeline.foreground, timeline.accent)
-      : Border.flat(Color.popups.border, Math.max(1, Style.normalBorderWidth))
+      : Border.flat(PluginTheme.Color.popups.border, Math.max(1, Style.normalBorderWidth))
     padding: Style.spacing.sm
 
     ListView {
@@ -623,7 +624,7 @@ FocusScope {
             anchors.rightMargin: Style.spacing.controlGap
             anchors.verticalCenter: parent.verticalCenter
             height: Style.spacing.hairline
-            color: Color.urgent
+            color: PluginTheme.Color.urgent
           }
           Text {
             id: unreadText
@@ -631,7 +632,7 @@ FocusScope {
             anchors.rightMargin: Style.spacing.rowPaddingX
             anchors.verticalCenter: parent.verticalCenter
             text: "NEW"
-            color: Color.urgent
+            color: PluginTheme.Color.urgent
             font.family: timeline.fontFamily
             font.pixelSize: Style.font.caption
             font.bold: true
@@ -729,7 +730,7 @@ FocusScope {
         iconName: "delete"
         visible: timeline.isOwnRow(timeline.cursorIndex)
         focusable: true
-        foreground: Color.urgent
+        foreground: PluginTheme.Color.urgent
         tooltipText: "Click twice within 3 seconds to delete selected message"
         onClicked: timeline.requestDelete()
       }

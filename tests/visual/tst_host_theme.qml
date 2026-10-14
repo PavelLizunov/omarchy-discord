@@ -1,4 +1,5 @@
 import QtQuick
+import "../../ui" as PluginTheme
 import QtTest
 import "../../" as Discord
 import "../../ui"
@@ -24,13 +25,13 @@ TestCase {
   }
   Discord.ThemeSync { hostColor: hostColor; hostStyle: hostStyle }
   function test_host_palette_changes_without_panel() {
-    compare(String(Color.background), "#f5f4f0")
-    compare(String(Color.popups.text), "#242424")
+    compare(String(PluginTheme.Color.background), "#f5f4f0")
+    compare(String(PluginTheme.Color.popups.text), "#242424")
     hostColor.background="#101315"; hostColor.foreground="#cacccc"
-    compare(String(Color.background), "#101315")
-    compare(String(Color.popups.text), "#cacccc")
+    compare(String(PluginTheme.Color.background), "#101315")
+    compare(String(PluginTheme.Color.popups.text), "#cacccc")
     hostColor.shellValues={"popups.background":"#202428"}
-    compare(String(Color.popups.background),"#202428")
+    compare(String(PluginTheme.Color.popups.background),"#202428")
     hostStyle.resolvedFontFamily="monospace"
     compare(Style.font.family,"monospace")
   }

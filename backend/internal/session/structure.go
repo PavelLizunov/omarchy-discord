@@ -223,6 +223,38 @@ func isVoice(t discord.ChannelType) bool {
 	return t == discord.GuildVoice || t == discord.GuildStageVoice
 }
 
+// DMs have no guild permission lookup. A missing read boundary is unread
+// only when an incoming message is actually present in the gateway cache.
+func channelUnread(n *ningen.State, ch discord.Channel) ningen.UnreadIndication {
+	if ch.Type != discord.DirectMessage && ch.Type != discord.GroupDM {
+		return n.ChannelIsUnread(ch.ID, unreadOpts)
+	}
+	rs := n.ReadState.ReadState(ch.ID)
+	if rs != nil && rs.MentionCount > 0 {
+		return ningen.ChannelMentioned
+	}
+	if n.ChannelIsMuted(ch.ID, unreadOpts) {
+		return ningen.ChannelRead
+	}
+	last := ch.LastMessageID
+	if !last.IsValid() {
+		last = 0
+	}
+	if cached := n.LastMessage(ch.ID); cached.IsValid() && cached > last {
+		last = cached
+	}
+	if rs != nil {
+		if rs.LastMessageID < last {
+			return ningen.ChannelUnread
+		}
+	} else if last.IsValid() {
+		if msg, err := n.Cabinet.Message(ch.ID, last); err == nil && msg.Author.ID != n.ReadState.SelfID() {
+			return ningen.ChannelUnread
+		}
+	}
+	return ningen.ChannelRead
+}
+
 func wireChannel(n *ningen.State, ch discord.Channel) protocol.Channel {
 	c := protocol.Channel{
 		ID:            snowflake(discord.Snowflake(ch.ID)),
@@ -233,7 +265,7 @@ func wireChannel(n *ningen.State, ch discord.Channel) protocol.Channel {
 		ParentID:      optSnowflake(discord.Snowflake(ch.ParentID)),
 		Position:      ch.Position,
 		LastMessageID: optSnowflake(discord.Snowflake(ch.LastMessageID)),
-		Unread:        unreadString(n.ChannelIsUnread(ch.ID, unreadOpts)),
+		Unread:        unreadString(channelUnread(n, ch)),
 		MentionCount:  mentionCount(n, ch.ID),
 		Muted:         n.ChannelIsMuted(ch.ID, unreadOpts),
 		Recipients:    make([]protocol.User, 0, len(ch.DMRecipients)),
@@ -246,7 +278,12 @@ func wireChannel(n *ningen.State, ch discord.Channel) protocol.Channel {
 	if ch.Type == discord.DirectMessage || ch.Type == discord.GroupDM {
 		names := make([]string, 0, len(ch.DMRecipients))
 		for _, u := range ch.DMRecipients {
-			c.Recipients = append(c.Recipients, wireUser(u))
+			user := wireUser(u)
+			user.Status = userPresence(n, 0, u.ID)
+			if p, _ := n.PresenceStore.Presence(0, u.ID); p != nil {
+				user.Activity = activityLine(p.Activities)
+			}
+			c.Recipients = append(c.Recipients, user)
 			names = append(names, u.DisplayOrUsername())
 		}
 		if c.Name == "" {
@@ -261,6 +298,16 @@ func DMs(n *ningen.State) ([]protocol.Channel, error) {
 	if err != nil {
 		return nil, err
 	}
+	sort.SliceStable(chs, func(i, j int) bool {
+		a, b := chs[i].LastMessageID, chs[j].LastMessageID
+		if !a.IsValid() {
+			a = 0
+		}
+		if !b.IsValid() {
+			b = 0
+		}
+		return a > b
+	})
 	out := make([]protocol.Channel, 0, len(chs))
 	for _, ch := range chs {
 		out = append(out, wireChannel(n, ch))
@@ -269,13 +316,13 @@ func DMs(n *ningen.State) ([]protocol.Channel, error) {
 }
 
 func UnreadDM(n *ningen.State) *string {
-	chs, err := n.PrivateChannels()
+	chs, err := DMs(n)
 	if err != nil {
 		return nil
 	}
 	for _, ch := range chs {
-		if n.ChannelIsUnread(ch.ID, unreadOpts) != ningen.ChannelRead {
-			id := ch.ID.String()
+		if ch.Unread != protocol.UnreadRead {
+			id := ch.ID
 			return &id
 		}
 	}

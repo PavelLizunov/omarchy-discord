@@ -38,6 +38,14 @@ test('server entry only browses channels, regardless of remembered channel or lo
     assert(!calls.includes('showChannel'));
   }
 });
+test('DM activity refresh reorders the list while preserving chat, drafts and selection', () => {
+  let reply; let requests=0;
+  const ctx=load(['noteChannelUpdate'],{dms:[{id:'old'},{id:'active'}],currentChannelId:'old',selectedGuildId:'dms',drafts:{old:'keep'},send(name,fields,callback){assert.equal(name,'list_dms');requests++;reply=callback;}});
+  ctx.root=ctx;
+  ctx.noteChannelUpdate({id:'active',type:'dm',guild_id:null,last_message_id:'600000000000000008'});
+  reply(true,{channels:[{id:'active',unread:'unread'},{id:'old'}]});
+  assert.equal(requests,1);assert.equal(ctx.dms[0].id,'active');assert.equal(ctx.currentChannelId,'old');assert.equal(ctx.drafts.old,'keep');
+});
 test('upload completion preserves files staged while it was in flight', () => {
   let finish;
   const ctx = load(['stagedFor','setStaged','patchStaged','upload'], {
@@ -52,6 +60,15 @@ test('upload completion preserves files staged while it was in flight', () => {
   ctx.setStaged('channel',ctx.stagedFor('channel').concat([{path:'/inert/second.png',filename:'second.png'}]));
   finish(true);
   assert.deepEqual(Array.from(ctx.stagedFor('channel'),file => file.path),['/inert/second.png']);
+});
+test('DM notification eligibility does not depend on an open conversation', () => {
+  const ctx=load(['notifySkipReason'],{lifecycle:'ready',notificationMode:'Mentions and DMs',backendState:{presence:'online'},panelActive:false,visibleSurfaces:{},currentChannelId:'other',isOwn(){return false;}});
+  const dm={notify:true,guild_id:null,channel_id:'closed',message:{author:{id:'ada'},mentions_self:false}};
+  assert.equal(ctx.notifySkipReason(dm),'');
+  ctx.notificationMode='Off';assert.equal(ctx.notifySkipReason(dm),'mode-off');ctx.notificationMode='Mentions and DMs';
+  ctx.backendState.presence='dnd';assert.equal(ctx.notifySkipReason(dm),'dnd');ctx.backendState.presence='online';
+  ctx.panelActive=true;ctx.visibleSurfaces={'full-panel':true};ctx.currentChannelId='closed';assert.equal(ctx.notifySkipReason(dm),'viewing');
+  ctx.currentChannelId='other';assert.equal(ctx.notifySkipReason(dm),'');assert.equal(ctx.notifySkipReason({...dm,notify:false}),'not-notify');
 });
 test('scoped bar settings use the signal of their owning property', () => {
   assert.match(source, /function onBarConfigChanged\(\) \{ root\.syncSettings\(\) \}/);

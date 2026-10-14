@@ -170,18 +170,12 @@ func presenceStatus(s discord.Status) string {
 
 func activityLine(acts []discord.Activity) string {
 	for _, a := range acts {
+		if a.Type == discord.CustomActivity && (a.State != "" || (a.Emoji != nil && a.Emoji.Name != "" && !a.Emoji.ID.IsValid())) {
+			return customStatusLine(a)
+		}
+	}
+	for _, a := range acts {
 		switch a.Type {
-		case discord.CustomActivity:
-			parts := []string{}
-			if a.Emoji != nil && a.Emoji.Name != "" && !a.Emoji.ID.IsValid() {
-				parts = append(parts, a.Emoji.Name)
-			}
-			if a.State != "" {
-				parts = append(parts, a.State)
-			}
-			if s := strings.Join(parts, " "); s != "" {
-				return s
-			}
 		case discord.GameActivity:
 			return "Playing " + a.Name
 		case discord.StreamingActivity:
@@ -195,6 +189,17 @@ func activityLine(acts []discord.Activity) string {
 		}
 	}
 	return ""
+}
+
+func customStatusLine(a discord.Activity) string {
+	parts := []string{}
+	if a.Emoji != nil && a.Emoji.Name != "" && !a.Emoji.ID.IsValid() {
+		parts = append(parts, a.Emoji.Name)
+	}
+	if a.State != "" {
+		parts = append(parts, a.State)
+	}
+	return strings.Join(parts, " ")
 }
 
 func wireMember(n *ningen.State, guildID discord.GuildID, u discord.User, nick, groupID string, p *discord.Presence) protocol.Member {
@@ -500,10 +505,17 @@ func (m *Manager) installMemberHandlers(n *ningen.State) {
 			return
 		}
 		dms, lists := m.members.channelsFor(ev.User.ID)
-		if len(dms) == 0 && len(lists) == 0 {
+		// DM rows and voice presence stay current without member-list subscriptions.
+		inGuild := false
+		if ev.GuildID.IsValid() {
+			m.mu.Lock()
+			inGuild = m.voiceState.GuildID == ev.GuildID && m.voiceState.ChannelID.IsValid()
+			m.mu.Unlock()
+		}
+		if !inGuild && len(dms) == 0 && len(lists) == 0 {
 			return
 		}
-		m.push(socket.Routed{Open: dms, Members: lists, Event: protocol.NewPresenceUpdate(
+		m.push(socket.Routed{All: inGuild || len(dms) > 0, Open: dms, Members: lists, Event: protocol.NewPresenceUpdate(
 			ev.User.ID.String(), presenceStatus(ev.Status), activityLine(ev.Activities))})
 	})
 }

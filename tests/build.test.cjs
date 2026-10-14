@@ -44,9 +44,10 @@ test('bundled backend matches current production-source fingerprint', t => {
     fs.readFileSync(path.join(root, 'backend/dist/x86_64/omarchy-discord-backend')));
 });
 
-for (const mode of ['changed source', 'missing stamp']) test('build rejects bundled backend with ' + mode, t => {
+for (const mode of ['changed source', 'changed local dependency', 'missing stamp']) test('build rejects bundled backend with ' + mode, t => {
   const f = fixture(t);
   if (mode === 'changed source') fs.appendFileSync(path.join(f.source, 'backend/internal/remoteauth/remoteauth.go'), '\n// Inert changed-source fixture.\n');
+  else if (mode === 'changed local dependency') fs.appendFileSync(path.join(f.source,'backend/third_party/ningen/states/read/read.go'),'\n// Inert changed-dependency fixture.\n');
   else fs.unlinkSync(path.join(f.source, 'backend/dist/x86_64/source.sha256'));
   const result = f.run();
   assert.equal(result.status, 0, result.stderr);

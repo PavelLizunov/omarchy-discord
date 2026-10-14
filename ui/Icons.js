@@ -2,6 +2,10 @@
 
 // Original 24-unit action drawings; no external assets or runtime requests.
 var paths = {
+  omacord: '<path fill-rule="evenodd" d="M4 2H12V3H14V5H15V12H13V14H10V12H6V14H3V12H1V5H2V3H4Z M4 6V9H7V6Z M9 6V9H12V6Z M4 10V11H12V10Z"/>',
+  barMicrophone: '<path d="M6 1H10V2H11V8H10V9H6V8H5V2H6Z M3 6H4V10H6V11H10V10H12V6H13V11H11V12H9V14H12V15H4V14H7V12H5V11H3Z"/>',
+  barMicrophoneOff: '<path d="M6 1H10V2H11V7H9V5H7V3H5V2H6Z M5 6H7V8H9V9H6V8H5Z M3 6H4V10H6V11H9V12H9V14H12V15H4V14H7V12H5V11H3Z M12 6H13V10H12Z M1 1H3V3H5V5H7V7H9V9H11V11H13V13H15V15H13V13H11V11H9V9H7V7H5V5H3V3H1Z"/>',
+  barHeadphonesOff: '<path d="M4 2H12V3H14V5H15V14H11V9H13V5H11V4H5V5H3V9H5V14H1V5H2V3H4Z M1 1H3V3H5V5H7V7H9V9H11V11H13V13H15V15H13V13H11V11H9V9H7V7H5V5H3V3H1Z"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"/>',
   back: '<path d="m15 18-6-6 6-6"/>',
   all: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>',
@@ -28,11 +32,16 @@ var paths = {
   send: '<path d="m3 3 18 9-18 9 3-9-3-9Zm3 9h15"/>',
   save: '<path d="M4 3h13l4 4v14H3V3h1Zm3 0v6h10V3M7 21v-8h10v8"/>',
   microphone: '<rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11v1a7 7 0 0 0 14 0v-1m-7 8v3m-4 0h8"/>',
+  microphoneOff: '<path d="m3 3 18 18M9 9v3a3 3 0 0 0 5 2M9 5a3 3 0 0 1 6 0v4M5 11v1a7 7 0 0 0 12 5m2-5v-1m-7 8v3m-4 0h8"/>',
+  camera: '<rect x="3" y="5" width="12" height="14" rx="2"/><path d="m15 10 6-4v12l-6-4"/>',
   headphones: '<path d="M3 14v-2a9 9 0 0 1 18 0v2M3 13h4v8H3v-8Zm14 0h4v8h-4v-8Z"/>',
+  headphonesOff: '<path d="m3 3 18 18M7 4.5A9 9 0 0 1 21 12v2M3 9v5M3 13h4v8H3v-8m14 4v4h4"/>',
+  speaker: '<path d="M11 5 6 9H3v6h3l5 4V5m4 3a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/>',
+  speakerOff: '<path d="M11 5 6 9H3v6h3l5 4V5m5 4 5 6m0-6-5 6"/>',
   leave: '<path d="M3 13c5-5 13-5 18 0l-2 5-5-2v-3h-4v3l-5 2-2-5Z"/>'
 }
 
-function svg(name, color) {
+function svg(name, color, pixelSize) {
   if (!Object.prototype.hasOwnProperty.call(paths, name)) return ""
   if (!color) color = "#ffffff"
   var strokeStr = ""
@@ -45,12 +54,17 @@ function svg(name, color) {
   } else {
     strokeStr = 'stroke="' + String(color) + '"'
   }
+  if(name === "omacord" || name === "barMicrophone" || name === "barMicrophoneOff" || name === "barHeadphonesOff") {
+    var size = Math.max(1, Math.min(512, Math.ceil(Number(pixelSize) || 16)))
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="'+size+'" height="'+size+'" '
+      + strokeStr.replace('stroke=', 'fill=').replace('stroke-opacity=', 'fill-opacity=') + '>' + paths[name] + '</svg>'
+  }
   return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"'
     + ' fill="none" ' + strokeStr + ' stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'
     + paths[name] + '</svg>'
 }
 
-function source(name, color) {
-  var value = svg(name, color)
+function source(name, color, pixelSize) {
+  var value = svg(name, color, pixelSize)
   return value ? "data:image/svg+xml;charset=utf-8," + encodeURIComponent(value) : ""
 }

@@ -1,4 +1,5 @@
 import QtQuick
+import "ui" as PluginTheme
 import Quickshell
 import Quickshell.Hyprland
 import qs.Commons as Host
@@ -54,7 +55,7 @@ Item {
     view.open(payload)
   }
   function close() {
-    if (persistent && opened) {
+    if (persistent) {
       if (parkWorkspace) moveWindow(parkWorkspace, false)
       else persistentVisible = false
     }
@@ -79,11 +80,19 @@ Item {
       if (++tries >= 5) { root.pendingFocus = false; stop(); tries = 0 }
     }
   }
+  Timer {
+    id:videoFloat;interval:150;property int remaining:0;repeat:true
+    onTriggered:{
+      Hyprland.dispatch('hl.dsp.window.float({ window = "title:^(Omacord Video)$", action = "on" })')
+      Hyprland.dispatch('hl.dsp.window.resize({ window = "title:^(Omacord Video)$", x = 800, y = 580, relative = false })')
+      if(--remaining<=0)stop()
+    }
+  }
   FloatingWindow {
     id: window
     title: "Omarchy Discord"
     visible: root.persistent ? root.persistentVisible : view.opened
-    color: Color.background
+    color: PluginTheme.Color.background
     implicitWidth: Style.space(view.compactMode ? 520 : 1040)
     implicitHeight: Style.space(view.compactMode ? 560 : 680)
     minimumSize: Qt.size(Style.space(view.compactMode ? 420 : 640), Style.space(420))
@@ -99,6 +108,7 @@ Item {
       mapped: window.visible
       windowActive: Window.active
       screenName: window.screen ? String(window.screen.name || "") : ""
+      onVideoWindowOpened: {videoFloat.remaining=3;videoFloat.restart()}
       onLayoutModeChanged: function(compact) {
         window.implicitWidth = Style.space(compact ? 520 : 1040)
         window.implicitHeight = Style.space(compact ? 560 : 680)

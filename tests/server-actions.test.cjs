@@ -3,7 +3,7 @@ const source=fs.readFileSync('components/ServerActions.qml','utf8');
 function load(names,ctx){vm.createContext(ctx);for(const name of names){const s=source.indexOf('  function '+name+'('),e=source.indexOf('\n  }',s);vm.runInContext(source.slice(s,e+4),ctx)}ctx.root=ctx;return ctx}
 test('online sweep is serial, finite, failure clears stale values and zero survives',()=>{
  const pending=[],sent=[];
- const ctx=load(['fetchGuildStats'],{ready:true,guildStatsBusy:false,guildStats:{old:{online_count:99}},guilds:[{id:'1'},{id:'2'}],Date,Qt:{callLater(fn){fn()}},service:{backend:{sendCommand(name,fields,cb){sent.push(fields.guild_id);pending.push(cb)}}}});
+ const ctx=load(['fetchGuildStats'],{ready:true,statsRevision:0,guildStatsBusy:false,guildStats:{old:{online_count:99}},guilds:[{id:'1'},{id:'2'}],Date,Qt:{callLater(fn){fn()}},service:{backend:{sendCommand(name,fields,cb){sent.push(fields.guild_id);pending.push(cb)}}}});
  ctx.fetchGuildStats();assert.deepEqual(sent,['1']);assert.equal(ctx.guildStatsBusy,true);
  pending.shift()(true,{online_count:0});assert.deepEqual(sent,['1','2']);pending.shift()(false,null);
  assert.equal(ctx.guildStatsBusy,false);assert.equal(ctx.guildStats['1'].online_count,0);assert.equal(ctx.guildStats['2'],undefined);assert.equal(ctx.guildStats.old,undefined);
@@ -16,4 +16,12 @@ test('server writes are single-flight and keep errors visible',()=>{
  assert.equal(ctx.serverAction('leave_guild','1',{confirmed:true}),false);
  finish(false,null,'denied');assert.equal(ctx.guildActionBusy,false);assert.equal(ctx.actionError,'denied');assert.equal(ctx.guildMute['1'],undefined);
  ctx.serverAction('set_guild_mute','1',{muted:true});finish(true,{});assert.equal(ctx.guildMute['1'],true);
+});
+
+test('old stats replies cannot replace a later reconnect sweep',()=>{
+ const pending=[],later=[];
+ const c=load(['fetchGuildStats'],{ready:true,statsRevision:0,guildStatsBusy:false,guildStats:{},guilds:[{id:'old'}],Date,Qt:{callLater(fn){later.push(fn)}},service:{backend:{sendCommand(name,fields,cb){pending.push(cb)}}}});
+ c.fetchGuildStats();c.ready=false;c.statsRevision++;c.guildStatsBusy=false;c.ready=true;c.guilds=[{id:'new'}];c.fetchGuildStats();
+ pending[1](true,{online_count:2});later.shift()();assert.equal(c.guildStats.new.online_count,2);
+ pending[0](true,{online_count:1});assert.equal(later.length,0);assert.equal(c.guildStats.new.online_count,2);assert.equal(c.guildStats.old,undefined);
 });

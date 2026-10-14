@@ -1,4 +1,5 @@
 import QtQuick
+import "../../ui" as PluginTheme
 import QtTest
 import "../../" as Discord
 import "../../ui"
@@ -25,6 +26,28 @@ TestCase {
   p.model.guilds=initialGuilds;p.model.channelsByGuild=initialChannels;p.model.selectedGuildId="1"
   p.client.serverSort="position";p.client.serverFilter="all";p.client.serverToolsShown=false
   p.client.channelFilter="all";p.client.optionsMenu.shown=false;s.visible=false
+ }
+ function test_audio_details_keyboard_and_no_automatic_tone(){
+  p.model.voice={status:"connected",guildId:"1",channelId:"9002"};wait(30)
+  var bar=findChild(p.client,"call-bar"),toggle=findChild(p.client,"voice-audio-details"),d=findChild(p.client,"voice-audio-diagnostics")
+  p.client.focusCallBar();verify(toggle.activeFocus);keyClick(Qt.Key_Return);verify(d.details)
+  p.client.cycleFocus(1);verify(findChild(p.client,"voice-test-output").activeFocus)
+  keyClick(Qt.Key_Escape);verify(!d.details);verify(toggle.activeFocus)
+  toggle.clicked();p.client.cycleFocus(1);verify(findChild(p.client,"voice-test-output").activeFocus)
+  p.client.cycleFocus(1);verify(findChild(p.client,"voice-reconnect-audio").activeFocus)
+  p.client.cycleFocus(1);verify(findChild(p.client,"voice-device-details").activeFocus)
+  p.client.cycleFocus(1);verify(findChild(p.client,"voice-mute").activeFocus)
+  toggle.clicked()
+  p.model.reset();toggle.clicked();toggle.clicked();compare(p.model.callCount("voice_test_output"),0)
+  compare(p.model.callCount("voiceJoin"),0);compare(p.model.callCount("voiceLeave"),0)
+ }
+ function test_rejoin_is_one_explicit_call_and_preserves_context(){
+  p.model.voice={status:"connected",guildId:"1",channelId:"9002",muted:true,deafened:false};wait(20)
+  var bar=findChild(p.client,"call-bar"),d=findChild(p.client,"voice-audio-diagnostics")
+  bar.rejoining=false;p.model.reset();var channel=p.model.currentChannelId
+  bar.rejoin();bar.rejoin();compare(p.model.callCount("voiceJoin"),1);compare(p.model.callCount("voiceLeave"),0)
+  compare(p.model.currentChannelId,channel);compare(p.model.voice.muted,true);compare(p.model.voice.deafened,false)
+  bar.rejoining=false
  }
  function test_size_toggle_preserves_chat_draft_and_voice(){
   p.model.voice={status:"connected",guildId:"1",channelId:"9002"};p.client.enterComposer();p.client.composer.setText("Keep my draft")
@@ -105,6 +128,18 @@ TestCase {
   p.client.setGuildCursor(0);p.client.enterChannels();wait(30);compare(p.client.serverFilter,"all")
   p.client.serverActions.archivedGuilds=({});p.useRealServerActions=false;p.model.guilds=[{id:"1",name:"Fixture server",unread:"mentioned",mention_count:2}]
  }
+ function test_dm_unread_signal_survives_voice_filter_and_clears_when_read(){
+  p.client.compactChatOpen=false;p.model.dms=[{id:"d1",name:"Ada",type:"dm",unread:"unread",mention_count:0}]
+  p.client.serverFilter="voice";wait(40)
+  var entry=findChild(p.client,"navigation-entry-dms"),signal=findChild(p.client,"navigation-unread-dms")
+  verify(entry!==null);verify(signal.visible);verify(signal.height>0)
+  compare(p.client.guildRows[0].unread,"unread")
+  p.client.serverFilter="unread";wait(30);verify(findChild(p.client,"navigation-entry-dms")!==null)
+  p.model.dms=[{id:"d1",name:"Ada",type:"dm",unread:"read",mention_count:0}];wait(30)
+  verify(p.client.guildRows.every(function(row){return row.id!=="dms"}))
+  p.client.serverFilter="all";wait(30);verify(!findChild(p.client,"navigation-unread-dms").visible)
+  p.model.dms=[]
+ }
  function test_filter_chips_keyboard(){
   p.client.compactChatOpen=false;p.client.zone="sidebar";p.client.column="rail";p.client.focusZone();wait(20)
   var buttons=p.client.filterButtons(findChild(p.client,"server-filter-chips"))
@@ -144,12 +179,12 @@ TestCase {
   p.client.serverToolsShown=false;p.client.serverSort="position"
  }
  function test_composited_text_contrast(){
-  var oldBg=Color.background,oldFg=Color.foreground,oldMuted=Color.muted,oldAccent=Color.accent
-  Color.background="#111c18";Color.foreground="#c1c497";Color.muted="#53685b";Color.accent="#509475";row.cursor=true
+  var oldBg=PluginTheme.Color.background,oldFg=PluginTheme.Color.foreground,oldMuted=PluginTheme.Color.muted,oldAccent=PluginTheme.Color.accent
+  PluginTheme.Color.background="#111c18";PluginTheme.Color.foreground="#c1c497";PluginTheme.Color.muted="#53685b";PluginTheme.Color.accent="#509475";row.cursor=true
   verify(Api.contrastRatio(Api.blend(row.linkColor,row.paintedBackground,row.linkColor.a),row.paintedBackground)>=4.5)
   verify(Api.contrastRatio(Api.blend(row.muted,row.paintedBackground,row.muted.a),row.paintedBackground)>=4.5)
-  var badge=Api.blend(Color.accent,row.paintedBackground,.2)
-  verify(Api.contrastRatio(Api.textColor(Color.accent,Color.foreground,badge),badge)>=4.5)
-  Color.background=oldBg;Color.foreground=oldFg;Color.muted=oldMuted;Color.accent=oldAccent
+  var badge=Api.blend(PluginTheme.Color.accent,row.paintedBackground,.2)
+  verify(Api.contrastRatio(Api.textColor(PluginTheme.Color.accent,PluginTheme.Color.foreground,badge),badge)>=4.5)
+  PluginTheme.Color.background=oldBg;PluginTheme.Color.foreground=oldFg;PluginTheme.Color.muted=oldMuted;PluginTheme.Color.accent=oldAccent
  }
 }

@@ -1,12 +1,38 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import "../ui" as PluginTheme
 import "../ui"
 
 import "../Api.js" as Api
+import "../ui/Icons.js" as Icons
 
 Item {
   id: root
 
+  property bool rejoining: false
+  function rejoin() {
+    if (rejoining || !service || !service.showStructure || !voice.channelId) return
+    rejoining = true
+    if (!service.voiceJoin(String(voice.guildId || ""), String(voice.channelId))) rejoining = false
+    else rejoinDeadline.restart()
+  }
+  onStatusChanged: if (status === "connecting" || status === "error" || status === "idle") { rejoining = false; rejoinDeadline.stop(); departure=null; previousUsers=[]; previousRoom="" }
+  Timer { id: rejoinDeadline; interval: 10000; onTriggered: root.rejoining = false }
+  readonly property bool controlFocused: diagnosticToggle.activeFocus || diagnostics.testFocused || voiceRoster.activeFocus || voiceRoster.audioControls.controlFocused || muteButton.activeFocus || deafenButton.activeFocus || leaveButton.activeFocus || reconnect.activeFocus
+  function focusAudio(delta) {
+    var buttons = voiceRoster.audioUserId ? voiceRoster.audioControls.focusControls() : [voiceRoster]
+    if (diagnosticToggle.visible) buttons.push(diagnosticToggle)
+    if (diagnostics.details) buttons = buttons.concat(diagnostics.focusControls())
+    if (reconnect.visible) buttons.push(reconnect)
+    buttons = buttons.concat([muteButton,deafenButton,leaveButton])
+    var current = buttons.findIndex(function(button) { return button.activeFocus })
+    var next = current < 0 ? (delta < 0 ? buttons.length - 1 : diagnosticToggle.visible ? buttons.indexOf(diagnosticToggle) : 0) : current + delta
+    if (next < 0 || next >= buttons.length) return false
+    if (diagnostics.focusControls().indexOf(buttons[next]) >= 0) diagnostics.focusControl(buttons[next])
+    else buttons[next].forceActiveFocus()
+    return true
+  }
+  function dismissAudio(){if(voiceRoster.audioUserId){voiceRoster.closeAudio();return true}if(!diagnostics.details)return false;diagnostics.details=false;diagnosticToggle.forceActiveFocus();return true}
   signal chatRequested()
   function openChat() {
     if (!service || !voice.channelId) return
@@ -15,15 +41,40 @@ Item {
   }
 
   property var service: null
+  property double clock: Date.now()
+  property var departure: null
+  property var previousUsers: []
+  property string previousRoom: ""
+  onRoomUsersChanged: {
+    var room = String(voice.guildId || "") + ":" + String(voice.channelId || "")
+    if (status === "connected" && previousRoom === room) {
+      for (var i=0;i<previousUsers.length;i++) {
+        var user=previousUsers[i]
+        if (!roomUsers.some(function(row){return String(row.id)===String(user.id)}))
+          departure = {user:user, status:String(user.status || "unknown"), at:Date.now()}
+      }
+    } else departure=null
+    previousUsers=roomUsers.slice();previousRoom=room
+  }
+  Connections {
+    target: root.service && root.service.backend ? root.service.backend : null
+    ignoreUnknownSignals: true
+    function onEventReceived(name, message) {
+      if (name === "presence_update" && root.departure && String(message.user_id) === String(root.departure.user.id))
+        root.departure = Api.assign(Api.shallowCopy(root.departure),{status:String(message.status || "unknown")})
+    }
+  }
+  Timer { interval:1000;repeat:true;running:!!root.departure;onTriggered:{root.clock=Date.now();if(root.clock-root.departure.at>=60000)root.departure=null} }
   property string channelName: ""
   property bool expanded: false
   property bool compactRosterHeader: false
+  property bool showDiagnostics: true
   readonly property var roomUsers: service && voice.channelId
     ? service.voiceUsers(String(voice.guildId || ""), String(voice.channelId)) : []
   readonly property alias roster: voiceRoster
-  property color foreground: Color.foreground
-  property color secondary: Color.foreground
-  property color accent: Color.accent
+  property color foreground: PluginTheme.Color.foreground
+  property color secondary: PluginTheme.Color.foreground
+  property color accent: PluginTheme.Color.accent
   property string fontFamily: Style.font.family
 
   readonly property var voice: service && service.voice ? service.voice : ({})
@@ -34,9 +85,11 @@ Item {
   readonly property bool isMuted: !!voice.muted
   readonly property bool isDeafened: !!voice.deafened
   readonly property string statusText: {
+    if (rejoining) return "Reconnecting…"
     if (status === "connecting") return "Connecting…"
     if (failed) return "Disconnected · reconnect to rejoin"
     if (!connected) return ""
+    if (diagnostics.fresh && !diagnostics.sample.encryption_ready) return "Securing audio…"
     var parts = []
     if (isMuted) parts.push("muted")
     if (isDeafened) parts.push("deafened")
@@ -79,13 +132,13 @@ Item {
           anchors.verticalCenter: parent.verticalCenter
           spacing: Style.spacing.sm
 
-          Text {
+          Image {
             id: glyph
             anchors.verticalCenter: parent.verticalCenter
-            text: Api.channelGlyph("voice")
-            color: root.failed ? Color.urgent : (root.connected ? root.accent : root.secondary)
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
+            width: Style.space(16)
+            height: width
+            source: Icons.source("headphones", root.failed ? PluginTheme.Color.urgent : (root.connected ? root.accent : root.secondary))
+            sourceSize: Qt.size(width * 2, height * 2)
           }
 
           Text {
@@ -124,26 +177,71 @@ Item {
         id: callStatus
         objectName: "voice-status"
         width: parent.width
+        visible: !root.connected || root.expanded
         wrapMode: Text.WordWrap
         text: root.statusText
-        color: root.failed ? Color.urgent : root.secondary
+        color: root.failed ? PluginTheme.Color.urgent : root.secondary
         font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall
       }
 
+      Text {
+        id: departureLine
+        objectName: "voice-departure"
+        textFormat: Text.PlainText
+        width: parent.width
+        visible: root.expanded && !!root.departure && root.clock-root.departure.at<60000
+        text: root.departure ? Api.userLabel(root.departure.user, root.service.knownUsers) + " left voice · " + voiceRoster.statusLabel(root.departure.status) : ""
+        wrapMode: Text.WordWrap
+        color: root.secondary
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+      }
       MemberList {
         id: voiceRoster
         objectName: "voice-roster"
         visible: root.expanded
         width: parent.width
-        height: visible ? Math.max(0, root.height - voiceTitleContainer.height - callStatus.height - controls.height
-          - (reconnect.visible ? reconnect.height + content.spacing : 0) - Style.spacing.sm * 2 - content.spacing * 3) : 0
+        height: visible && !diagnostics.details ? Math.max(0, root.height - voiceTitleContainer.height - (callStatus.visible ? callStatus.height : 0) - controls.height - (diagnosticToggle.visible ? diagnosticToggle.height : 0)
+          - (reconnect.visible ? reconnect.height + content.spacing : 0) - (departureLine.visible ? departureLine.height + content.spacing : 0) - Style.spacing.sm * 2 - content.spacing * 3) : 0
         service: root.service
         voiceMode: true
+        active: activeFocus || audioControls.controlFocused
         compactHeader: root.compactRosterHeader
         voiceUsers: root.roomUsers
         channelName: root.channelName
         headingText: root.failed ? "People in room" : "In voice"
+      }
+      Button {
+        id: diagnosticToggle
+        objectName: "voice-audio-details"
+        width: parent.width
+        visible: root.connected && root.showDiagnostics
+        iconName: diagnostics.details ? "members" : "sliders"
+        text: diagnostics.details ? "Show people" : "Audio details"
+        leftAlign: true
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        implicitHeight: Style.space(32)
+        focusable: true
+        onClicked: diagnostics.details = !diagnostics.details
+      }
+      VoiceDiagnostics {
+        id: diagnostics
+        visible: root.showDiagnostics
+        objectName: "voice-audio-diagnostics"
+        width: parent.width
+        service: root.service
+        connected: root.connected
+        callIdentity: String(root.voice.guildId || "") + ":" + String(root.voice.channelId || "")
+        muted: root.isMuted
+        deafened: root.isDeafened
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        rejoining: root.rejoining
+        onReconnectRequested: root.rejoin()
+        height: !details ? 0 : !root.expanded ? Math.min(implicitHeight, Style.space(220))
+          : Math.max(0, root.height - voiceTitleContainer.height - (callStatus.visible ? callStatus.height + content.spacing : 0) - controls.height - diagnosticToggle.height - Style.spacing.sm * 2 - content.spacing * 4)
       }
       Button {
         id: reconnect
@@ -153,9 +251,11 @@ Item {
         text: "Reconnect"
         iconName: "reconnect"
         focusable: true
-        enabled: !!(root.service && root.service.showStructure && root.voice.channelId)
+        enabled: !root.rejoining && !!(root.service && root.service.showStructure && root.voice.channelId)
         tooltipText: String(root.voice.error || "Voice disconnected") + " · Rejoin this voice channel"
-        onClicked: if (root.service) root.service.voiceJoin(String(root.voice.guildId || ""), String(root.voice.channelId))
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        onClicked: root.rejoin()
       }
       Row {
         id: controls
@@ -165,11 +265,12 @@ Item {
         readonly property real cell: Math.max(0, (width - spacing * 2) / 3)
 
         Button {
+          id: muteButton
           objectName: "voice-mute"
           width: controls.cell
           iconOnly: true
           text: root.isMuted ? "Unmute" : "Mute"
-          iconName: "microphone"
+          iconName: root.isMuted ? "microphoneOff" : "microphone"
           focusable: true
           active: root.isMuted
           enabled: root.connected
@@ -179,11 +280,12 @@ Item {
           onClicked: if (root.service) root.service.toggleMute()
         }
         Button {
+          id: deafenButton
           objectName: "voice-deafen"
           width: controls.cell
           iconOnly: true
           text: root.isDeafened ? "Hear" : "Deafen"
-          iconName: "headphones"
+          iconName: root.isDeafened ? "headphonesOff" : "headphones"
           focusable: true
           active: root.isDeafened
           enabled: root.connected
@@ -193,13 +295,14 @@ Item {
           onClicked: if (root.service) root.service.toggleDeafen()
         }
         Button {
+          id: leaveButton
           objectName: "voice-leave"
           width: controls.cell
           iconOnly: true
           text: "Leave"
           iconName: "leave"
           focusable: true
-          foreground: Color.urgent
+          foreground: PluginTheme.Color.urgent
           fontFamily: root.fontFamily
           tooltipText: "Leave the voice channel (Ctrl+Shift+H)"
           onClicked: if (root.service) root.service.voiceLeave()

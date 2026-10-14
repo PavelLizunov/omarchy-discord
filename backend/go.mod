@@ -2,6 +2,8 @@ module github.com/mattcalayo/omarchy-discord/backend
 
 go 1.26.0
 
+replace github.com/diamondburned/ningen/v3 => ./third_party/ningen
+
 require (
 	github.com/diamondburned/arikawa/v3 v3.6.1-0.20260306005901-b24e0a8447e1
 	github.com/diamondburned/ningen/v3 v3.0.1-0.20260306213430-5a08d3a709b4

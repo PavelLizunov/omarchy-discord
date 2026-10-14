@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import "ui" as PluginTheme
 import QtQuick.Controls
 import QtQuick.Window
 import "ui"
@@ -16,6 +17,8 @@ Item {
   property var shell: null
   property var manifest: null
   property var service: null
+  Components.DMPresence { id:dmPresence;service:root.service;active:root.opened }
+  Components.VoiceRosterSync { service: root.service; active: root.opened }
   property bool compactMode: false
   readonly property bool compactView: compactMode
   property bool compactChatOpen: false
@@ -35,6 +38,7 @@ Item {
   readonly property bool reading: opened && mapped && windowActive
   property string screenName: ""
   signal closeRequested()
+  signal videoWindowOpened()
   signal linkRequested(string url)
   signal copyRequested(string text)
   readonly property alias timeline: timelineView
@@ -43,6 +47,10 @@ Item {
   readonly property alias picker: pickerView
   readonly property alias members: membersView
   readonly property alias controls: headerControls
+  property bool cameraPreviousChat: false
+  function openCamera() {cameraView.open()}
+  readonly property alias camera: cameraView
+  readonly property alias videoWindow: videoWindow
   readonly property bool qrImageReady: qrImage.status === Image.Ready
   readonly property alias logoutConfirmation: logoutConfirm
   readonly property alias serverMenu: serverMenu
@@ -57,26 +65,30 @@ Item {
 
   readonly property string pluginId: manifest && manifest.id
     ? String(manifest.id) : "quickshell.discord"
-  readonly property color foreground: Color.foreground
-  readonly property color muted: Api.secondaryColor(Color.muted, Color.foreground,
-    Api.blend(Style.selectedFillFor(Color.foreground, Color.accent), Color.popups.background, Style.selectedFillAlpha))
-  readonly property color background: Color.background
-  readonly property color accent: Color.accent
+  readonly property color foreground: PluginTheme.Color.foreground
+  readonly property color muted: Api.secondaryColor(PluginTheme.Color.muted, PluginTheme.Color.foreground,
+    Api.blend(Style.selectedFillFor(PluginTheme.Color.foreground, PluginTheme.Color.accent), PluginTheme.Color.popups.background, Style.selectedFillAlpha))
+  readonly property color background: PluginTheme.Color.background
+  readonly property color accent: PluginTheme.Color.accent
   readonly property string fontFamily: Style.font.family
   readonly property int voiceAvatarSize: Style.space(16)
   readonly property int voiceOccupantHeight: Style.space(22)
-  readonly property var panelBorderSpec: Border.flat(Color.popups.border,
+  readonly property var panelBorderSpec: Border.flat(PluginTheme.Color.popups.border,
     Math.max(1, Style.normalBorderWidth))
   readonly property real controlsRowHeight: Math.max(Style.spacing.controlHeight, headerControls.height)
   readonly property real controlButtonsWidth:
     (ready && currentChannelId !== "" ? membersButton.width + Style.spacing.controlGap : 0)
+    + (cameraButton.visible ? cameraButton.width + Style.spacing.controlGap : 0)
+    + (quickMuteButton.visible ? quickMuteButton.width + Style.spacing.controlGap : 0)
     + (ready ? searchButton.width + Style.spacing.controlGap : 0)
     + (ready ? optionsButton.width + Style.spacing.controlGap : 0)
-    + navigationButton.width + Style.spacing.controlGap + modeButton.width + Style.spacing.controlGap + closeButton.width
+    + navigationButton.width + Style.spacing.controlGap + modeButton.width + Style.spacing.controlGap
+    + restartButton.width + Style.spacing.controlGap + closeButton.width
   readonly property real channelHeaderRoom: channelHeader.width - Style.spacing.sm * 2
     - Style.spacing.controlGap
   readonly property real channelTitleFloor: Style.space(120)
   readonly property bool controlsInHeader: false
+  readonly property bool crowdedToolbar: width < Style.space(500)
   readonly property real statusWidthBudget: {
     if (!controlsInHeader) return Math.max(0, Math.min(Style.space(200),
       root.width - Style.spacing.panelPadding * 2 - controlButtonsWidth - Style.spacing.controlGap))
@@ -105,12 +117,12 @@ Item {
 
   property string zone: "sidebar"
   property string column: "rail"
-  readonly property bool buttonFocused: navigationButton.activeFocus || optionsButton.activeFocus || closeButton.activeFocus || modeButton.activeFocus
-    || membersButton.activeFocus || searchButton.activeFocus || optionsHelp.activeFocus || optionsLogout.activeFocus
+  readonly property bool buttonFocused: navigationButton.activeFocus || optionsButton.activeFocus || restartButton.activeFocus || closeButton.activeFocus || modeButton.activeFocus
+    || quickMuteButton.activeFocus || cameraButton.activeFocus || membersButton.activeFocus || searchButton.activeFocus || optionsHelp.activeFocus || optionsLogout.activeFocus
     || startBackendButton.activeFocus || dismissErrorButton.activeFocus || joinVoiceButton.activeFocus || callBarFocused
     || filterButtons(serverFilterChips).some(function(button) { return button.activeFocus })
     || filterButtons(channelFilterChips).some(function(button) { return button.activeFocus })
-  readonly property bool callBarFocused: callBar.visible && callBar.activeFocus
+  readonly property bool callBarFocused: callBar.visible && (callBar.activeFocus || callBar.controlFocused)
   readonly property string activeVoiceChannelId: {
     if (!service || !service.voice) return ""
     var status = String(service.voice.status || "")
@@ -160,7 +172,7 @@ Item {
   }
   readonly property var guildRows: {
     var rows = []
-    if (serverFilter === "all") {
+    if (serverFilter === "all" || serverFilter === "voice") {
       rows.push({ kind: "dms", id: "dms", name: "Direct Messages",
         mention_count: dmMentionCount(), unread: dmUnread() })
       if (serverActions.archivedCount > 0) {
@@ -168,7 +180,7 @@ Item {
           mention_count: 0, unread: false })
       }
     } else if (serverFilter === "unread") {
-      if (dmUnread()) {
+      if (dmUnread() !== "read") {
         rows.push({ kind: "dms", id: "dms", name: "Direct Messages",
           mention_count: dmMentionCount(), unread: dmUnread() })
       }
@@ -594,7 +606,7 @@ Item {
 
   function focusCallBar() {
     if (!callBar.visible) return
-    callBar.forceActiveFocus()
+    callBar.focusAudio(1)
   }
 
   function voiceAction(action) {
@@ -763,6 +775,7 @@ Item {
   }
 
   function cycleFocus(delta) {
+    if(callBarFocused && callBar.focusAudio(delta))return
     var groups = [serverFilterChips, channelFilterChips]
     var groupNames = ["serverChips", "channelChips"]
     var focusedGroup = ""
@@ -774,11 +787,11 @@ Item {
       }
     }
     var stops = ["rail", "serverChips", "serverTools", "serverSearch", "serverFilter", "serverSort", "serverRefresh", "channels", "channelChips", "timeline", "composer", "joinVoice", "callbar", "members", "startBackend",
-      "navigation", "search", "membersButton", "options", "mode", "close", "dismissError"]
+      "navigation", "quickMute", "search", "camera", "membersButton", "options", "mode", "restart", "close", "dismissError"]
     var current = focusedGroup || (joinVoiceButton.activeFocus ? "joinVoice" : dismissErrorButton.activeFocus ? "dismissError" : navigationButton.activeFocus ? "navigation" : serverToolsButton.activeFocus ? "serverTools" : serverSearch.activeFocus ? "serverSearch" : serverFilterControl.activeFocus ? "serverFilter"
       : serverSortControl.activeFocus ? "serverSort" : serverRefresh.activeFocus ? "serverRefresh" : callBarFocused ? "callbar"
       : (buttonFocused
-        ? (modeButton.activeFocus ? "mode" : closeButton.activeFocus ? "close" : searchButton.activeFocus ? "search" : optionsButton.activeFocus ? "options"
+        ? (restartButton.activeFocus ? "restart" : quickMuteButton.activeFocus ? "quickMute" : cameraButton.activeFocus ? "camera" : modeButton.activeFocus ? "mode" : closeButton.activeFocus ? "close" : searchButton.activeFocus ? "search" : optionsButton.activeFocus ? "options"
           : (membersButton.activeFocus ? "membersButton"
             : (startBackendButton.activeFocus ? "startBackend" : "options")))
         : (zone === "sidebar" ? column : zone)))
@@ -798,11 +811,13 @@ Item {
       if (stop === "callbar" && !(ready && callBar.visible)) continue
       if (stop === "members" && !membersVisible) continue
       if (stop === "startBackend" && !startBackendButton.visible) continue
+      if (stop === "camera" && !cameraButton.visible) continue
       if (stop === "membersButton" && !membersButton.visible) continue
       if (stop === "navigation" && !navigationButton.visible) continue
       if (stop === "search" && !searchButton.visible) continue
       if (stop === "options" && !optionsButton.visible) continue
       if (stop === "mode" && !modeButton.visible) continue
+      if (stop === "quickMute" && !quickMuteButton.visible) continue
       if (stop === "close" && !closeButton.visible) continue
       if (stop === "dismissError") {
         if (!dismissErrorButton.visible) continue
@@ -829,7 +844,10 @@ Item {
     if (stop === "mode") { modeButton.forceActiveFocus(); return }
     if (stop === "search") { searchButton.forceActiveFocus(); return }
     if (stop === "options") { optionsButton.forceActiveFocus(); return }
+    if (stop === "quickMute") { quickMuteButton.forceActiveFocus(); return }
+    if (stop === "restart") { restartButton.forceActiveFocus(); return }
     if (stop === "close") { closeButton.forceActiveFocus(); return }
+    if (stop === "camera") { cameraButton.forceActiveFocus(); return }
     if (stop === "membersButton") { membersButton.forceActiveFocus(); return }
     if (stop === "startBackend") { startBackendButton.forceActiveFocus(); return }
     if (stop === "callbar") { focusCallBar(); return }
@@ -873,6 +891,10 @@ Item {
     var alt = (event.modifiers & Qt.AltModifier) !== 0
     var shift = (event.modifiers & Qt.ShiftModifier) !== 0
     if (overlayShown) return
+    if (key === Qt.Key_Escape && callBarFocused && callBar.dismissAudio()) {
+      event.accepted = true
+      return
+    }
     if (narrowLayout && compactChatOpen && key === Qt.Key_Escape) {
       compactChatOpen = false
       zone = "sidebar"
@@ -986,7 +1008,7 @@ Item {
   onWindowActiveChanged: publishActive()
   onReadingChanged: if (reading && ready && timelineView.pinned
     && (focusedZone === "timeline" || focusedZone === "composer")) ackTimer.restart()
-  onOpenedChanged: opened ? enter() : leave()
+  onOpenedChanged: {opened ? enter() : leave()}
 
   onMappedChanged: publishMapped()
   onScreenNameChanged: publishScreen()
@@ -1093,6 +1115,18 @@ Item {
           }
         }
         Button {
+          id: quickMuteButton
+          objectName: "quick-microphone"
+          visible: root.service && root.service.voice && root.service.voice.status === "connected"
+          iconOnly: true
+          iconName: root.service && root.service.voice.muted ? "microphoneOff" : "microphone"
+          text: root.service && root.service.voice.muted ? "Unmute microphone" : "Mute microphone"
+          tooltipText: text + " (Ctrl+Shift+M)"
+          active: !!(root.service && root.service.voice.muted)
+          focusable: true
+          onClicked: root.service.toggleMute()
+        }
+        Button {
           id: searchButton
           objectName: "search-button"
           visible: root.ready
@@ -1105,9 +1139,20 @@ Item {
           onClicked: root.openSwitcher()
         }
         Button {
+          id: cameraButton
+          objectName: "camera-button"
+          visible: root.ready && root.service && root.service.voice && root.service.voice.status === "connected"
+          text: "Video"
+          iconOnly: true
+          iconName: "camera"
+          tooltipText: "Watch a participant's camera or screen (H.264)"
+          focusable: true
+          onClicked: root.openCamera()
+        }
+        Button {
           id: membersButton
           objectName: "members-button"
-          visible: root.ready && (root.currentChannelId !== "" || root.voicePeopleMode)
+          visible: root.ready && !root.crowdedToolbar && (root.currentChannelId !== "" || root.voicePeopleMode)
           iconOnly: true
           text: root.voicePeopleMode ? "Voice participants" : "Members"
           iconName: "members"
@@ -1134,6 +1179,7 @@ Item {
         Button {
           id: modeButton
           objectName: "layout-mode-button"
+          visible: !root.crowdedToolbar
           iconOnly: true
           iconName: root.compactView ? "expand" : "compact"
           tooltipText: root.compactView ? "Full layout" : "Compact layout"
@@ -1143,8 +1189,22 @@ Item {
           onClicked: root.setCompactMode(!root.compactView)
         }
         Button {
+          id: restartButton
+          objectName: "restart-discord"
+          text: root.service && root.service.restartBusy ? "Restarting…" : "Restart Discord"
+          iconName: "reconnect"
+          iconOnly: root.width < Style.space(600)
+          bordered: true
+          focusable: true
+          enabled: !!root.service && !root.service.restartBusy
+          tooltipText: "Restart Discord backend and reconnect its interface. Ends the call; keeps login and settings."
+          onClicked: root.service.restartBackend()
+        }
+        Button {
           id: closeButton
-          iconOnly: true
+          objectName: "close-window"
+          iconOnly: root.width < Style.space(600)
+          bordered: true
           tooltipText: "Close window"
           text: "Close"
           iconName: "close"
@@ -1177,7 +1237,7 @@ Item {
         id: optionsBackdrop
         anchors.fill: parent
         z: 21
-        color: Color.menu.scrim
+        color: PluginTheme.Color.menu.scrim
         opacity: optionsMenu.shown ? 1 : 0
         visible: optionsMenu.shown
         Behavior on opacity { NumberAnimation { duration: 140 } }
@@ -1202,8 +1262,8 @@ Item {
         width: Math.min(Style.space(260), parent.width - Style.spacing.panelPadding * 2)
         height: optionsBody.implicitHeight + Style.spacing.md * 2
         radius: Style.cornerRadius
-        color: Color.popups.background
-        borderSpec: Border.flat(Color.popups.border, Math.max(1, Style.normalBorderWidth))
+        color: PluginTheme.Color.popups.background
+        borderSpec: Border.flat(PluginTheme.Color.popups.border, Math.max(1, Style.normalBorderWidth))
         function toggle(corner) { if (shown) hide(); else showAt(corner || "top-right") }
         function show() { showAt("top-right") }
         function showAt(corner) {
@@ -1243,7 +1303,7 @@ Item {
               Text {
                 width: parent.width; elide: Text.ElideRight
                 text: root.service && root.service.user ? String(root.service.user.display_name || root.service.user.username || "Discord user") : "Discord user"
-                color: Color.popups.text
+                color: PluginTheme.Color.popups.text
                 font.family: root.fontFamily; font.pixelSize: Style.font.body; font.bold: true
               }
               Text {
@@ -1255,7 +1315,7 @@ Item {
             }
           }
 
-          Rectangle { width: parent.width; height: 1; color: Color.popups.border; opacity: 0.4 }
+          Rectangle { width: parent.width; height: 1; color: PluginTheme.Color.popups.border; opacity: 0.4 }
 
           Button {
             id: optionsNotifs
@@ -1306,7 +1366,7 @@ Item {
             }
           }
 
-          Rectangle { width: parent.width; height: 1; color: Color.popups.border; opacity: 0.4 }
+          Rectangle { width: parent.width; height: 1; color: PluginTheme.Color.popups.border; opacity: 0.4 }
 
           Button {
             id: optionsHelp
@@ -1326,7 +1386,7 @@ Item {
             leftAlign: true
             iconName: "logout"
             text: "Log out…"
-            foreground: Color.urgent
+            foreground: PluginTheme.Color.urgent
             focusable: true
             onClicked: { optionsMenu.hide(); logoutConfirm.show() }
           }
@@ -1522,7 +1582,7 @@ Item {
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
                 text: root.qrStatusText()
-                color: root.qrStage === "cancelled" ? Color.urgent : root.foreground
+                color: root.qrStage === "cancelled" ? PluginTheme.Color.urgent : root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
               }
@@ -1643,7 +1703,7 @@ Item {
                 : Math.min(Style.space(180), Math.max(Style.space(140), body.width * 0.16))
               height: parent.height
               radius: Style.cornerRadius
-              color: Color.popups.background
+              color: PluginTheme.Color.popups.background
               borderSpec: root.focusedZone === "sidebar" && root.column === "rail"
                 ? Border.controlSpec("focus", root.foreground, root.accent)
                 : root.panelBorderSpec
@@ -1736,7 +1796,7 @@ Item {
                     active: root.serverFilter === "mentions"
                     fontSize: Style.font.caption
                     horizontalPadding: Style.spacing.xs
-                    foreground: root.mentionedServersCount > 0 ? Color.urgent : root.muted
+                    foreground: root.mentionedServersCount > 0 ? PluginTheme.Color.urgent : root.muted
                     onClicked: root.serverFilter = "mentions"
                   }
                   Button {
@@ -1869,7 +1929,7 @@ Item {
                     height: guildRow.sectionHeight
                     Rectangle {
                       anchors.left: parent.left; anchors.right: parent.right
-                      height: 1; color: Color.popups.border
+                      height: 1; color: PluginTheme.Color.popups.border
                     }
                     Text {
                       objectName: "guild-section-heading"
@@ -1881,13 +1941,14 @@ Item {
                   }
 
                   Rectangle {
+                    objectName: "navigation-unread-" + String(guildRow.row.id || "")
                     anchors.left: parent.left
                     y: guildRow.sectionHeight + (parent.height - guildRow.sectionHeight - height) / 2
                     width: Style.spacing.xs
                     height: guildRow.selected ? Style.space(28) : (guildRow.unread ? Style.spacing.lg : 0)
                     radius: width / 2
                     color: guildRow.selected ? root.accent : root.foreground
-                    visible: height > 0 && !guildRow.navigationEntry
+                    visible: height > 0 && (!guildRow.navigationEntry || (guildRow.isDms && guildRow.unread))
                     Behavior on height { NumberAnimation { duration: 120 } }
                   }
 
@@ -1957,13 +2018,13 @@ Item {
                     width: Math.max(height, guildBadge.implicitWidth + Style.spacing.sm * 2)
                     height: Style.space(16)
                     radius: height / 2
-                    color: Color.urgent
+                    color: PluginTheme.Color.urgent
 
                     Text {
                       id: guildBadge
                       anchors.centerIn: parent
                       text: guildRow.mentions > 99 ? "99+" : String(guildRow.mentions)
-                      color: Color.popups.background
+                      color: PluginTheme.Color.popups.background
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.caption
                       font.bold: true
@@ -2024,12 +2085,12 @@ Item {
                       anchors.bottom: parent.bottom
                       width: Style.spacing.sm + 2; height: width
                       radius: width / 2
-                      color: Color.popups.background
+                      color: PluginTheme.Color.popups.background
                       Rectangle {
                         anchors.centerIn: parent
                         width: Style.spacing.sm; height: width
                         radius: width / 2
-                        color: root.connected ? Color.accent : Color.urgent
+                        color: root.connected ? PluginTheme.Color.accent : PluginTheme.Color.urgent
                       }
                     }
                   }
@@ -2088,7 +2149,7 @@ Item {
                 : Math.min(Style.space(210), Math.max(Style.space(140), body.width * 0.19))
               height: root.voiceNavigation ? parent.height - channelContent.height - conversationRow.spacing : parent.height
               radius: Style.cornerRadius
-              color: Color.popups.background
+              color: PluginTheme.Color.popups.background
               borderSpec: root.focusedZone === "sidebar" && root.column === "channels"
                 ? Border.controlSpec("focus", root.foreground, root.accent)
                 : root.panelBorderSpec
@@ -2219,7 +2280,7 @@ Item {
                     readonly property bool expanded: threadCount > 0 && !!root.expandedThreads[String(row.id || "")]
                     width: channelList.width
                     height: (category ? Style.spacing.controlHeight : Style.spacing.popupRowHeight)
-                      + channelRow.occupants.length * root.voiceOccupantHeight
+                      + (root.dmsSelected ? Style.space(20) : 0) + channelRow.occupants.length * root.voiceOccupantHeight
 
                     PanelSectionHeader {
                       visible: channelRow.category
@@ -2236,7 +2297,7 @@ Item {
                       anchors.left: parent.left
                       anchors.right: parent.right
                       anchors.top: parent.top
-                      height: Style.spacing.popupRowHeight
+                      height: Style.spacing.popupRowHeight + (root.dmsSelected ? Style.space(20) : 0)
                       radius: Style.cornerRadius
                       color: channelRow.hasCursor || channelMouse.containsMouse
                         ? Style.hoverFillFor(root.foreground, root.accent)
@@ -2265,12 +2326,29 @@ Item {
                         anchors.leftMargin: Style.spacing.sm
                         anchors.rightMargin: Style.spacing.sm
                         anchors.verticalCenter: parent.verticalCenter
+                        anchors.verticalCenterOffset: root.dmsSelected ? -Style.space(9) : 0
                         text: String(channelRow.row.name || "")
                         elide: Text.ElideRight
                         color: channelRow.dim ? root.muted : root.foreground
                         font.family: root.fontFamily
                         font.pixelSize: Style.font.body
                         font.bold: channelRow.unread
+                      }
+                      Text {
+                        objectName: "dm-presence-" + String(channelRow.row.id || "")
+                        visible: root.dmsSelected
+                        anchors.left: channelGlyph.right
+                        anchors.leftMargin: Style.spacing.sm
+                        anchors.right: parent.right
+                        anchors.rightMargin: Style.spacing.sm
+                        anchors.bottom: parent.bottom
+                        anchors.bottomMargin: Style.spacing.xs
+                        text: dmPresence.summary(channelRow.row,false)
+                        textFormat: Text.PlainText
+                        elide: Text.ElideRight
+                        color: root.muted
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
                       }
                       Text {
                         id: rowHint
@@ -2307,13 +2385,13 @@ Item {
                         width: Math.max(height, channelBadgeText.implicitWidth + Style.spacing.sm * 2)
                         height: Style.space(16)
                         radius: height / 2
-                        color: Color.urgent
+                        color: PluginTheme.Color.urgent
 
                         Text {
                           id: channelBadgeText
                           anchors.centerIn: parent
                           text: channelRow.mentions > 99 ? "99+" : String(channelRow.mentions)
-                          color: Color.popups.background
+                          color: PluginTheme.Color.popups.background
                           font.family: root.fontFamily
                           font.pixelSize: Style.font.caption
                           font.bold: true
@@ -2433,6 +2511,31 @@ Item {
               width: Math.max(0, parent.width - x)
               height: root.voiceNavigation ? Math.min(Style.space(210), parent.height * 0.55) : parent.height
             }
+            Window {
+              id: videoWindow
+              objectName: "video-window"
+              title: "Omacord Video"
+              transientParent: null
+              flags: Qt.Window | Qt.FramelessWindowHint
+              visible: cameraView.shown
+              width: 800; height: 580
+              minimumWidth: 420; minimumHeight: 360
+              color: PluginTheme.Color.background
+              onClosing: function(event) {cameraView.hide();event.accepted=false}
+              onVisibleChanged: {
+                if(root.service && typeof root.service.setUiVisible==="function")root.service.setUiVisible("video-window",visible)
+                if(visible)root.videoWindowOpened()
+              }
+              Component.onDestruction: if(root.service && typeof root.service.setUiVisible==="function")root.service.setUiVisible("video-window",false)
+              Components.CameraView {
+                id: cameraView
+                objectName: "camera-view"
+                anchors.fill: parent
+                service: root.service
+                onMoveRequested: videoWindow.startSystemMove()
+                onResizeRequested: videoWindow.startSystemResize(Qt.RightEdge | Qt.BottomEdge)
+              }
+            }
             Column {
               id: chatColumn
               parent: channelContent
@@ -2509,6 +2612,20 @@ Item {
                 }
               }
 
+              Text {
+                id:dmStatus
+                objectName:"dm-current-presence"
+                width:parent.width
+                visible:root.currentChannel && root.currentChannel.type==="dm"
+                text:visible ? dmPresence.summary(root.currentChannel,true) : ""
+                textFormat:Text.PlainText
+                wrapMode:Text.WordWrap
+                maximumLineCount:3
+                elide:Text.ElideRight
+                color:root.muted
+                font.family:root.fontFamily
+                font.pixelSize:Style.font.bodySmall
+              }
               Button {
                 id: joinVoiceButton
                 objectName: "join-channel-voice"
@@ -2533,6 +2650,7 @@ Item {
                 height: parent.height - channelHeader.height - typingLine.height
                   - composerView.height - parent.spacing * 3
                   - (joinVoiceButton.visible ? joinVoiceButton.height + parent.spacing : 0)
+                  - (dmStatus.visible ? dmStatus.height + parent.spacing : 0)
 
                 messages: root.currentMessages
                 hasMore: !!(root.currentEntry && root.currentEntry.hasMore)
@@ -2677,7 +2795,7 @@ Item {
                 wrapMode: Text.WordWrap
                 textFormat: Text.PlainText
                 text: root.errorText
-                color: Color.urgent
+                color: PluginTheme.Color.urgent
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
               }

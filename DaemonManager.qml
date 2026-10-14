@@ -24,6 +24,7 @@ Item {
 
   signal started()
   signal stopped()
+  signal restartFinished(bool ok)
   signal setupSucceeded()
   signal setupFailed(string reason)
 
@@ -75,6 +76,28 @@ Item {
     busy = true
     stopCommand.command = runtimeScript("stop")
     stopCommand.running = true
+  }
+
+  function restart() {
+    if (busy || setupBusy || !runtimeAvailable || !pluginDir) return false
+    lastError = ""
+    busy = true
+    restartCommand.command = runtimeScript("restart")
+    restartCommand.running = true
+    return true
+  }
+
+  Process {
+    id: restartCommand
+    stdout: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { waitForEnd: true }
+    onExited: function(exitCode) {
+      root.busy = false
+      if (exitCode === 0) root.serviceActive = true
+      else root.lastError = "Could not restart the Discord backend"
+      root.restartFinished(exitCode === 0)
+      root.refreshStatus()
+    }
   }
 
   onPluginDirChanged: {

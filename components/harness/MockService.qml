@@ -141,6 +141,8 @@ QtObject {
   function refresh() { note("refresh") }
   function succeed(message) {}
   function openSwitcher() { note("openSwitcher") }
+  property bool restartBusy: false
+  function restartBackend() { note("restartBackend"); return true }
   function startBackend() { note("startBackend") }
   function login(token) { note("login") }
   function logout() { note("logout") }

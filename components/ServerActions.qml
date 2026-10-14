@@ -12,6 +12,7 @@ QtObject {
   property var archivedGuilds: ({})
   readonly property int archivedCount: ServerList.archivedCount(guilds, archivedGuilds)
   property bool guildStatsBusy: false
+  property int statsRevision: 0
   property bool guildActionBusy: false
   property string settingsError: ""
   property string actionError: ""
@@ -20,11 +21,12 @@ QtObject {
     if (!ready) {
       guildActionBusy = false
       guildStatsBusy = false
+      statsRevision++
     } else {
       loadArchived()
     }
   }
-  onServiceChanged: if (ready) loadArchived()
+  onServiceChanged: { statsRevision++; guildStatsBusy = false; if (ready) loadArchived() }
 
   function isArchived(id) {
     return !!archivedGuilds[String(id)]
@@ -65,12 +67,14 @@ QtObject {
   function fetchGuildStats(callback) {
     if (!ready || guildStatsBusy) return false
     guildStatsBusy = true
+    var revision = ++statsRevision, owner = service
     var ids = guilds.map(function(g) { return String(g.id) })
     var next = ({})
     var index = 0
     var deadline = Date.now() + 120000
     // One finite serial sweep on explicit request; no timer or retry loop.
     function step() {
+      if (revision !== root.statsRevision || owner !== root.service) return
       if (index >= ids.length || index >= 200 || Date.now() >= deadline || !root.ready) {
         root.guildStats = next
         root.guildStatsBusy = false
@@ -78,7 +82,8 @@ QtObject {
         return
       }
       var id = ids[index++]
-      service.backend.sendCommand("guild_stats", {guild_id:id}, function(ok, result) {
+      owner.backend.sendCommand("guild_stats", {guild_id:id}, function(ok, result) {
+        if (revision !== root.statsRevision || owner !== root.service || !root.ready) return
         if (ok && result && typeof result.online_count === "number") {
           result.fetched_at = Date.now()
           next[id] = result

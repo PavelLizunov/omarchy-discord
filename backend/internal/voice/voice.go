@@ -11,10 +11,10 @@ import (
 
 	"github.com/diamondburned/arikawa/v3/discord"
 	"github.com/diamondburned/ningen/v3"
-	dvoice "github.com/disgoorg/disgo/voice"
 	"github.com/disgoorg/godave"
 	"github.com/disgoorg/snowflake/v2"
 	"github.com/gorilla/websocket"
+	dvoice "github.com/mattcalayo/omarchy-discord/backend/internal/voicewire"
 	davesession "github.com/thomas-vilte/dave-go/session"
 )
 
@@ -61,11 +61,14 @@ type Engine struct {
 	op4      dvoice.StateUpdateFunc
 	newAudio func() (*audio, error)
 
-	conn       dvoice.Conn
-	audio      *audio
-	sender     dvoice.AudioSender
-	rxDriver   *rxDriver
-	openCancel context.CancelFunc
+	conn          dvoice.Conn
+	audio         *audio
+	sender        dvoice.AudioSender
+	rxDriver      *rxDriver
+	video         *camera
+	watchRevision uint64
+	userLevels    map[snowflake.ID]UserAudio
+	openCancel    context.CancelFunc
 }
 
 func New(n *ningen.State, ev Events, log *slog.Logger) *Engine {
@@ -143,6 +146,13 @@ func (e *Engine) join(ctx context.Context, guildID discord.GuildID, channelID di
 			e.mgr = e.newManager(snowflake.ID(me.ID))
 		}
 		e.audio = a
+		if e.userLevels == nil {
+			e.userLevels = make(map[snowflake.ID]UserAudio)
+		}
+		a.rx.mu.Lock()
+		a.rx.levels = e.userLevels
+		a.rx.mu.Unlock()
+		e.video = newCamera()
 		a.tx.setMuted(e.st.Muted)
 		a.rx.deafened.Store(e.st.Deafened)
 		e.gen++
@@ -251,6 +261,8 @@ func (e *Engine) Close() {
 func (e *Engine) detachLocked() func() {
 	e.gen++
 	conn, audio, sender, rx, cancel := e.conn, e.audio, e.sender, e.rxDriver, e.openCancel
+	video := e.video
+	e.video = nil
 	e.conn, e.audio, e.sender, e.rxDriver, e.openCancel = nil, nil, nil, nil, nil
 	if cancel != nil {
 		cancel()
@@ -259,6 +271,9 @@ func (e *Engine) detachLocked() func() {
 		return nil
 	}
 	return func() {
+		if video != nil {
+			video.close()
+		}
 		if sender != nil {
 			sender.Close()
 		}
@@ -286,6 +301,14 @@ type senderConn struct {
 	dvoice.Conn
 	started chan struct{}
 	once    sync.Once
+	metrics *audioMetrics
+}
+
+func (c *senderConn) UDP() dvoice.UDPConn {
+	if c.metrics == nil {
+		return c.Conn.UDP()
+	}
+	return observedUDP{UDPConn: c.Conn.UDP(), metrics: c.metrics}
 }
 
 func (c *senderConn) DAVE() godave.Session {
@@ -295,6 +318,9 @@ func (c *senderConn) DAVE() godave.Session {
 
 func newSender(l *slog.Logger, p dvoice.OpusFrameProvider, c dvoice.Conn) *sender {
 	sc := &senderConn{Conn: c, started: make(chan struct{})}
+	if tx, ok := p.(*capture); ok {
+		sc.metrics = tx.metrics
+	}
 	return &sender{AudioSender: dvoice.NewAudioSender(l, p, sc), started: sc.started}
 }
 
@@ -337,7 +363,10 @@ func (e *Engine) newManager(self snowflake.ID) dvoice.Manager {
 				return s
 			}),
 			dvoice.WithConnAudioReceiverCreateFunc(func(l *slog.Logger, r dvoice.OpusFrameReceiver, c dvoice.Conn) dvoice.AudioReceiver {
-				d := &rxDriver{log: l, rx: r, conn: c}
+				e.mu.Lock()
+				video := e.video
+				e.mu.Unlock()
+				d := &rxDriver{log: l, rx: r, conn: c, video: video}
 				e.mu.Lock()
 				e.rxDriver = d
 				e.mu.Unlock()
@@ -367,6 +396,13 @@ func (e *Engine) gatewayCreate(ds godave.Session, evh dvoice.EventHandlerFunc, _
 	return dvoice.NewGateway(ds, func(g dvoice.Gateway, op dvoice.Opcode, seq int, data dvoice.GatewayMessageData) {
 		evh(g, op, seq, data)
 		e.onEvent(gen, op, data)
+		if _, ok := data.(dvoice.GatewayMessageDataSessionDescription); ok {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := g.Send(ctx, dvoice.OpcodeVideo, dvoice.GatewayMessageDataVideo{AudioSSRC: g.SSRC(), Streams: []dvoice.VideoStream{}}); err != nil {
+				e.log.Warn("camera: receive announcement unavailable", "err", err)
+			}
+		}
 	}, func(_ dvoice.Gateway, err error) {
 		if closeCode(err) == 4006 {
 			e.observeClose(gen, err)
@@ -414,14 +450,35 @@ func (e *Engine) observeClose(gen uint64, err error) {
 }
 
 func (e *Engine) onEvent(gen uint64, op dvoice.Opcode, data dvoice.GatewayMessageData) {
+	e.mu.Lock()
+	video := e.video
+	live := gen == e.gen
+	e.mu.Unlock()
+	if !live {
+		return
+	}
 	switch d := data.(type) {
+	case dvoice.GatewayMessageDataVideo:
+		if e.log != nil {
+			e.log.Info("camera: announced layers", "user", d.UserID, "primary_ssrc", d.VideoSSRC, "layers", d.Streams)
+		}
+		if video != nil {
+			video.announce(d)
+		}
+	case dvoice.GatewayMessageDataSpeaking:
+		if video != nil {
+			video.announceAudio(d.SSRC)
+		}
 	case dvoice.GatewayMessageDataReady:
 		e.log.Info("voice: ready", "ssrc", d.SSRC, "modes", d.Modes)
 	case dvoice.GatewayMessageDataSessionDescription:
-		e.log.Info("voice: session description", "mode", d.Mode, "dave_protocol_version", d.DaveProtocolVersion)
+		e.log.Info("voice: session description", "mode", d.Mode, "dave_protocol_version", d.DaveProtocolVersion, "audio_codec", d.AudioCodec, "video_codec", d.VideoCodec)
 	case dvoice.GatewayMessageDataClientsConnect:
 		e.log.Info("voice: clients connect", "users", d.UserIDs)
 	case dvoice.GatewayMessageDataClientDisconnect:
+		if video != nil {
+			video.remove(d.UserID)
+		}
 		e.log.Info("voice: client disconnect", "user", d.UserID)
 	case dvoice.GatewayMessageDataResumed:
 		e.log.Info("voice: resumed")

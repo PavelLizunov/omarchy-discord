@@ -1,4 +1,5 @@
 import QtQuick
+import "../../ui" as PluginTheme
 import QtTest
 import "../../ui"
 
@@ -19,6 +20,14 @@ TestCase {
   preview.model.currentChannelId="9000";preview.model.reset();wait(50)
  }
  function click(item){mouseClick(item,item.width/2,item.height/2);wait(60)}
+ function test_unvisited_voice_count_is_synchronized_on_open(){
+  preview.client.close();preview.model.voiceMembers=({})
+  preview.cachedVoiceMembers={"2":[{channel_id:"9201",users:[{id:"201"}]}]}
+  preview.client.open("{}");tryCompare(preview.client,"voiceServersCount",1)
+  compare(preview.model.selectedGuildId,"1")
+  compare(preview.model.callCount("enterGuild"),0);compare(preview.model.callCount("voiceJoin"),0)
+  preview.cachedVoiceMembers=null
+ }
  function test_server_click_browses_only_then_explicit_channel_opens_chat(){
   tests.width=520;tests.height=560;preview.client.setCompactMode(true)
   preview.model.channelsByGuild={"1":[{id:"9000",guild_id:"1",name:"general",type:"text"},{id:"9001",guild_id:"1",name:"development",type:"text"},{id:"9002",guild_id:"1",name:"Voice lounge",type:"voice"}],"2":[{id:"9200",guild_id:"2",name:"general",type:"text"},{id:"9201",guild_id:"2",name:"Voice room",type:"voice"}]}
@@ -411,7 +420,7 @@ TestCase {
   verify(mode!==null)
   verify(mode.tooltipText!=="")
   verify(mode.tooltipItem!==null && mode.tooltipItem!==undefined)
-  compare(String(mode.tooltipItem.panelBackground),String(Color.tooltip.background))
+  compare(String(mode.tooltipItem.panelBackground),String(PluginTheme.Color.tooltip.background))
  }
  function test_empty_channel_screen_has_browse_and_find_buttons_in_compact(){
   tests.width=520;tests.height=560;preview.client.setCompactMode(true)

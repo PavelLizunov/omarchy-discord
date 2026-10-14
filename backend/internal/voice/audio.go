@@ -27,11 +27,12 @@ var gateRMS = 500.0
 var audioWatchInterval = time.Second
 
 type audio struct {
-	client *pulse.Client
-	rec    *pulse.RecordStream
-	play   *pulse.PlaybackStream
-	tx     *capture
-	rx     *receiver
+	client  *pulse.Client
+	rec     *pulse.RecordStream
+	play    *pulse.PlaybackStream
+	tx      *capture
+	rx      *receiver
+	metrics *audioMetrics
 
 	done       chan struct{}
 	serverLost func() bool
@@ -42,13 +43,15 @@ func openAudio(log *slog.Logger, speaking func(snowflake.ID, bool)) (*audio, err
 	if err != nil {
 		return nil, err
 	}
-	a := &audio{client: client, done: make(chan struct{})}
+	a := &audio{client: client, done: make(chan struct{}), metrics: &audioMetrics{}}
 	a.serverLost = func() bool { return a.rec.Closed() || a.play.Closed() }
 	if a.tx, err = newCapture(log); err != nil {
 		client.Close()
 		return nil, err
 	}
+	a.tx.metrics = a.metrics
 	a.rx = newReceiver(log, speaking)
+	a.rx.metrics = a.metrics
 	a.rec, err = client.NewRecord(pulse.Int16Writer(a.tx.write),
 		pulse.RecordStereo, pulse.RecordSampleRate(sampleRate),
 		pulse.RecordBufferFragmentSize(frameBytes), pulse.RecordMediaName("Voice call"))
@@ -98,10 +101,11 @@ func (a *audio) watch(every time.Duration, lost func()) {
 }
 
 type capture struct {
-	log    *slog.Logger
-	enc    *opus.Encoder
-	muted  atomic.Bool
-	frames chan []byte
+	log     *slog.Logger
+	metrics *audioMetrics
+	enc     *opus.Encoder
+	muted   atomic.Bool
+	frames  chan []byte
 
 	buf  []int16
 	n    int
@@ -121,7 +125,11 @@ func newCapture(log *slog.Logger) (*capture, error) {
 
 func (c *capture) write(p []int16) (int, error) {
 	total := len(p)
-	if c.muted.Load() {
+	if c.metrics != nil && total > 0 {
+		c.metrics.inputLevel.Store(int64(min(100.0, rms(p)/32768*100)))
+		c.metrics.inputAt.Store(time.Now().UnixMilli())
+	}
+	if c.muted.Load() || (c.metrics != nil && c.metrics.testUntil.Load() > time.Now().UnixMilli()) {
 		c.n, c.hold = 0, 0
 		return total, nil
 	}
@@ -181,7 +189,7 @@ func (c *capture) frame(pcm []int16) {
 }
 
 func (c *capture) ProvideOpusFrame() ([]byte, error) {
-	if c.muted.Load() {
+	if c.muted.Load() || (c.metrics != nil && c.metrics.testUntil.Load() > time.Now().UnixMilli()) {
 		return nil, nil
 	}
 	select {

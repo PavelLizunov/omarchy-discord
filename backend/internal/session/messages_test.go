@@ -122,7 +122,7 @@ func routed(t *testing.T, m *Manager) socket.Routed {
 		switch ev := ev.(type) {
 		case socket.Routed:
 			return ev
-		case protocol.ReadStateChangedEvent, protocol.StateChangedEvent:
+		case protocol.ReadStateChangedEvent, protocol.StateChangedEvent, protocol.ChannelUpdateEvent:
 			continue
 		default:
 			t.Fatalf("want routed event, got %#v", ev)

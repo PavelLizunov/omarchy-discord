@@ -10,9 +10,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	dvoice "github.com/disgoorg/disgo/voice"
 	"github.com/disgoorg/snowflake/v2"
 	"github.com/hraban/opus"
+	dvoice "github.com/mattcalayo/omarchy-discord/backend/internal/voicewire"
 )
 
 const (
@@ -26,16 +26,20 @@ const (
 var silenceFrame = []byte{0xF8, 0xFF, 0xFE}
 
 type receiver struct {
-	log      *slog.Logger
-	speaking func(snowflake.ID, bool)
-	deafened atomic.Bool
+	log         *slog.Logger
+	speaking    func(snowflake.ID, bool)
+	deafened    atomic.Bool
+	metrics     *audioMetrics
+	testSamples atomic.Int64
 
 	mu      sync.Mutex
 	closed  bool
 	users   map[snowflake.ID]*user
+	levels  map[snowflake.ID]UserAudio
 	mix     []int32
 	frame   []int16
 	pending []int16
+	screen  *screenAudio
 }
 
 type user struct {
@@ -70,6 +74,9 @@ func (r *receiver) ReceiveOpusFrame(userID snowflake.ID, p *dvoice.Packet) error
 		return nil
 	}
 	silent := bytes.Equal(p.Opus, silenceFrame)
+	if !silent && r.metrics != nil {
+		r.metrics.receivedAt.Store(time.Now().UnixMilli())
+	}
 	var emit *bool
 	r.mu.Lock()
 	if r.closed {
@@ -182,18 +189,47 @@ func (r *receiver) read(out []int16) (int, error) {
 		r.pending = r.pending[k:]
 		filled += k
 	}
+	for i := range out {
+		if remaining := r.testSamples.Load(); remaining > 0 {
+			out[i] = saturate(int32(out[i]) + int32(testSample(remaining)))
+			r.testSamples.Add(-1)
+		}
+	}
+	if r.metrics != nil && len(out) > 0 && rms(out) > 0 {
+		r.metrics.outputAt.Store(time.Now().UnixMilli())
+	}
 	return filled, nil
 }
 
 func (r *receiver) mixLocked() {
 	clear(r.mix)
-	for _, u := range r.users {
-		if !u.pop(r.log) {
+	for id, u := range r.users {
+		if !u.pop(r.log, r.metrics) {
+			continue
+		}
+		level := userAudio(r.levels, id)
+		if level.Muted || r.deafened.Load() {
 			continue
 		}
 		for i, s := range u.pcm {
-			r.mix[i] += int32(s)
+			r.mix[i] += int32(s) * int32(level.Volume) / 100
 		}
+	}
+	if r.screen != nil {
+		stream := r.screen.rx
+		stream.mu.Lock()
+		if !stream.closed {
+			stream.mixLocked()
+			for id := range stream.users {
+				level := userAudio(r.levels, id)
+				if !level.Muted && !r.deafened.Load() {
+					for i, s := range stream.frame {
+						r.mix[i] += int32(s) * int32(level.Volume) / 100 * int32(r.screen.volume.Load()) / 100
+					}
+				}
+			}
+		}
+		stream.mu.Unlock()
 	}
 	for i, s := range r.mix {
 		r.frame[i] = saturate(s)
@@ -267,7 +303,11 @@ func (u *user) take() (f *frame, plc bool) {
 	return f, false
 }
 
-func (u *user) pop(log *slog.Logger) bool {
+func (u *user) pop(log *slog.Logger, metrics ...*audioMetrics) bool {
+	var m *audioMetrics
+	if len(metrics) > 0 {
+		m = metrics[0]
+	}
 	f, plc := u.take()
 	switch {
 	case plc:
@@ -281,7 +321,13 @@ func (u *user) pop(log *slog.Logger) bool {
 	n, err := u.dec.Decode(f.opus, u.pcm)
 	if err != nil {
 		log.Debug("voice: opus decode", "err", err)
+		if m != nil {
+			m.decodeErrors.Add(1)
+		}
 		return false
+	}
+	if m != nil {
+		m.decodedAt.Store(time.Now().UnixMilli())
 	}
 	clear(u.pcm[n*channels:])
 	return true
@@ -291,6 +337,7 @@ type rxDriver struct {
 	log    *slog.Logger
 	rx     dvoice.OpusFrameReceiver
 	conn   dvoice.Conn
+	video  *camera
 	cancel context.CancelFunc
 	mu     sync.Mutex
 }
@@ -321,7 +368,22 @@ func (d *rxDriver) loop(ctx context.Context) {
 		}
 		if err != nil {
 			d.log.Debug("voice: read packet", "err", err)
+			if r, ok := d.rx.(*receiver); ok && r.metrics != nil {
+				r.metrics.receiveErrors.Add(1)
+			}
 			pause()
+			continue
+		}
+		if p.Type == dvoice.H264PayloadType {
+			if d.video != nil {
+				d.video.receive(p, d.conn.DAVE())
+				if transport, ok := d.conn.UDP().(interface{ SendNACK(uint32, []uint16) error }); ok {
+					ssrc, missing := d.video.missingPackets()
+					if len(missing) > 0 {
+						_ = transport.SendNACK(ssrc, missing)
+					}
+				}
+			}
 			continue
 		}
 		if err := d.rx.ReceiveOpusFrame(d.conn.UserIDBySSRC(p.SSRC), p); err != nil {
