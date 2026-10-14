@@ -30,11 +30,13 @@ source.set_property('num-buffers', 30)
 source.set_property('is-live', True)
 encoder = m.ScreenEncoder(source, width=322, height=180, fps=30, bitrate=1000)
 try:
-    output = encoder.start().read()
+    units = list(m.access_units(encoder.start()))
+    output = b''.join(units)
     encoder.thread.join(timeout=2)
     assert not encoder.thread.is_alive() and encoder.error is None, encoder.error
     assert encoder.process.wait(timeout=2) == 0
     assert encoder.frames >= 25, encoder.frames
+    assert len(units) == encoder.frames, (len(units), encoder.frames)
     decoded = subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-f', 'h264',
         '-i', 'pipe:0', '-f', 'rawvideo', '-pix_fmt', 'gray', 'pipe:1'], input=output,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
@@ -44,6 +46,22 @@ finally:
     encoder.close()
     encoder.close()
 assert encoder.closed
+
+import io
+class TinyReads(io.BytesIO):
+    def read(self, size=-1):
+        return super().read(min(size, 2))
+assert list(m.access_units(TinyReads(output))) == units
+try:
+    list(m.access_units(io.BytesIO(b'not annexb'), limit=16))
+    raise AssertionError('delimiter-less video accepted')
+except RuntimeError:
+    pass
+try:
+    list(m.access_units(io.BytesIO(output), limit=16))
+    raise AssertionError('oversized access unit accepted')
+except RuntimeError:
+    pass
 try:
     encoder.start()
     raise AssertionError('automatic capture restart allowed')

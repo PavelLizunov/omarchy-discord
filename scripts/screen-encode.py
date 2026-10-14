@@ -10,6 +10,50 @@ from gi.repository import Gst
 Gst.init(None)
 
 
+def access_units(stream, limit=4 << 20):
+    """Split the owned AUD-enabled encoder pipe without buffering a video.
+
+    x264 emits an access-unit delimiter before each picture. A changed format
+    without delimiters fails explicitly instead of guessing frame boundaries.
+    """
+    buffered = bytearray()
+    scan = 0
+    have_aud = False
+    while True:
+        chunk = stream.read(4096)
+        eof = not chunk
+        buffered.extend(chunk)
+        while scan + 4 <= len(buffered):
+            prefix = 4 if buffered[scan:scan + 4] == b'\x00\x00\x00\x01' else (
+                3 if buffered[scan:scan + 3] == b'\x00\x00\x01' else 0)
+            if not prefix or scan + prefix == len(buffered):
+                scan += 1 if not prefix else 0
+                if prefix:
+                    break
+                continue
+            if buffered[scan + prefix] & 31 == 9:
+                if have_aud:
+                    unit = bytes(buffered[:scan])
+                    del buffered[:scan]
+                    scan = 0
+                    if len(unit) > limit:
+                        raise RuntimeError('encoded screen access unit exceeds budget')
+                    yield unit
+                else:
+                    if scan != 0:
+                        raise RuntimeError('screen encoder did not begin with delimiter')
+                    have_aud = True
+            scan += prefix
+        if len(buffered) > limit + 4096:
+            raise RuntimeError('encoded screen access unit exceeds budget')
+        if eof:
+            if buffered:
+                if not have_aud or len(buffered) > limit:
+                    raise RuntimeError('invalid or oversized encoded screen unit')
+                yield bytes(buffered)
+            return
+
+
 class ScreenEncoder:
     """Own one source pipeline and H.264 encoder; audio is never captured.
 
@@ -130,6 +174,9 @@ class ScreenEncoder:
                 self.error = str(error)
         finally:
             self.process.stdin.close()
+            self.pipeline.set_state(Gst.State.NULL)
+            if self.error and self.process.poll() is None:
+                self.process.terminate()
 
     def close(self):
         if self.closed:
