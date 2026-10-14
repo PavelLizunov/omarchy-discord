@@ -36,7 +36,7 @@ func TestVideoQualityChangesSubscriptionAndDecoder(t *testing.T) {
 		}
 		if q != 360 {
 			w := g.wants[len(g.wants)-1]
-			if w["43"] != float64(100) || w["pixelCounts"].(map[string]any)["42"] != float64(q*16/9*q) {
+			if w["43"] != float64(100) || w["pixelCounts"].(map[string]any)["42"] != float64(1920*1080) {
 				t.Fatal(w)
 			}
 		}
@@ -48,7 +48,7 @@ func TestVideoQualityChangesSubscriptionAndDecoder(t *testing.T) {
 		b, _ := base64.StdEncoding.DecodeString(v.snapshot().Image)
 		image, err := jpeg.Decode(bytes.NewReader(b))
 		v.close()
-		if err != nil || image.Bounds().Dy() != q {
+		if err != nil || image.Bounds().Dy() != 90 {
 			t.Fatalf("quality%d decoder: %v", q, err)
 		}
 	}

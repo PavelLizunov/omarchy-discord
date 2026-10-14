@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/color"
 	"image/jpeg"
 	"io"
 	"os/exec"
@@ -284,11 +285,8 @@ func (v *camera) sinkWants(selected uint32) dvoice.GatewayMessageDataUnknown {
 	}
 	if selected != 0 {
 		wants[fmt.Sprint(selected)] = 100
-		height := v.quality
-		if height == 0 {
-			height = 360
-		}
-		wants["pixelCounts"] = map[string]int{fmt.Sprint(selected): height * 16 / 9 * height}
+		// The window's output cap must not request a low-detail remote layer.
+		wants["pixelCounts"] = map[string]int{fmt.Sprint(selected): 1920 * 1080}
 	}
 	data, _ := json.Marshal(wants)
 	return dvoice.GatewayMessageDataUnknown(data)
@@ -322,7 +320,7 @@ func newCameraDecoderQuality(height int) (*cameraDecoder, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	d := &cameraDecoder{cancel: cancel, frames: make(chan []byte, 4), done: make(chan struct{})}
 	d.quality.Store(int64(height))
-	d.cmd = exec.CommandContext(ctx, path, "-hide_banner", "-loglevel", "error", "-threads", "1", "-probesize", "32", "-analyzeduration", "0", "-protocol_whitelist", "pipe", "-max_pixels", "8294400", "-f", "h264", "-i", "pipe:0", "-an", "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2", "-threads", "1", "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "5", "pipe:1")
+	d.cmd = exec.CommandContext(ctx, path, "-hide_banner", "-loglevel", "error", "-threads", "1", "-probesize", "32", "-analyzeduration", "0", "-protocol_whitelist", "pipe", "-max_pixels", "8294400", "-f", "h264", "-i", "pipe:0", "-an", "-vf", "scale=w='min(1920,iw)':h='min(1080,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2", "-threads", "1", "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "2", "pipe:1")
 	in, err := d.cmd.StdinPipe()
 	if err != nil {
 		cancel()
@@ -383,7 +381,7 @@ func (d *cameraDecoder) readImages(out io.Reader) {
 			}
 			if prev == 0xff && c == 0xd9 {
 				d.mu.Lock()
-				due := time.Since(d.at) >= 200*time.Millisecond
+				due := time.Since(d.at) >= time.Second/60
 				d.mu.Unlock()
 				if due {
 					resized := resizeVideoJPEG(b, int(d.quality.Load()))
@@ -466,14 +464,35 @@ func resizeVideoJPEG(b []byte, height int) []byte {
 		return b
 	}
 	width := bounds.Dx() * height / bounds.Dy()
-	scaled := image.NewRGBA(image.Rect(0, 0, width, height))
+	// jpeg.Decode produces YCbCr. Scale its planes directly instead of doing
+	// hundreds of thousands of interface color conversions for each picture.
+	scaled := image.NewYCbCr(image.Rect(0, 0, width, height), image.YCbCrSubsampleRatio420)
+	pixels, ok := source.(*image.YCbCr)
+	if !ok {
+		pixels = image.NewYCbCr(bounds, image.YCbCrSubsampleRatio444)
+		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+			for x := bounds.Min.X; x < bounds.Max.X; x++ {
+				value := color.YCbCrModel.Convert(source.At(x, y)).(color.YCbCr)
+				pixels.Y[pixels.YOffset(x, y)] = value.Y
+				at := pixels.COffset(x, y)
+				pixels.Cb[at], pixels.Cr[at] = value.Cb, value.Cr
+			}
+		}
+	}
 	for y := 0; y < height; y++ {
+		sy := bounds.Min.Y + y*bounds.Dy()/height
 		for x := 0; x < width; x++ {
-			scaled.Set(x, y, source.At(bounds.Min.X+x*bounds.Dx()/width, bounds.Min.Y+y*bounds.Dy()/height))
+			sx := bounds.Min.X + x*bounds.Dx()/width
+			scaled.Y[scaled.YOffset(x, y)] = pixels.Y[pixels.YOffset(sx, sy)]
+			if x%2 == 0 && y%2 == 0 {
+				dst, src := scaled.COffset(x, y), pixels.COffset(sx, sy)
+				scaled.Cb[dst] = pixels.Cb[src]
+				scaled.Cr[dst] = pixels.Cr[src]
+			}
 		}
 	}
 	var out bytes.Buffer
-	if jpeg.Encode(&out, scaled, &jpeg.Options{Quality: 80}) != nil {
+	if jpeg.Encode(&out, scaled, &jpeg.Options{Quality: 92}) != nil {
 		return b
 	}
 	return out.Bytes()

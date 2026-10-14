@@ -177,7 +177,7 @@ func TestScreenTransportReceivesFrameAndClosesWithoutVoice(t *testing.T) {
 				t.Fatal(e)
 			}
 			img, e := jpeg.Decode(bytes.NewReader(b))
-			if e != nil || img.Bounds().Dx() != 640 {
+			if e != nil || img.Bounds().Dx() != 160 {
 				t.Fatal("invalid JPEG", e)
 			}
 			break

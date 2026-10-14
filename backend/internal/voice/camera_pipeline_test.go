@@ -268,7 +268,7 @@ func TestCameraPipelineEncryptedFragmentsAndAudio(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if im.Bounds().Dx() != 640 || im.Bounds().Dy() != 360 {
+					if im.Bounds().Dx() != 160 || im.Bounds().Dy() != 90 {
 						t.Fatal(im.Bounds())
 					}
 					return

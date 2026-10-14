@@ -54,6 +54,13 @@ Item {
    service.frameImage="";camera.poll();compare(camera.imageReady,true)
    camera.hide();compare(String(camera.displayedFrame.source),"")
   }
+  function test_presentation_poll_has_one_request_in_flight(){
+   camera.open();service.calls=[];wait(130)
+   verify(service.calls.length>=3)
+   service.deferReplies=true;camera.poll()
+   var pending=service.replies.length;wait(110)
+   compare(service.replies.length,pending)
+  }
   function test_settings_use_separate_route(){
    camera.open();camera.watch("123","screen")
    camera.settings({volume:35});compare(service.calls[service.calls.length-1].name,"video_settings");compare(camera.sample.screen.audio_volume,35)

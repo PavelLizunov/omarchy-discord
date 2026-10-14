@@ -70,7 +70,7 @@ func TestCameraSubscriptionDoesNotGloballyDisableCallAudio(t *testing.T) {
 		}
 		if id != 0 {
 			pixels, ok := wants["pixelCounts"].(map[string]any)
-			if !ok || pixels["20"] != float64(640*360) {
+			if !ok || pixels["20"] != float64(1920*1080) {
 				t.Fatal("missing visible pixel hint", wants)
 			}
 		}
