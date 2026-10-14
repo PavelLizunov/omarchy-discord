@@ -28,9 +28,9 @@ exit 1
   const env = {HOME: dir, XDG_CACHE_HOME: path.join(dir, 'cache'),
     OMARCHY_DISCORD_RUNTIME_DIR: path.join(dir, 'runtime'), PATH: bin + ':/usr/bin:/bin',
     TEST_LOG: path.join(dir, 'build.log')};
-  return {source, env, run() {
+  return {source, env, run(extra = {}) {
     return cp.spawnSync('/usr/bin/bash', [path.join(source, 'scripts/build-backend.sh')],
-      {env, encoding: 'utf8', timeout: 10000});
+      {env: {...env, ...extra}, encoding: 'utf8', timeout: 10000});
   }};
 }
 
@@ -42,6 +42,15 @@ test('bundled backend matches current production-source fingerprint', t => {
   assert.equal(fs.existsSync(f.env.TEST_LOG), false);
   assert.deepEqual(fs.readFileSync(path.join(f.env.OMARCHY_DISCORD_RUNTIME_DIR, 'omarchy-discord-backend')),
     fs.readFileSync(path.join(root, 'backend/dist/x86_64/omarchy-discord-backend')));
+});
+
+test('missing native JPEG library is reported instead of a successful install', t => {
+  const f = fixture(t);
+  fs.writeFileSync(path.join(f.env.PATH.split(':')[0], 'ldd'), '#!/bin/sh\necho "libturbojpeg.so.0 => not found"\n', {mode: 0o755});
+  const result = f.run();
+  assert.equal(result.status, 32);
+  assert.match(result.stderr, /libturbojpeg/);
+  assert.doesNotMatch(result.stdout, /Installed bundled/);
 });
 
 for (const mode of ['changed source', 'changed local dependency', 'missing stamp']) test('build rejects bundled backend with ' + mode, t => {

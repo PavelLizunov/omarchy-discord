@@ -9,7 +9,15 @@ import (
 )
 
 func TestCameraPresentationCadenceAndNoUpscale(t *testing.T) {
-	raw, err := exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-frames:v", "45", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-threads", "1", "-tune", "zerolatency", "-x264-params", "keyint=30:aud=1", "-f", "h264", "pipe:1").Output()
+	testCameraCadence(t, "640x360", 15)
+}
+
+func TestCameraHDPresentationCadence(t *testing.T) {
+	testCameraCadence(t, "1920x1080", 25)
+}
+
+func testCameraCadence(t *testing.T, size string, minimum uint64) {
+	raw, err := exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size="+size+":rate=30", "-frames:v", "45", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-threads", "1", "-tune", "zerolatency", "-x264-params", "keyint=30:aud=1", "-f", "h264", "pipe:1").Output()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +43,8 @@ func TestCameraPresentationCadenceAndNoUpscale(t *testing.T) {
 	sequence := d.sequence
 	picture := append([]byte(nil), d.image...)
 	d.mu.Unlock()
-	if sequence < 15 {
+	t.Logf("published=%d decoded=%d dropped=%d resize_ms=%d", sequence, d.decoded.Load(), d.dropped.Load(), d.resizeMS.Load())
+	if sequence < minimum {
 		t.Fatalf("only %d images in %s; presentation still throttled", sequence, time.Since(start))
 	}
 	img, err := jpeg.Decode(bytes.NewReader(picture))

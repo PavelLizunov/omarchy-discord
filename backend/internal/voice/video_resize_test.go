@@ -48,6 +48,29 @@ func TestVideoResizeCapsWithoutUpscaling(t *testing.T) {
 	}
 }
 
+func TestNativeVideoResizeRejectsMalformedAndOversize(t *testing.T) {
+	for _, input := range [][]byte{nil, []byte("not a JPEG"), make([]byte, cameraFrameLimit+1)} {
+		if _, ok := resizeVideoJPEGNative(input, 360); ok {
+			t.Fatal("invalid input accepted")
+		}
+	}
+	if _, ok := resizeVideoJPEGNative([]byte{0xff, 0xd8, 0xff, 0xd9}, 999); ok {
+		t.Fatal("invalid cap accepted")
+	}
+	var raw bytes.Buffer
+	jpeg.Encode(&raw, image.NewGray(image.Rect(0, 0, 160, 90)), nil)
+	bad := append([]byte(nil), raw.Bytes()...)
+	for i := 0; i+8 < len(bad); i++ {
+		if bad[i] == 0xff && bad[i+1] == 0xc0 {
+			bad[i+5], bad[i+6], bad[i+7], bad[i+8] = 0x7f, 0xff, 0x7f, 0xff
+			break
+		}
+	}
+	if _, ok := resizeVideoJPEGNative(bad, 360); ok {
+		t.Fatal("pixel bomb accepted")
+	}
+}
+
 func BenchmarkVideoResize360(b *testing.B) {
 	p := image.NewYCbCr(image.Rect(0, 0, 1920, 1080), image.YCbCrSubsampleRatio420)
 	var raw bytes.Buffer

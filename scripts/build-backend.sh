@@ -21,8 +21,8 @@ source_fingerprint() {
 
 check_shared_libraries() {
   if ldd "$destination" 2>/dev/null | grep -q 'not found'; then
-    echo "build-backend.sh: the Discord backend needs libopus and it is not installed" >&2
-    echo "Install it and re-run: sudo pacman -S opus" >&2
+    echo "build-backend.sh: the Discord backend needs libopus and libturbojpeg; a required shared library is missing" >&2
+    echo "Install it and re-run: sudo pacman -S opus libjpeg-turbo" >&2
     exit 32
   fi
 }

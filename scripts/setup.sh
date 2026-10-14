@@ -80,8 +80,8 @@ if (( ! backend_ready )); then
 fi
 
 if ldd "$backend_binary" 2>/dev/null | grep -q 'not found'; then
-  echo "setup.sh: the Discord backend needs libopus and it is not installed" >&2
-  echo "Install it and re-run: sudo pacman -S opus" >&2
+  echo "setup.sh: the Discord backend needs libopus and libturbojpeg; a required shared library is missing" >&2
+  echo "Install it and re-run: sudo pacman -S opus libjpeg-turbo" >&2
   exit 32
 fi
 

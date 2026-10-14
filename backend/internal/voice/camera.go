@@ -2,15 +2,11 @@ package voice
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"image"
-	"image/color"
-	"image/jpeg"
 	"io"
 	"os/exec"
 	"sort"
@@ -46,6 +42,9 @@ type CameraSnapshot struct {
 	ReorderWaits     uint64         `json:"reorder_waits"`
 	DuplicatePackets uint64         `json:"duplicate_packets"`
 	Quality          int            `json:"quality"`
+	DecodedFrames    uint64         `json:"decoded_frames"`
+	PresentationDrop uint64         `json:"presentation_dropped"`
+	ResizeMS         int64          `json:"resize_ms"`
 }
 type camera struct {
 	mu           sync.Mutex
@@ -181,6 +180,9 @@ func (v *camera) snapshot() CameraSnapshot {
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		s.Sequence = d.sequence
+		s.DecodedFrames = d.decoded.Load()
+		s.PresentationDrop = d.dropped.Load()
+		s.ResizeMS = d.resizeMS.Load()
 		s.Error = d.err
 		if !d.at.IsZero() {
 			s.AgeMS = time.Since(d.at).Milliseconds()
@@ -294,6 +296,9 @@ func (v *camera) sinkWants(selected uint32) dvoice.GatewayMessageDataUnknown {
 
 type cameraDecoder struct {
 	quality  atomic.Int64
+	decoded  atomic.Uint64
+	dropped  atomic.Uint64
+	resizeMS atomic.Int64
 	mu       sync.Mutex
 	image    []byte
 	sequence uint64
@@ -360,6 +365,36 @@ func newCameraDecoderQuality(height int) (*cameraDecoder, error) {
 	return d, nil
 }
 func (d *cameraDecoder) readImages(out io.Reader) {
+	// Decoded JPEGs are independent. Keep only the latest waiting picture;
+	// never drop encoded H.264 reference frames to make presentation faster.
+	pictures := make(chan []byte, 1)
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		for picture := range pictures {
+			d.mu.Lock()
+			due := time.Since(d.at) >= time.Second/60
+			d.mu.Unlock()
+			if !due {
+				d.dropped.Add(1)
+				continue
+			}
+			start := time.Now()
+			resized, ok := resizeVideoJPEGNative(picture, int(d.quality.Load()))
+			d.resizeMS.Store(time.Since(start).Milliseconds())
+			if !ok {
+				d.setError("Decoded camera image is invalid or exceeds pixel limits")
+				continue
+			}
+			d.mu.Lock()
+			d.image = resized
+			d.sequence++
+			d.at = time.Now()
+			d.err = ""
+			d.mu.Unlock()
+		}
+	}()
+	defer func() { close(pictures); <-finished }()
 	r := bufio.NewReaderSize(out, 65536)
 	var b []byte
 	prev := byte(0)
@@ -380,17 +415,16 @@ func (d *cameraDecoder) readImages(out io.Reader) {
 				return
 			}
 			if prev == 0xff && c == 0xd9 {
-				d.mu.Lock()
-				due := time.Since(d.at) >= time.Second/60
-				d.mu.Unlock()
-				if due {
-					resized := resizeVideoJPEG(b, int(d.quality.Load()))
-					d.mu.Lock()
-					d.image = resized
-					d.sequence++
-					d.at = time.Now()
-					d.err = ""
-					d.mu.Unlock()
+				d.decoded.Add(1)
+				select {
+				case pictures <- b:
+				default:
+					select {
+					case <-pictures:
+						d.dropped.Add(1)
+					default:
+					}
+					pictures <- b
 				}
 				b = nil
 			}
@@ -455,45 +489,8 @@ func (e *Engine) WatchCamera(ctx context.Context, id snowflake.ID, revision uint
 }
 
 func resizeVideoJPEG(b []byte, height int) []byte {
-	source, err := jpeg.Decode(bytes.NewReader(b))
-	if err != nil {
-		return b
+	if resized, ok := resizeVideoJPEGNative(b, height); ok {
+		return resized
 	}
-	bounds := source.Bounds()
-	if bounds.Dy() <= height {
-		return b
-	}
-	width := bounds.Dx() * height / bounds.Dy()
-	// jpeg.Decode produces YCbCr. Scale its planes directly instead of doing
-	// hundreds of thousands of interface color conversions for each picture.
-	scaled := image.NewYCbCr(image.Rect(0, 0, width, height), image.YCbCrSubsampleRatio420)
-	pixels, ok := source.(*image.YCbCr)
-	if !ok {
-		pixels = image.NewYCbCr(bounds, image.YCbCrSubsampleRatio444)
-		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-			for x := bounds.Min.X; x < bounds.Max.X; x++ {
-				value := color.YCbCrModel.Convert(source.At(x, y)).(color.YCbCr)
-				pixels.Y[pixels.YOffset(x, y)] = value.Y
-				at := pixels.COffset(x, y)
-				pixels.Cb[at], pixels.Cr[at] = value.Cb, value.Cr
-			}
-		}
-	}
-	for y := 0; y < height; y++ {
-		sy := bounds.Min.Y + y*bounds.Dy()/height
-		for x := 0; x < width; x++ {
-			sx := bounds.Min.X + x*bounds.Dx()/width
-			scaled.Y[scaled.YOffset(x, y)] = pixels.Y[pixels.YOffset(sx, sy)]
-			if x%2 == 0 && y%2 == 0 {
-				dst, src := scaled.COffset(x, y), pixels.COffset(sx, sy)
-				scaled.Cb[dst] = pixels.Cb[src]
-				scaled.Cr[dst] = pixels.Cr[src]
-			}
-		}
-	}
-	var out bytes.Buffer
-	if jpeg.Encode(&out, scaled, &jpeg.Options{Quality: 92}) != nil {
-		return b
-	}
-	return out.Bytes()
+	return b
 }

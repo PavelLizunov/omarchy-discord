@@ -1,6 +1,6 @@
 # Outbound Discord screen sharing
 
-Status: implementation design, not an available broadcasting feature. Receiving and publishing are different media owners; a working viewer does not imply a working sender.
+Status: implementation design with a tested H.264 RTP payload packetizer, not an available broadcasting feature. Receiving and publishing are different media owners; a working viewer does not imply a working sender.
 
 ## Product contract
 
@@ -18,7 +18,7 @@ The current desktop advertises ScreenCast version6 and source types7. GStreamer 
 
 Keep the main voice connection/account. Create an owned outbound stream using the gateway Stream Create operation18, wait finitely for matching STREAM_CREATE and STREAM_SERVER_UPDATE, validate the current room and permission, then open a separate RTC/DAVE stream connection. Reuse handshake validation and cleanup patterns, not the receive-only videoModule selection key. Stop uses operation19 for this exact owned stream and must not end the voice call or an unrelated viewer.
 
-This transport currently advertises H264 encode:false/decode:true. A sender must deliberately negotiate encode support and validate assigned video/RTX SSRCs; do not guess offsets. Map frame timing to a 90kHz RTP clock, fragment H.264 within MTU, preserve marker/access-unit boundaries, implement RTCP sender reports, PLI/FIR handling and bounded RTX history/NACK replies. The existing UDP Write method is Opus-specific and cannot send video safely. Add a dedicated video writer with separate sequence/timestamp state and shared authenticated transport nonce ownership.
+This transport currently advertises H264 encode:false/decode:true. A sender must deliberately negotiate encode support and validate assigned video/RTX SSRCs; do not guess offsets. Map frame timing to a 90kHz RTP clock, fragment H.264 within MTU, preserve marker/access-unit boundaries, implement RTCP sender reports, PLI/FIR handling and bounded RTX history/NACK replies. The existing UDP Write method is Opus-specific and cannot send video safely. PacketizeH264 now converts one already-encrypted Annex B access unit into bounded single-NAL/FU-A payloads. A synthetic receiver-assembly roundtrip covers multi-packet units, sequence wrap, ownership and malformed/MTU/packet-budget rejection. It is not wired to a sender and does not perform encryption or network transmission. Add a dedicated video writer with separate sequence/timestamp state and shared authenticated transport nonce ownership.
 
 DAVE encrypts complete encoded access units before RTP fragmentation, followed by transport AEAD. The pinned dave-go codec implementation supports H.264 internally, but its godave Session adapter maps only CodecOpus; unknown codecs are not a supported sender route. Extend that owning adapter with a typed H.264 assignment or a small reviewed local wrapper, then test actual encrypted encode/decode. Never reuse Opus assignment or plaintext passthrough to pretend video is encrypted. This is a concrete prerequisite, not a solved feature.
 
