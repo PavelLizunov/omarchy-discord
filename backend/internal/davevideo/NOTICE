@@ -1,0 +1,10 @@
+Native DAVE adapter
+
+The gateway callback mapping was informed by disgoorg/godave v0.3.0
+golibdave/golibdave.go (Apache-2.0, godave contributors).
+https://github.com/disgoorg/godave/tree/v0.3.0/golibdave
+
+Modified implementation: direct native C API ownership, serialized operations,
+strict no-passthrough media path, input budgets and duplicate-epoch nonce guard.
+The official Discord libdave dependency is separately distributed under MIT
+with its own third-party notices and is not included in this source directory.
