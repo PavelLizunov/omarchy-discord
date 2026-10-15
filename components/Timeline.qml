@@ -533,11 +533,12 @@ FocusScope {
 
     ListView {
       id: list
+      objectName: "timeline-list"
       anchors.fill: parent
       anchors.margins: frame.padding + Style.normalBorderWidth
       anchors.bottomMargin: frame.padding + Style.normalBorderWidth + actions.height + Style.spacing.xs
       clip: true
-      reuseItems: false
+      reuseItems: true
       cacheBuffer: Style.space(150)
       boundsBehavior: Flickable.StopAtBounds
       spacing: Style.spacing.xxs
@@ -572,6 +573,11 @@ FocusScope {
       delegate: Column {
         id: row
         required property string mid
+        ListView.onPooled: {
+          timeline.releaseSelection(messageRow)
+          messageRow.clearSelection()
+        }
+        ListView.onReused: messageRow.clearSelection()
         readonly property var entry: timeline.entries[mid] || ({})
         readonly property var message: entry.message || ({})
         readonly property string day: String(entry.day || "")
