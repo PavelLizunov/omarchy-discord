@@ -150,9 +150,9 @@ Item {
       persistentSelection: true
       selectionColor: Style.selectionFillFor(PluginTheme.Color.foreground, PluginTheme.Color.accent)
       selectedTextColor: PluginTheme.Color.foreground
-      textFormat: root.system ? TextEdit.PlainText : TextEdit.RichText
+      textFormat: TextEdit.RichText
       wrapMode: TextEdit.Wrap
-      text: root.system ? String(root.message.content || "") : root.html
+      text: root.system ? Markdown.escapeHtml(root.rawContent).replace(/\n/g, "<br>") : root.html
       color: root.system ? root.muted : root.foreground
       font.family: Style.font.family
       font.pixelSize: Style.font.body

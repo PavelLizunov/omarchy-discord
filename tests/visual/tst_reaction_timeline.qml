@@ -15,6 +15,26 @@ TestCase {
     height: 828
     viewing: false
   }
+  Components.MessageRow { id: messageRow; x:1080; width:180 }
+  function findEditor(node) {
+    if (typeof node.getText === "function" && typeof node.deselect === "function") return node
+    var children=node.children || []
+    for(var i=0;i<children.length;i++) {var found=findEditor(children[i]);if(found)return found}
+    return null
+  }
+  function test_reused_message_format_transition() {
+    var editor=findEditor(messageRow)
+    verify(editor!==null)
+    for(var i=0;i<6;i++) {
+      messageRow.message={content:"**Formatted** message",system:false,author:{id:"10",username:"fixture"}}
+      wait(10)
+      compare(editor.getText(0,editor.length),"Formatted message")
+      messageRow.message={content:"Fixture pinned a message. <b>literal</b>",system:true}
+      wait(10)
+      compare(editor.getText(0,editor.length),"Fixture pinned a message. <b>literal</b>")
+      verify(editor.getText(0,editor.length).indexOf("<!DOCTYPE")<0)
+    }
+  }
   function messages() {
     var rows = []
     for (var i = 0; i < 14; i++) {
