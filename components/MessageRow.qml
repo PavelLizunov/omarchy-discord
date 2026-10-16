@@ -170,22 +170,25 @@ Item {
     }
     Repeater {
       model: root.attachments
-      delegate: Text {
+      delegate: Button {
         required property var modelData
+        objectName: "attachment-open-" + String(modelData.id || modelData.filename || "file")
         width: body.width
-        textFormat: Text.RichText
-        wrapMode: Text.Wrap
         readonly property bool covered: !!modelData.spoiler && !root.spoilersRevealed
-        text: covered ? "[spoiler attachment — Enter to reveal]"
-          : '<a style="color:' + root.linkColor + '" href="' + Markdown.escapeHtml(String(modelData.url || "")) + '">'
-            + Markdown.escapeHtml(String(modelData.filename || "attachment")) + '</a>  '
-            + Markdown.formatSize(modelData.size)
-        color: root.linkColor
-        linkColor: root.linkColor
-        font.family: Style.font.family
-        font.pixelSize: Style.font.bodySmall
-        onLinkActivated: function(url) { root.linkActivated(url) }
-        TapHandler { onSingleTapped: if (parent.covered) root.revealRequested() }
+        text: covered ? "Reveal spoiler attachment"
+          : String(modelData.filename || "attachment") + " · " + Markdown.formatSize(modelData.size)
+        iconName: covered ? "help" : "expand"
+        leftAlign: true
+        focusable: true
+        bordered: true
+        foreground: root.linkColor
+        fontSize: Style.font.bodySmall
+        tooltipText: covered ? "Reveal attachment before opening" : "Open attachment in browser"
+        onClicked: {
+          root.clicked()
+          if (covered) root.revealRequested()
+          else root.linkActivated(String(modelData.url || ""))
+        }
       }
     }
     Repeater {
