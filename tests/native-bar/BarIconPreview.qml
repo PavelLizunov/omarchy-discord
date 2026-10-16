@@ -14,6 +14,7 @@ Rectangle {
  property bool auditReady:false
  property int mentions:0
  property bool unread:false
+ property bool hideCount:false
  property color ink:light?"#242424":"#d8dee9"
  color:light?"#fafafa":"#2e3440"
  Harness.MockService {
@@ -46,7 +47,7 @@ Rectangle {
   function requestPopout(item){activePopout=item}
   function releasePopout(item){if(activePopout===item)activePopout=null}
  }
- Plugin.BarWidget {id:widget;bar:host;x:14;y:20}
+ Plugin.BarWidget {id:widget;bar:host;x:14;y:20;settings:({showMentionCount:root.hideCount?"Off":"On"})}
  Text {x:14;y:68;text:root.idle?"No call · microphone disabled":root.deafened?"Microphone and Discord sound off":root.muted?"Microphone muted":"Microphone on";color:root.ink;font.pixelSize:13}
  function find(item,name){if(item.objectName===name)return item;for(var i=0;i<item.children.length;i++){var r=find(item.children[i],name);if(r)return r}return null}
  function check(){
@@ -96,7 +97,15 @@ Rectangle {
     var gap=b.mapToItem(widget,0,0).x-a.mapToItem(widget,a.width,0).x
     if(Math.abs(gap-Host.Style.space(1))>0.5)throw Error("bar icons must have one pixel canvas gap")
    }
+   var badge=root.find(widget,"bar-mention-badge")
+   if(root.mentions>0 && !root.hideCount){
+    if(!badge||!badge.visible)throw Error("upper mention badge missing")
+    var badgeTop=badge.mapToItem(widget,0,0),markTop=a.mapToItem(widget,0,0)
+    if(badgeTop.y>=markTop.y)throw Error("mention badge must sit above icon")
+    if(badge.mapToItem(widget,badge.width,0).x>b.mapToItem(widget,0,0).x)throw Error("mention badge overlaps microphone")
+   }
    var dot=root.find(widget,"bar-unread-dot")
+   if(root.hideCount && root.mentions>0 && !dot.visible)throw Error("hidden count must keep unread dot")
    if(dot.visible){
     var d=dot.mapToItem(widget,dot.width,dot.height),m=b.mapToItem(widget,0,0)
     if(d.x>m.x && d.y>m.y)throw Error("unread dot overlaps microphone")

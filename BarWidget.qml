@@ -22,8 +22,8 @@ BarWidget {
     || !screenName || discord.panelScreenName === screenName
   readonly property bool online: !!(discord && discord.showStructure)
   readonly property int mentionCount: discord ? discord.totalMentionCount : 0
-  readonly property bool unreadDot: online && mentionCount === 0
-    && !!(discord && discord.anyUnread)
+  readonly property bool unreadDot: online && badgeText === ""
+    && !!(discord && (discord.anyUnread || mentionCount > 0))
   readonly property bool showMentionCount:
     String(root.setting("showMentionCount", "On")) !== "Off"
   readonly property string middleClickAction:
@@ -125,6 +125,8 @@ BarWidget {
         rosterCount:popup.content.callPanel.roster.rows.length,
         singleClickAudio:popup.content.callPanel.roster.singleClickAudio,
         unreadDot:root.unreadDot, unreadDotVisible:unreadDrawing.visible, mentionCount:root.mentionCount,
+        indicatorRevision:"upper-badge-v1", badgeText:root.badgeText,
+        badgeAboveIcon:mentionBadge.visible && mentionBadge.mapToItem(root,0,0).y < mark.mapToItem(root,0,0).y,
         deafened:!!(root.discord && root.discord.voice.deafened), audioBusy:audioControl.busy,
         microphoneIcon:root.discord && root.discord.voice.deafened ? "headphonesOff" : root.discord && root.discord.voice.muted ? "microphoneOff" : "microphone"})
     }
@@ -185,6 +187,7 @@ BarWidget {
     text: root.badgeText
     font.family: root.bar ? root.bar.fontFamily : Style.font.family
     font.pixelSize: Style.font.bodySmall
+    font.bold: true
   }
 
   WidgetButton {
@@ -200,20 +203,22 @@ BarWidget {
     tooltipText: root.tooltip
     fixedWidth: root.vertical ? root.barSize
       : Math.max(Style.bar.statusSlot,
-        mark.implicitWidth + (root.badgeText ? badgeMetrics.advanceWidth + Style.space(4) : 0)
+        mark.implicitWidth + (root.badgeText ? badgeMetrics.advanceWidth : 0)
           + Style.space(5))
     fixedHeight: root.vertical ? Style.bar.statusSlot : -1
 
-    Row {
+    Item {
       anchors.horizontalCenterOffset: root.vertical || root.badgeText ? 0 : Style.space(1)
       anchors.centerIn: parent
-      spacing: Style.space(4)
+      width: mark.implicitWidth + (!root.vertical && root.badgeText ? badgeMetrics.advanceWidth : 0)
+      height: mark.implicitHeight
       enabled: false
 
       Item {
+        anchors.left: parent.left
         anchors.verticalCenter: parent.verticalCenter
-        implicitWidth: mark.implicitWidth
-        implicitHeight: mark.implicitHeight
+        width: mark.implicitWidth
+        height: mark.implicitHeight
 
         DiscordIcon {
           id: mark
@@ -238,16 +243,28 @@ BarWidget {
         }
       }
 
-      Text {
-        objectName: "bar-mention-count"
-        anchors.verticalCenter: parent.verticalCenter
+      Rectangle {
+        id: mentionBadge
+        objectName: "bar-mention-badge"
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.topMargin: -Style.space(4)
         visible: root.badgeText !== ""
-        text: root.badgeText
+        width: badgeMetrics.advanceWidth + Style.space(4)
+        height: Math.max(Style.space(12), count.implicitHeight)
+        radius: height / 2
         color: PluginTheme.Color.urgent
-        font.family: root.bar ? root.bar.fontFamily : Style.font.family
-        font.pixelSize: Style.font.bodySmall
-        font.bold: true
-        renderType: Text.NativeRendering
+        Text {
+          id: count
+          objectName: "bar-mention-count"
+          anchors.centerIn: parent
+          text: root.badgeText
+          color: PluginTheme.Color.background
+          font.family: root.bar ? root.bar.fontFamily : Style.font.family
+          font.pixelSize: Style.font.bodySmall
+          font.bold: true
+          renderType: Text.NativeRendering
+        }
       }
     }
 
