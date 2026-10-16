@@ -31,6 +31,9 @@ for (const file of ['ClientView.qml',...fs.readdirSync(path.join(root,'component
     assert(!text.includes('fetch_media') && !text.includes('mediaPath('), 'File staging must not fetch remote media');
     assert(text.includes('stage-dropped-files.py') && text.includes('root.service.stageFile('), 'Local copies must use the staging-only helper');
     assert(!text.includes('.upload(') && !text.includes('.sendMessage('), 'Dropping must never send');
+  } else if (file === 'components/ExternalLink.qml') {
+    assert(text.includes('"/usr/bin/xdg-open"') && text.includes('onExited:'), 'External link handoff must report process failure');
+    assert(!text.includes('fetch_media') && !text.includes('.upload('), 'Link handoff must not fetch or upload attachments');
   } else assert(!/^import Quickshell/m.test(text),file);
   if (file !== 'ClientView.qml' && file !== 'components/CameraView.qml' && file !== 'components/CallBar.qml') assert(!/\bImage\s*\{/.test(text),file);
   if (file === 'components/CallBar.qml') {

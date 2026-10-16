@@ -32,7 +32,9 @@ Item {
     return null
   }
 
+  readonly property alias externalLink: linkOpener
   ThemeSync { hostColor: Host.Color; hostStyle: Host.Style }
+  Components.ExternalLink { id: linkOpener; service: root.service }
   Components.DroppedFileStager {
     id: droppedFileStager
     service: root.service
@@ -127,8 +129,7 @@ Item {
       }
       onCopyRequested: function(text) { Quickshell.clipboardText = text }
       onLinkRequested: function(url) {
-        if (/^https?:\/\//i.test(url)) Quickshell.execDetached(["xdg-open", url])
-        else if (root.service) root.service.fail("Only HTTP and HTTPS links can be opened")
+        root.externalLink.open(url)
       }
     }
   }
