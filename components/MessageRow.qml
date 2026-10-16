@@ -9,6 +9,15 @@ Item {
   id: root
   property var message: ({})
   property bool grouped: false
+  property bool mediaActive: true
+  function stopMedia() {
+    for (var i = 0; i < attachmentRows.count; i++) {
+      var item = attachmentRows.itemAt(i)
+      if (item) item.playing = false
+    }
+  }
+  onMediaActiveChanged: if (!mediaActive) stopMedia()
+  onMessageChanged: stopMedia()
   property bool cursor: false
   property bool armedDelete: false
   property bool spoilersRevealed: false
@@ -169,25 +178,65 @@ Item {
       font.pixelSize: Style.font.caption
     }
     Repeater {
+      id: attachmentRows
       model: root.attachments
-      delegate: Button {
+      delegate: Column {
+        id: attachment
         required property var modelData
-        objectName: "attachment-open-" + String(modelData.id || modelData.filename || "file")
         width: body.width
-        readonly property bool covered: !!modelData.spoiler && !root.spoilersRevealed
-        text: covered ? "Reveal spoiler attachment"
-          : String(modelData.filename || "attachment") + " · " + Markdown.formatSize(modelData.size)
-        iconName: covered ? "help" : "expand"
-        leftAlign: true
-        focusable: true
-        bordered: true
-        foreground: root.linkColor
-        fontSize: Style.font.bodySmall
-        tooltipText: covered ? "Reveal attachment before opening" : "Open attachment in browser"
-        onClicked: {
-          root.clicked()
-          if (covered) root.revealRequested()
-          else root.linkActivated(String(modelData.url || ""))
+        spacing: Style.spacing.xxs
+        property bool playing: false
+        readonly property bool video: /^video\//i.test(String(modelData.content_type || ""))
+          || /\.(mp4|webm|mov|m4v)(?:$|[?#])/i.test(String(modelData.filename || modelData.url || ""))
+        readonly property bool safeUrl: /^https?:\/\//i.test(String(modelData.url || ""))
+        Button {
+          readonly property var modelData: attachment.modelData
+          objectName: "attachment-open-" + String(modelData.id || modelData.filename || "file")
+          width: body.width
+          readonly property bool covered: !!modelData.spoiler && !root.spoilersRevealed
+          text: covered ? "Reveal spoiler attachment"
+            : String(modelData.filename || "attachment") + " · " + Markdown.formatSize(modelData.size)
+          iconName: covered ? "help" : "expand"
+          leftAlign: true
+          focusable: true
+          bordered: true
+          foreground: root.linkColor
+          fontSize: Style.font.bodySmall
+          tooltipText: covered ? "Reveal attachment before opening" : "Open attachment in browser"
+          onClicked: {
+            root.clicked()
+            if (covered) root.revealRequested()
+            else root.linkActivated(String(modelData.url || ""))
+          }
+        }
+        Button {
+          objectName: "attachment-play-" + String(attachment.modelData.id || attachment.modelData.filename || "file")
+          width: body.width
+          visible: attachment.video && !attachment.playing
+          enabled: attachment.safeUrl && root.mediaActive
+          text: attachment.modelData.spoiler && !root.spoilersRevealed ? "Reveal spoiler video" : "Play video"
+          iconName: "play"
+          focusable: true
+          bordered: true
+          onClicked: {
+            root.clicked()
+            if (attachment.modelData.spoiler && !root.spoilersRevealed) root.revealRequested()
+            else attachment.playing = true
+          }
+        }
+        Loader {
+          id: videoLoader
+          width: body.width
+          visible: active && status === Loader.Ready
+          height: item ? item.implicitHeight : 0
+          active: attachment.playing && root.mediaActive && attachment.safeUrl
+            && (!attachment.modelData.spoiler || root.spoilersRevealed)
+          source: active ? Qt.resolvedUrl("InlineVideo.qml") : ""
+          onLoaded: item.sourceUrl = String(attachment.modelData.url || "")
+          Connections {
+            target: videoLoader.item || null
+            function onCloseRequested() { attachment.playing = false }
+          }
         }
       }
     }

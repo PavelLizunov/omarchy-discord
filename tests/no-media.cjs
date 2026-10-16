@@ -47,7 +47,12 @@ for (const file of ['ClientView.qml',...fs.readdirSync(path.join(root,'component
     assert(text.includes('video_watch') && text.includes('Component.onDestruction'), 'Camera reception must have an explicit stop path');
   }
 }
-console.log('PASS: no attachment fetching/queued/cached images; camera is an explicit backend-frame exception');
+const inlineVideo = fs.readFileSync(path.join(root,'components/InlineVideo.qml'),'utf8');
+assert(inlineVideo.includes('MediaPlayer {') && inlineVideo.includes('Component.onDestruction: player.stop()'));
+const row = fs.readFileSync(path.join(root,'components/MessageRow.qml'),'utf8');
+assert(row.includes('active: attachment.playing && root.mediaActive && attachment.safeUrl'));
+assert(row.includes('else attachment.playing = true'));
+console.log('PASS: no automatic attachment image fetching; video player is explicit, lazy and lifecycle-owned');
 const api = {};
 vm.createContext(api);
 vm.runInContext(fs.readFileSync(path.join(root,'Api.js'),'utf8'),api);

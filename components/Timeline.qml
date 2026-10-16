@@ -576,6 +576,7 @@ FocusScope {
         ListView.onPooled: {
           timeline.releaseSelection(messageRow)
           messageRow.clearSelection()
+          messageRow.stopMedia()
         }
         ListView.onReused: messageRow.clearSelection()
         readonly property var entry: timeline.entries[mid] || ({})
@@ -649,6 +650,7 @@ FocusScope {
           id: messageRow
           width: parent.width
           message: row.message
+          mediaActive: timeline.viewing
           grouped: row.grouped
           selfId: timeline.selfId
           ctx: timeline.ctx

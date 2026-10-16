@@ -49,7 +49,7 @@ Left-click the bar icon for the compact, bar-anchored panel. During a call it op
 - Log out asks for confirmation before ending the session and attempting to remove its saved token. Cancel is initially focused. Close only hides the panel.
 - Escape walks back through focus zones; it does not close a ready panel from the server rail.
 
-Attachments remain links, not image previews. The experimental call-camera viewer is separate from attachment fetching. Bar settings control connection lifetime, notifications, mention count and window persistence. Real QR login, delivery, clipboard and audio depend on the account, network and desktop; inert tests do not certify them.
+Attachments retain an explicit browser link. MP4, WebM and other recognized video attachments also offer Play video inside the message, with pause, seek, mute and stop controls. Sound starts muted and can be enabled with Unmute. Playback starts only on request and stops when the chat closes, the message changes or its row is pooled. Spoilers require revealing first. Codec and network failures keep the browser fallback available. Qt Multimedia is required; the experimental call-camera viewer remains separate. Bar settings control connection lifetime, notifications, mention count and window persistence. Real QR login, delivery, clipboard and audio depend on the account, network and desktop; inert tests do not certify them.
 
 ## Checks and troubleshooting
 
@@ -63,6 +63,8 @@ go test -tags nolibopusfile ./...
 go test -race -tags nolibopusfile ./...
 go vet -tags nolibopusfile ./...
 ```
+
+For inline-video checks, run `python3 scripts/check-inline-video.py` from a Qt graphical test environment with FFmpeg and an OpenGL scene graph. It generates a synthetic clip and serves it only on loopback port 9182. A software Qt Quick scene graph can decode video without painting VideoOutput; use the normal accelerated shell backend or an isolated Mesa test display to verify actual frames.
 
 Offscreen fixtures use inert services and load the actual UI components. They do not test microphone/playback, phone QR approval, live account operations, compositor placement or screen-reader behavior. `TestPulseSmoke` is opt-in. Backend socket tests require loopback sockets in the test environment. A standalone Qt runner may not load Quickshell's native I/O plugin even when the shared shell does.
 

@@ -33,6 +33,8 @@ var paths = {
   save: '<path d="M4 3h13l4 4v14H3V3h1Zm3 0v6h10V3M7 21v-8h10v8"/>',
   microphone: '<rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11v1a7 7 0 0 0 14 0v-1m-7 8v3m-4 0h8"/>',
   microphoneOff: '<path d="m3 3 18 18M9 9v3a3 3 0 0 0 5 2M9 5a3 3 0 0 1 6 0v4M5 11v1a7 7 0 0 0 12 5m2-5v-1m-7 8v3m-4 0h8"/>',
+  play: '<path d="m8 4 12 8-12 8V4Z"/>',
+  pause: '<path d="M8 4v16M16 4v16"/>',
   camera: '<rect x="3" y="5" width="12" height="14" rx="2"/><path d="m15 10 6-4v12l-6-4"/>',
   headphones: '<path d="M3 14v-2a9 9 0 0 1 18 0v2M3 13h4v8H3v-8Zm14 0h4v8h-4v-8Z"/>',
   headphonesOff: '<path d="m3 3 18 18M7 4.5A9 9 0 0 1 21 12v2M3 9v5M3 13h4v8H3v-8m14 4v4h4"/>',
