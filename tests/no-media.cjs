@@ -27,7 +27,11 @@ assert.equal(Object.keys(ctx.mediaWanted).length,0);
 for (const file of ['ClientView.qml',...fs.readdirSync(path.join(root,'components')).filter(f=>f.endsWith('.qml')).map(f=>'components/'+f)]) {
   const text=fs.readFileSync(path.join(root,file),'utf8');
   assert(!text.includes('MultiEffect {'),file);
-  assert(!/^import Quickshell/m.test(text),file);
+  if (file === 'components/DroppedFileStager.qml') {
+    assert(!text.includes('fetch_media') && !text.includes('mediaPath('), 'File staging must not fetch remote media');
+    assert(text.includes('stage-dropped-files.py') && text.includes('root.service.stageFile('), 'Local copies must use the staging-only helper');
+    assert(!text.includes('.upload(') && !text.includes('.sendMessage('), 'Dropping must never send');
+  } else assert(!/^import Quickshell/m.test(text),file);
   if (file !== 'ClientView.qml' && file !== 'components/CameraView.qml' && file !== 'components/CallBar.qml') assert(!/\bImage\s*\{/.test(text),file);
   if (file === 'components/CallBar.qml') {
     assert.equal((text.match(/\bImage\s*\{/g) || []).length, 1, 'Only the local voice-room SVG is allowed');

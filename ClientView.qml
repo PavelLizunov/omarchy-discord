@@ -34,6 +34,7 @@ Item {
   property bool hostOpened: false
   readonly property bool opened: hostOpened
   property bool windowActive: false
+  property var fileStager: null
   property bool mapped: false
   readonly property bool reading: opened && mapped && windowActive
   property string screenName: ""
@@ -2510,6 +2511,14 @@ Item {
               y: root.voiceNavigation ? parent.height - height : 0
               width: Math.max(0, parent.width - x)
               height: root.voiceNavigation ? Math.min(Style.space(210), parent.height * 0.55) : parent.height
+              Components.FileDrop {
+                anchors.fill: chatColumn
+                z: 10
+                service: root.service
+                stager: root.fileStager
+                channelId: root.currentChannelId
+                available: root.opened && root.ready && chatColumn.visible && root.currentChannelId !== "" && !composerView.editing
+              }
             }
             Window {
               id: videoWindow

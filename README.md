@@ -12,7 +12,7 @@ The release includes a complete plugin archive with the tested Linux x86_64 back
 
 ## Requirements and installation
 
-Requires Omarchy Quattro, Quickshell, Qt Quick Controls, systemd, `secret-tool`, `libopus`, `libjpeg-turbo` version 3 or newer, `rsync` and `jq`. Experimental video viewing additionally requires `ffmpeg`. Source builds require `pkg-config` and the libturbojpeg development headers. Clipboard image staging uses `wl-paste`. The bundled backend is for x86_64; other architectures or changed backend sources require Go and build dependencies. Source builds may download Go modules. Never start a second Quickshell instance to run the plugin.
+Requires Omarchy Quattro, Quickshell, Qt Quick Controls, systemd, `secret-tool`, `libopus`, `libjpeg-turbo` version 3 or newer, `rsync` and `jq`. Experimental video viewing additionally requires `ffmpeg`. Source builds require `pkg-config` and the libturbojpeg development headers. Clipboard image staging uses `wl-paste`. Dropping local files into the current chat uses Python 3 to stage private copies; originals are never moved or deleted. Drop up to 10 files, at most 250 MiB total, over the conversation or composer, then press Send explicitly. Folders and remote URLs are not attachments. Discord's account upload limit still applies when sending. The bundled backend is for x86_64; other architectures or changed backend sources require Go and build dependencies. Source builds may download Go modules. Never start a second Quickshell instance to run the plugin.
 
 From this checkout:
 

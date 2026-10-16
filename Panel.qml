@@ -4,6 +4,7 @@ import Quickshell
 import Quickshell.Hyprland
 import qs.Commons as Host
 import "ui"
+import "components" as Components
 
 Item {
   id: root
@@ -32,6 +33,11 @@ Item {
   }
 
   ThemeSync { hostColor: Host.Color; hostStyle: Host.Style }
+  Components.DroppedFileStager {
+    id: droppedFileStager
+    service: root.service
+    onStaged: function(channelId) { if(channelId === view.currentChannelId)view.enterComposer() }
+  }
   function moveWindow(workspace, follow) {
     Hyprland.dispatch("hl.dsp.window.move({ window = \"title:^(Omarchy Discord)$\", workspace = \""
       + workspace + "\"" + (follow ? "" : ", follow = false") + " })")
@@ -104,6 +110,7 @@ Item {
       id: view
       anchors.fill: parent
       service: root.service
+      fileStager: droppedFileStager
       manifest: root.manifest
       mapped: window.visible
       windowActive: Window.active
