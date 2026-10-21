@@ -2,6 +2,7 @@ import QtQuick
 import "ui" as PluginTheme
 import Quickshell
 import qs.Commons
+import qs.Commons as Host
 import qs.Ui
 import Quickshell.Io
 import "ui/Icons.js" as Icons
@@ -11,6 +12,8 @@ BarWidget {
   id: root
 
   moduleName: "quickshell.discord"
+
+  ThemeSync { hostColor: Host.Color; hostStyle: Host.Style }
 
   readonly property var discord: bar && bar.shell
     ? bar.shell.serviceFor("quickshell.discord") : null
@@ -112,6 +115,10 @@ BarWidget {
     function evidence(): string {
       return JSON.stringify({source:String(Qt.resolvedUrl("BarWidget.qml")), opened:root.opened,
         compactComponent:!!popup.content, keyboardPanel:true, openRequests:root.openRequests, closeRequests:root.closeRequests,
+        themeForeground:String(PluginTheme.Color.foreground), themeBackground:String(PluginTheme.Color.background),
+        rosterForeground:String(popup.content.callPanel.roster.foreground),
+        popupBackground:String(PluginTheme.Color.popups.background), popupForeground:String(PluginTheme.Color.popups.text),
+        hostForeground:String(Host.Color.foreground), hostBackground:String(Host.Color.background),
         popupMapped:popup.backingWindowVisible, focusPrimed:popup.focusPrimed,
         compactWidth:popup.contentWidth, compactHeight:popup.contentHeight,
         quickMuteVisible:quickMute.visible, muteIconCount:quickMute.visible ? 1 : 0,
