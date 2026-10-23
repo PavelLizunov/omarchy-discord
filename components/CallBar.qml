@@ -48,6 +48,7 @@ Item {
   onRoomUsersChanged: {
     var room = String(voice.guildId || "") + ":" + String(voice.channelId || "")
     if (status === "connected" && previousRoom === room) {
+      if (departure && roomUsers.some(function(row) { return String(row.id) === String(departure.user.id) })) departure = null
       for (var i=0;i<previousUsers.length;i++) {
         var user=previousUsers[i]
         if (!roomUsers.some(function(row){return String(row.id)===String(user.id)}))

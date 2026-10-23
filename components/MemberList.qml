@@ -282,6 +282,15 @@ FocusScope {
               fontFamily: root.fontFamily
 
               Rectangle {
+                anchors.fill: parent
+                anchors.margins: -Style.spacing.xxs
+                radius: width / 2
+                color: "transparent"
+                border.width: Style.space(2)
+                border.color: PluginTheme.Color.accent
+                visible: memberRow.talking
+              }
+              Rectangle {
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
                 anchors.margins: -Style.spacing.xxs
@@ -323,7 +332,8 @@ FocusScope {
                 objectName: "presence-" + String(memberRow.user.id || "")
                 textFormat: Text.PlainText
                 width: parent.width
-                text: root.statusLabel(memberRow.row.status) + (memberRow.talking ? " · Speaking" : "")
+                text: root.statusLabel(memberRow.row.status)
+                Accessible.description: memberRow.talking ? "Speaking" : ""
                 wrapMode: Text.WordWrap
                 color: root.muted
                 font.family: root.fontFamily
