@@ -7,6 +7,7 @@ import "../Api.js" as Api
 
 import "../Emoji.js" as Emoji
 import "../Keymap.js" as Keymap
+import "../ui" as Theme
 
 FocusScope {
   id: root
@@ -29,8 +30,8 @@ FocusScope {
     ? Emoji.sections(reactions, frequent, serverEmoji, catalog, query, gridLimit, service ? service.selectedGuildId : "")
     : []
   readonly property var flat: Emoji.flatten(sections)
-  readonly property color foreground: Color.popups.text
-  readonly property color muted: Api.secondaryColor(Color.muted, Color.foreground, Color.background)
+  readonly property color foreground: Theme.Color.popups.text
+  readonly property color muted: Api.secondaryColor(Theme.Color.muted, Theme.Color.foreground, Theme.Color.background)
   readonly property string fontFamily: Style.font.family
   readonly property int cellSize: Math.max(Style.space(40), Style.font.heading + Style.spacing.md)
   readonly property int columns: Math.max(1, Math.floor(gridWidth / cellSize))
@@ -113,7 +114,7 @@ FocusScope {
 
   Rectangle {
     anchors.fill: parent
-    color: Color.menu.scrim
+    color: Theme.Color.menu.scrim
     MouseArea {
       anchors.fill: parent
       acceptedButtons: Qt.AllButtons
@@ -127,8 +128,8 @@ FocusScope {
     width: Math.min(Style.space(520), parent.width - Style.gapsOut * 2)
     height: Math.min(Style.space(460), parent.height - Style.gapsOut * 2)
     radius: Style.cornerRadius
-    color: Color.popups.background
-    borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
+    color: Theme.Color.popups.background
+    borderSpec: Border.surfaceSpec("popups", "border", Theme.Color.popups.border, Math.max(1, Style.space(2)))
     padding: Style.spacing.popupPadding
 
     MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons }
@@ -220,11 +221,11 @@ FocusScope {
                     height: root.cellSize
                     radius: Style.cornerRadius
                     color: hasCursor || cellMouse.containsMouse
-                      ? Style.hoverFillFor(root.foreground, Color.accent)
-                      : (cell.me ? Style.selectedFillFor(root.foreground, Color.accent) : "transparent")
+                      ? Style.hoverFillFor(root.foreground, Theme.Color.accent)
+                      : (cell.me ? Style.selectedFillFor(root.foreground, Theme.Color.accent) : "transparent")
                     borderSpec: hasCursor
-                      ? Border.controlSpec("hover-cursor", root.foreground, Color.accent)
-                      : (cell.me ? Border.controlSpec("selected", root.foreground, Color.accent) : Border.none())
+                      ? Border.controlSpec("hover-cursor", root.foreground, Theme.Color.accent)
+                      : (cell.me ? Border.controlSpec("selected", root.foreground, Theme.Color.accent) : Border.none())
 
                     Text {
                       anchors.centerIn: parent

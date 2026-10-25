@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Hyprland
 import qs.Commons as Host
 import "ui"
+import "ui" as Theme
 
 Item {
   id: root
@@ -83,7 +84,7 @@ Item {
     id: window
     title: "Omarchy Discord"
     visible: root.persistent ? root.persistentVisible : view.opened
-    color: Color.background
+    color: Theme.Color.background
     implicitWidth: Style.space(view.compactMode ? 520 : 1040)
     implicitHeight: Style.space(view.compactMode ? 560 : 680)
     minimumSize: Qt.size(Style.space(view.compactMode ? 420 : 640), Style.space(420))

@@ -1,13 +1,14 @@
 import QtQuick
 import QtQuick.Shapes
 import qs.Commons
+import "ui" as Theme
 
 // Adapted from thisisgm/omarchy-discord (MIT License, Copyright (c) 2026 GM).
 Item {
   id: root
 
   property real iconSize: Style.font.icon
-  property color color: Color.foreground
+  property color color: Theme.Color.foreground
 
   readonly property real boxWidth: 24.0
   readonly property real boxTop: 2.85

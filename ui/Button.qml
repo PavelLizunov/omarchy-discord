@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls as Controls
 import "Icons.js" as Icons
 import "../Api.js" as Api
+import "." as Theme
 
 Controls.AbstractButton {
   id: root
@@ -15,9 +16,9 @@ Controls.AbstractButton {
   property bool focusable: false
   property bool bordered: false
   property bool leftAlign: false
-  property color foreground: Color.foreground
+  property color foreground: Theme.Color.foreground
   property color backgroundColor: "transparent"
-  property color accent: Color.accent
+  property color accent: Theme.Color.accent
   property string fontFamily: Style.font.family
   property real fontSize: Style.font.body
   property real iconSize: Style.space(16)
@@ -25,9 +26,9 @@ Controls.AbstractButton {
   property bool iconSpinning: false
   horizontalPadding: Style.spacing.controlPaddingX
   verticalPadding: Style.spacing.controlPaddingY
-  property color tooltipBackground: Color.tooltip.background
-  property color tooltipForeground: Color.tooltip.text
-  property color tooltipBorder: Color.tooltip.border
+  property color tooltipBackground: Theme.Color.tooltip.background
+  property color tooltipForeground: Theme.Color.tooltip.text
+  property color tooltipBorder: Theme.Color.tooltip.border
   readonly property alias iconStatus: svgIcon.status
   readonly property alias tooltipItem: buttonToolTip
   readonly property bool hot: hovered || hasCursor
@@ -36,10 +37,10 @@ Controls.AbstractButton {
   readonly property color paintedBackground: Api.blend(root.down ? Style.pressedFillFor(foreground, accent)
     : _showFocusRing ? Style.focusFillFor(foreground, accent)
     : selected || active ? Style.selectedFillFor(foreground, accent)
-    : hot ? Style.hoverFillFor(foreground, accent) : backgroundColor, Color.popups.background,
+    : hot ? Style.hoverFillFor(foreground, accent) : backgroundColor, Theme.Color.popups.background,
     root.down ? Style.pressedFillAlpha : _showFocusRing ? Style.focusFillAlpha
       : selected || active ? Style.selectedFillAlpha : hot ? Style.hoverFillAlpha : backgroundColor.a)
-  readonly property color textForeground: Api.textColor(selected || active ? _selectedColor : foreground, Color.foreground, paintedBackground)
+  readonly property color textForeground: Api.textColor(selected || active ? _selectedColor : foreground, Theme.Color.foreground, paintedBackground)
   readonly property var _borderSpec: Border.controlSpec(_showFocusRing ? "focus" : hot ? "hover-cursor" : selected || active ? "selected" : "normal", foreground, accent)
   signal rightClicked()
 

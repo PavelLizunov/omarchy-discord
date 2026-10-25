@@ -7,6 +7,7 @@ import qs.Commons
 import "Api.js" as Api
 import "Markdown.js" as Markdown
 import "Emoji.js" as Emoji
+import "ui" as Theme
 
 Item {
   id: root
@@ -93,7 +94,7 @@ Item {
   property var mediaRetried: ({})
   readonly property int avatarSize: 64
   readonly property int emojiSize: 32
-  readonly property color secondaryColor: Api.secondaryColor(Color.muted, Color.foreground, Color.background)
+  readonly property color secondaryColor: Api.secondaryColor(Theme.Color.muted, Theme.Color.foreground, Theme.Color.background)
 
   property var notifyCommand: function(args) { return ["notify-send"].concat(args) }
   readonly property int notifyWindowMs: 3000
@@ -158,11 +159,11 @@ Item {
     channels: channelNames,
     roles: ({}),
     selfId: selfId,
-    mentionColor: Color.accent,
-    mentionBg: Util.alpha(Color.accent, 0.18),
-    linkColor: Color.accent,
-    codeBg: Util.alpha(Color.foreground, 0.08),
-    spoilerColor: Api.blend(secondaryColor, Color.background, secondaryColor.a),
+    mentionColor: Theme.Color.accent,
+    mentionBg: Util.alpha(Theme.Color.accent, 0.18),
+    linkColor: Theme.Color.accent,
+    codeBg: Util.alpha(Theme.Color.foreground, 0.08),
+    spoilerColor: Api.blend(secondaryColor, Theme.Color.background, secondaryColor.a),
     mutedColor: secondaryColor,
     monoFamily: Style.font.family,
     fontSize: Style.font.body,

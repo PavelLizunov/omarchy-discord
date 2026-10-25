@@ -9,6 +9,7 @@ import "Keymap.js" as Keymap
 import "ServerList.js" as ServerList
 import "components" as Components
 import "ui/Icons.js" as Icons
+import "ui" as Theme
 
 Item {
   id: root
@@ -57,15 +58,15 @@ Item {
 
   readonly property string pluginId: manifest && manifest.id
     ? String(manifest.id) : "quickshell.discord"
-  readonly property color foreground: Color.foreground
-  readonly property color muted: Api.secondaryColor(Color.muted, Color.foreground,
-    Api.blend(Style.selectedFillFor(Color.foreground, Color.accent), Color.popups.background, Style.selectedFillAlpha))
-  readonly property color background: Color.background
-  readonly property color accent: Color.accent
+  readonly property color foreground: Theme.Color.foreground
+  readonly property color muted: Api.secondaryColor(Theme.Color.muted, Theme.Color.foreground,
+    Api.blend(Style.selectedFillFor(Theme.Color.foreground, Theme.Color.accent), Theme.Color.popups.background, Style.selectedFillAlpha))
+  readonly property color background: Theme.Color.background
+  readonly property color accent: Theme.Color.accent
   readonly property string fontFamily: Style.font.family
   readonly property int voiceAvatarSize: Style.space(16)
   readonly property int voiceOccupantHeight: Style.space(22)
-  readonly property var panelBorderSpec: Border.flat(Color.popups.border,
+  readonly property var panelBorderSpec: Border.flat(Theme.Color.popups.border,
     Math.max(1, Style.normalBorderWidth))
   readonly property real controlsRowHeight: Math.max(Style.spacing.controlHeight, headerControls.height)
   readonly property real controlButtonsWidth:
@@ -1177,7 +1178,7 @@ Item {
         id: optionsBackdrop
         anchors.fill: parent
         z: 21
-        color: Color.menu.scrim
+        color: Theme.Color.menu.scrim
         opacity: optionsMenu.shown ? 1 : 0
         visible: optionsMenu.shown
         Behavior on opacity { NumberAnimation { duration: 140 } }
@@ -1202,8 +1203,8 @@ Item {
         width: Math.min(Style.space(260), parent.width - Style.spacing.panelPadding * 2)
         height: optionsBody.implicitHeight + Style.spacing.md * 2
         radius: Style.cornerRadius
-        color: Color.popups.background
-        borderSpec: Border.flat(Color.popups.border, Math.max(1, Style.normalBorderWidth))
+        color: Theme.Color.popups.background
+        borderSpec: Border.flat(Theme.Color.popups.border, Math.max(1, Style.normalBorderWidth))
         function toggle(corner) { if (shown) hide(); else showAt(corner || "top-right") }
         function show() { showAt("top-right") }
         function showAt(corner) {
@@ -1243,7 +1244,7 @@ Item {
               Text {
                 width: parent.width; elide: Text.ElideRight
                 text: root.service && root.service.user ? String(root.service.user.display_name || root.service.user.username || "Discord user") : "Discord user"
-                color: Color.popups.text
+                color: Theme.Color.popups.text
                 font.family: root.fontFamily; font.pixelSize: Style.font.body; font.bold: true
               }
               Text {
@@ -1255,7 +1256,7 @@ Item {
             }
           }
 
-          Rectangle { width: parent.width; height: 1; color: Color.popups.border; opacity: 0.4 }
+          Rectangle { width: parent.width; height: 1; color: Theme.Color.popups.border; opacity: 0.4 }
 
           Button {
             id: optionsNotifs
@@ -1306,7 +1307,7 @@ Item {
             }
           }
 
-          Rectangle { width: parent.width; height: 1; color: Color.popups.border; opacity: 0.4 }
+          Rectangle { width: parent.width; height: 1; color: Theme.Color.popups.border; opacity: 0.4 }
 
           Button {
             id: optionsHelp
@@ -1326,7 +1327,7 @@ Item {
             leftAlign: true
             iconName: "logout"
             text: "Log out…"
-            foreground: Color.urgent
+            foreground: Theme.Color.urgent
             focusable: true
             onClicked: { optionsMenu.hide(); logoutConfirm.show() }
           }
@@ -1522,7 +1523,7 @@ Item {
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
                 text: root.qrStatusText()
-                color: root.qrStage === "cancelled" ? Color.urgent : root.foreground
+                color: root.qrStage === "cancelled" ? Theme.Color.urgent : root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
               }
@@ -1643,7 +1644,7 @@ Item {
                 : Math.min(Style.space(180), Math.max(Style.space(140), body.width * 0.16))
               height: parent.height
               radius: Style.cornerRadius
-              color: Color.popups.background
+              color: Theme.Color.popups.background
               borderSpec: root.focusedZone === "sidebar" && root.column === "rail"
                 ? Border.controlSpec("focus", root.foreground, root.accent)
                 : root.panelBorderSpec
@@ -1736,7 +1737,7 @@ Item {
                     active: root.serverFilter === "mentions"
                     fontSize: Style.font.caption
                     horizontalPadding: Style.spacing.xs
-                    foreground: root.mentionedServersCount > 0 ? Color.urgent : root.muted
+                    foreground: root.mentionedServersCount > 0 ? Theme.Color.urgent : root.muted
                     onClicked: root.serverFilter = "mentions"
                   }
                   Button {
@@ -1869,7 +1870,7 @@ Item {
                     height: guildRow.sectionHeight
                     Rectangle {
                       anchors.left: parent.left; anchors.right: parent.right
-                      height: 1; color: Color.popups.border
+                      height: 1; color: Theme.Color.popups.border
                     }
                     Text {
                       objectName: "guild-section-heading"
@@ -1957,13 +1958,13 @@ Item {
                     width: Math.max(height, guildBadge.implicitWidth + Style.spacing.sm * 2)
                     height: Style.space(16)
                     radius: height / 2
-                    color: Color.urgent
+                    color: Theme.Color.urgent
 
                     Text {
                       id: guildBadge
                       anchors.centerIn: parent
                       text: guildRow.mentions > 99 ? "99+" : String(guildRow.mentions)
-                      color: Color.popups.background
+                      color: Theme.Color.popups.background
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.caption
                       font.bold: true
@@ -2024,12 +2025,12 @@ Item {
                       anchors.bottom: parent.bottom
                       width: Style.spacing.sm + 2; height: width
                       radius: width / 2
-                      color: Color.popups.background
+                      color: Theme.Color.popups.background
                       Rectangle {
                         anchors.centerIn: parent
                         width: Style.spacing.sm; height: width
                         radius: width / 2
-                        color: root.connected ? Color.accent : Color.urgent
+                        color: root.connected ? Theme.Color.accent : Theme.Color.urgent
                       }
                     }
                   }
@@ -2088,7 +2089,7 @@ Item {
                 : Math.min(Style.space(210), Math.max(Style.space(140), body.width * 0.19))
               height: root.voiceNavigation ? parent.height - channelContent.height - conversationRow.spacing : parent.height
               radius: Style.cornerRadius
-              color: Color.popups.background
+              color: Theme.Color.popups.background
               borderSpec: root.focusedZone === "sidebar" && root.column === "channels"
                 ? Border.controlSpec("focus", root.foreground, root.accent)
                 : root.panelBorderSpec
@@ -2307,13 +2308,13 @@ Item {
                         width: Math.max(height, channelBadgeText.implicitWidth + Style.spacing.sm * 2)
                         height: Style.space(16)
                         radius: height / 2
-                        color: Color.urgent
+                        color: Theme.Color.urgent
 
                         Text {
                           id: channelBadgeText
                           anchors.centerIn: parent
                           text: channelRow.mentions > 99 ? "99+" : String(channelRow.mentions)
-                          color: Color.popups.background
+                          color: Theme.Color.popups.background
                           font.family: root.fontFamily
                           font.pixelSize: Style.font.caption
                           font.bold: true
@@ -2677,7 +2678,7 @@ Item {
                 wrapMode: Text.WordWrap
                 textFormat: Text.PlainText
                 text: root.errorText
-                color: Color.urgent
+                color: Theme.Color.urgent
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
               }

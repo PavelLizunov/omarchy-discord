@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import qs.Commons
 import qs.Ui
+import "ui" as Theme
 
 BarWidget {
   id: root
@@ -10,7 +11,7 @@ BarWidget {
 
   readonly property var discord: bar && bar.shell
     ? bar.shell.serviceFor("quickshell.discord") : null
-  readonly property color foreground: bar ? bar.foreground : Color.foreground
+  readonly property color foreground: bar ? bar.foreground : Theme.Color.foreground
   readonly property var hostWindow: QsWindow.window
   readonly property string screenName: hostWindow && hostWindow.screen
     ? String(hostWindow.screen.name || "") : ""
@@ -152,7 +153,7 @@ BarWidget {
         anchors.verticalCenter: parent.verticalCenter
         visible: root.badgeText !== ""
         text: root.badgeText
-        color: Color.urgent
+        color: Theme.Color.urgent
         font.family: root.bar ? root.bar.fontFamily : Style.font.family
         font.pixelSize: Style.font.bodySmall
         font.bold: true

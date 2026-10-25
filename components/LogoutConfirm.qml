@@ -1,5 +1,6 @@
 import QtQuick
 import "../ui"
+import "../ui" as Theme
 
 FocusScope {
   id: root
@@ -13,16 +14,16 @@ FocusScope {
   Keys.onEscapePressed: hide()
   Rectangle {
     anchors.fill: parent
-    color: Color.menu.scrim
+    color: Theme.Color.menu.scrim
     MouseArea { anchors.fill: parent; onClicked: root.hide() }
   }
   BorderSurface {
     anchors.centerIn: parent
     width: Math.min(Style.space(430), parent.width - Style.spacing.panelPadding * 2)
     height: body.implicitHeight + Style.spacing.lg * 2
-    color: Color.popups.background
+    color: Theme.Color.popups.background
     radius: Style.cornerRadius
-    borderSpec: Border.flat(Color.popups.border, Math.max(1, Style.normalBorderWidth))
+    borderSpec: Border.flat(Theme.Color.popups.border, Math.max(1, Style.normalBorderWidth))
     MouseArea { anchors.fill: parent }
     Column {
       id: body
@@ -34,7 +35,7 @@ FocusScope {
       Text {
         width: parent.width
         text: "Log out of Discord?"
-        color: Color.popups.text
+        color: Theme.Color.popups.text
         font.family: Style.font.family
         font.pixelSize: Style.font.title
         font.bold: true
@@ -43,7 +44,7 @@ FocusScope {
         width: parent.width
         wrapMode: Text.WordWrap
         text: "This ends your session and attempts to remove the saved sign-in token. You will need to sign in again."
-        color: Color.popups.text
+        color: Theme.Color.popups.text
         font.family: Style.font.family
         font.pixelSize: Style.font.body
       }
@@ -62,7 +63,7 @@ FocusScope {
           id: confirm
           objectName: "logout-confirm"
           text: "Log out"
-          foreground: Color.urgent
+          foreground: Theme.Color.urgent
           focusable: true
           onClicked: { root.hide(); root.confirmed() }
           Keys.onTabPressed: cancel.forceActiveFocus()

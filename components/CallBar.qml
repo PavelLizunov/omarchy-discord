@@ -3,6 +3,7 @@ import QtQuick
 import "../ui"
 
 import "../Api.js" as Api
+import "../ui" as Theme
 
 Item {
   id: root
@@ -21,9 +22,9 @@ Item {
   readonly property var roomUsers: service && voice.channelId
     ? service.voiceUsers(String(voice.guildId || ""), String(voice.channelId)) : []
   readonly property alias roster: voiceRoster
-  property color foreground: Color.foreground
-  property color secondary: Color.foreground
-  property color accent: Color.accent
+  property color foreground: Theme.Color.foreground
+  property color secondary: Theme.Color.foreground
+  property color accent: Theme.Color.accent
   property string fontFamily: Style.font.family
 
   readonly property var voice: service && service.voice ? service.voice : ({})
@@ -83,7 +84,7 @@ Item {
             id: glyph
             anchors.verticalCenter: parent.verticalCenter
             text: Api.channelGlyph("voice")
-            color: root.failed ? Color.urgent : (root.connected ? root.accent : root.secondary)
+            color: root.failed ? Theme.Color.urgent : (root.connected ? root.accent : root.secondary)
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
           }
@@ -126,7 +127,7 @@ Item {
         width: parent.width
         wrapMode: Text.WordWrap
         text: root.statusText
-        color: root.failed ? Color.urgent : root.secondary
+        color: root.failed ? Theme.Color.urgent : root.secondary
         font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall
       }
@@ -199,7 +200,7 @@ Item {
           text: "Leave"
           iconName: "leave"
           focusable: true
-          foreground: Color.urgent
+          foreground: Theme.Color.urgent
           fontFamily: root.fontFamily
           tooltipText: "Leave the voice channel (Ctrl+Shift+H)"
           onClicked: if (root.service) root.service.voiceLeave()

@@ -2,6 +2,7 @@ import QtQuick
 import "../ui"
 
 import "../Api.js" as Api
+import "../ui" as Theme
 
 Item {
   id: root
@@ -9,7 +10,7 @@ Item {
   property var service: null
   property string url: ""
   property string name: ""
-  property color foreground: Color.foreground
+  property color foreground: Theme.Color.foreground
   property string fontFamily: Style.font.family
 
   readonly property string path: ""

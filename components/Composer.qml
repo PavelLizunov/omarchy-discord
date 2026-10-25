@@ -4,6 +4,7 @@ import QtQuick.Controls
 import "../ui"
 
 import "../Api.js" as Api
+import "../ui" as Theme
 
 FocusScope {
   id: composer
@@ -48,9 +49,9 @@ FocusScope {
   signal membersRequested()
   signal voiceRequested(string action)
 
-  readonly property color foreground: Color.foreground
-  readonly property color muted: Api.secondaryColor(Color.muted, Color.foreground, Color.background)
-  readonly property color accent: Color.accent
+  readonly property color foreground: Theme.Color.foreground
+  readonly property color muted: Api.secondaryColor(Theme.Color.muted, Theme.Color.foreground, Theme.Color.background)
+  readonly property color accent: Theme.Color.accent
   readonly property string fontFamily: Style.font.family
   readonly property int lineHeight: Math.ceil(metrics.height)
 
@@ -350,7 +351,7 @@ FocusScope {
       color: Style.controlFill(composer.inputFocused, composer.active, composer.foreground, composer.accent)
       borderSpec: composer.active
         ? Border.controlSpec("focus", composer.foreground, composer.accent)
-        : Border.flat(Color.popups.border, Math.max(1, Style.normalBorderWidth))
+        : Border.flat(Theme.Color.popups.border, Math.max(1, Style.normalBorderWidth))
 
       Flickable {
         id: flick

@@ -6,6 +6,7 @@ import "ui"
 import "Api.js" as Api
 import "Keymap.js" as Keymap
 import "Markdown.js" as Markdown
+import "ui" as Theme
 
 Item {
   id: root
@@ -24,8 +25,8 @@ Item {
   readonly property int limit: 20
   readonly property int debounceMs: 80
   readonly property string fontFamily: Style.font.family
-  readonly property color foreground: Color.popups.text
-  readonly property color muted: Api.secondaryColor(Color.muted, Color.popups.text, Color.popups.background)
+  readonly property color foreground: Theme.Color.popups.text
+  readonly property color muted: Api.secondaryColor(Theme.Color.muted, Theme.Color.popups.text, Theme.Color.popups.background)
   readonly property bool loggedOut: !!(service && service.loggedOut)
   readonly property bool offline: !service || !service.connected
   readonly property var rows: {
@@ -226,7 +227,7 @@ Item {
 
     Rectangle {
       anchors.fill: parent
-      color: Color.menu.scrim
+      color: Theme.Color.menu.scrim
     }
     MouseArea {
       anchors.fill: parent
@@ -245,8 +246,8 @@ Item {
         + searchFooter.implicitHeight + contentColumn.spacing * (searchFeedback.visible ? 4 : 3) + card.contentTopInset + card.contentBottomInset,
         parent.height - y - Style.gapsOut)
       radius: Style.cornerRadius
-      color: Color.popups.background
-      borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
+      color: Theme.Color.popups.background
+      borderSpec: Border.surfaceSpec("popups", "border", Theme.Color.popups.border, Math.max(1, Style.space(2)))
       padding: Style.spacing.popupPadding
 
       MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons }
@@ -354,7 +355,7 @@ Item {
           visible: root.emptyText !== ""
           wrapMode: Text.WordWrap
           text: root.emptyText
-          color: root.error ? Color.urgent : root.muted
+          color: root.error ? Theme.Color.urgent : root.muted
           font.family: root.fontFamily
           font.pixelSize: Style.font.body
           leftPadding: Style.spacing.rowPaddingX
@@ -382,16 +383,16 @@ Item {
             readonly property var row: root.rows[index] || ({})
             readonly property bool hasCursor: index === root.cursor
             readonly property bool login: String(row.kind || "") === "login"
-            readonly property color paintedBackground: Api.blend(Style.hoverFillFor(root.foreground, Color.accent), Color.popups.background,
+            readonly property color paintedBackground: Api.blend(Style.hoverFillFor(root.foreground, Theme.Color.accent), Theme.Color.popups.background,
               hasCursor || rowMouse.containsMouse ? Style.hoverFillAlpha : 0)
-            readonly property color secondary: Api.secondaryColor(Color.muted, root.foreground, paintedBackground)
+            readonly property color secondary: Api.secondaryColor(Theme.Color.muted, root.foreground, paintedBackground)
             width: list.width
             height: Math.round(Style.spacing.popupRowHeight * 1.5)
             radius: Style.cornerRadius
             color: hasCursor || rowMouse.containsMouse
-              ? Style.hoverFillFor(root.foreground, Color.accent) : "transparent"
+              ? Style.hoverFillFor(root.foreground, Theme.Color.accent) : "transparent"
             borderSpec: hasCursor
-              ? Border.controlSpec("hover-cursor", root.foreground, Color.accent)
+              ? Border.controlSpec("hover-cursor", root.foreground, Theme.Color.accent)
               : Border.none()
 
             Text {
@@ -422,8 +423,8 @@ Item {
                   height: Style.space(16)
                   radius: Style.space(3)
                   width: typeBadgeText.implicitWidth + Style.spacing.xs * 2
-                  color: resultRow.row.type === "server" ? Util.alpha(Color.accent, 0.2)
-                    : (resultRow.row.type === "voice" || resultRow.row.type === "stage" ? Util.alpha(Color.accent, 0.2)
+                  color: resultRow.row.type === "server" ? Util.alpha(Theme.Color.accent, 0.2)
+                    : (resultRow.row.type === "voice" || resultRow.row.type === "stage" ? Util.alpha(Theme.Color.accent, 0.2)
                       : (resultRow.row.type === "dm" || resultRow.row.type === "group_dm" ? Util.alpha(root.foreground, 0.15)
                         : Util.alpha(root.foreground, 0.08)))
 
@@ -433,8 +434,8 @@ Item {
                     text: resultRow.row.type === "server" ? "SERVER"
                       : (resultRow.row.type === "voice" || resultRow.row.type === "stage" ? "VOICE"
                         : (resultRow.row.type === "dm" || resultRow.row.type === "group_dm" ? "DM" : "CHANNEL"))
-                    color: Api.textColor(resultRow.row.type === "server" || resultRow.row.type === "voice" ? Color.accent : Color.muted, root.foreground,
-                      Api.blend(resultRow.row.type === "server" || resultRow.row.type === "voice" || resultRow.row.type === "stage" ? Color.accent : root.foreground,
+                    color: Api.textColor(resultRow.row.type === "server" || resultRow.row.type === "voice" ? Theme.Color.accent : Theme.Color.muted, root.foreground,
+                      Api.blend(resultRow.row.type === "server" || resultRow.row.type === "voice" || resultRow.row.type === "stage" ? Theme.Color.accent : root.foreground,
                         resultRow.paintedBackground, resultRow.row.type === "server" || resultRow.row.type === "voice" || resultRow.row.type === "stage" ? 0.2
                           : resultRow.row.type === "dm" || resultRow.row.type === "group_dm" ? 0.15 : 0.08))
                     font.family: root.fontFamily
@@ -482,7 +483,7 @@ Item {
               width: Style.spacing.lg
               height: width
               radius: width / 2
-              color: Color.urgent
+              color: Theme.Color.urgent
             }
             Rectangle {
               id: badge
@@ -493,13 +494,13 @@ Item {
               width: Math.max(height, badgeText.implicitWidth + Style.spacing.sm * 2)
               height: Style.space(16)
               radius: height / 2
-              color: Color.urgent
+              color: Theme.Color.urgent
 
               Text {
                 id: badgeText
                 anchors.centerIn: parent
                 text: resultRow.row.mentions > 99 ? "99+" : String(resultRow.row.mentions || 0)
-                color: Color.popups.background
+                color: Theme.Color.popups.background
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
                 font.bold: true

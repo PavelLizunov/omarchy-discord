@@ -6,6 +6,7 @@ import "../ui"
 import "../Api.js" as Api
 
 import "../Keymap.js" as Keymap
+import "../ui" as Theme
 
 FocusScope {
   id: root
@@ -14,8 +15,8 @@ FocusScope {
   signal closeRequested()
 
   readonly property var sections: Keymap.sections()
-  readonly property color foreground: Color.popups.text
-  readonly property color muted: Api.secondaryColor(Color.muted, Color.foreground, Color.background)
+  readonly property color foreground: Theme.Color.popups.text
+  readonly property color muted: Api.secondaryColor(Theme.Color.muted, Theme.Color.foreground, Theme.Color.background)
   readonly property string fontFamily: Style.font.family
   readonly property int keyColumnWidth: Style.space(190)
 
@@ -57,7 +58,7 @@ FocusScope {
 
   Rectangle {
     anchors.fill: parent
-    color: Color.menu.scrim
+    color: Theme.Color.menu.scrim
     MouseArea {
       anchors.fill: parent
       acceptedButtons: Qt.AllButtons
@@ -72,8 +73,8 @@ FocusScope {
     height: Math.min(body.implicitHeight + Style.spacing.controlHeight + column.spacing
       + contentTopInset + contentBottomInset, parent.height - Style.gapsOut * 2)
     radius: Style.cornerRadius
-    color: Color.popups.background
-    borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
+    color: Theme.Color.popups.background
+    borderSpec: Border.surfaceSpec("popups", "border", Theme.Color.popups.border, Math.max(1, Style.space(2)))
     padding: Style.spacing.popupPadding
 
     MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons }

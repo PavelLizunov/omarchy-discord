@@ -1,11 +1,12 @@
 import QtQuick
 import "ui"
+import "ui" as Theme
 
 QtObject {
   id: root
   required property QtObject hostColor
   required property QtObject hostStyle
-  property QtObject colorAdapter: Color
+  property QtObject colorAdapter: Theme.Color
   property QtObject styleAdapter: Style
 
   function sync() {
