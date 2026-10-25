@@ -320,7 +320,8 @@ Item {
   }
 
   function loginStops() {
-    var stops = qrView ? [qrActionButton, closeButton] : [scanQrButton, tokenField, loginButton, closeButton]
+    var stops = qrView ? (qrRetryButton.visible ? [qrRetryButton, qrActionButton, closeButton]
+      : [qrActionButton, closeButton]) : [scanQrButton, tokenField, loginButton, closeButton]
     if (errorText) stops.push(dismissErrorButton)
     return stops
   }
@@ -345,8 +346,9 @@ Item {
 
   function leaveQr() {
     if (!service) return
-    if (lifecycle === "qr_pending") { if (qrStage !== "approved") service.cancelQrLogin() }
-    else service.dismissQr()
+    service.cancelQrLogin(function(ok) {
+      if (ok) Qt.callLater(root.focusLogin)
+    })
   }
 
   function qrStatusText() {
@@ -1538,18 +1540,27 @@ Item {
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
               }
-              Button {
-                id: qrActionButton
+              Row {
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: root.qrStage === "cancelled" || root.qrMissing ? "Try again" : "Cancel"
-                focusable: true
-                activeFocusOnTab: false
-                foreground: root.foreground
-                enabled: !(root.service && root.service.qrBusy)
-                onClicked: {
-                  if (root.qrMissing) root.service.restartQrLogin()
-                  else if (root.qrStage === "cancelled") root.startQrLogin()
-                  else root.leaveQr()
+                spacing: Style.spacing.controlGap
+                Button {
+                  id: qrRetryButton
+                  visible: root.qrStage === "cancelled" || root.qrMissing
+                  text: "Try again"
+                  focusable: true
+                  activeFocusOnTab: false
+                  foreground: root.foreground
+                  enabled: !!root.service && !root.service.qrBusy && !root.service.qrCancelBusy
+                  onClicked: root.service.restartQrLogin()
+                }
+                Button {
+                  id: qrActionButton
+                  text: "Back to sign-in"
+                  focusable: true
+                  activeFocusOnTab: false
+                  foreground: root.foreground
+                  enabled: !!root.service && !root.service.qrCancelBusy
+                  onClicked: root.leaveQr()
                 }
               }
             }
@@ -1574,7 +1585,7 @@ Item {
                   anchors.verticalCenter: parent.verticalCenter
                   width: parent.parent.width - scanQrButton.width - parent.spacing
                   wrapMode: Text.WordWrap
-                  text: "Shows a code to scan with the Discord mobile app. No password, no captcha."
+                  text: "Scan with the Discord mobile app and confirm on your phone. Discord may require additional verification."
                   color: root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body

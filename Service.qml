@@ -102,6 +102,7 @@ Item {
 
   property var qr: null
   property bool qrBusy: false
+  property bool qrCancelBusy: false
   property int qrRevision: 0
   readonly property int qrReplayMs: 3000
   property bool qrMissing: false
@@ -1506,7 +1507,7 @@ Item {
 
   function startQrLogin() {
     if (!connected) { fail("The Discord backend is not connected yet"); return false }
-    if (qrBusy || lifecycle === "qr_pending") return false
+    if (qrBusy || qrCancelBusy || lifecycle === "qr_pending") return false
     qrBusy = true
     lastError = ""
     qr = null
@@ -1519,8 +1520,17 @@ Item {
   }
 
   function cancelQrLogin(callback) {
-    if (!connected) return false
+    if (!connected || qrCancelBusy) return false
+    if (lifecycle !== "qr_pending" && !qrBusy) {
+      dismissQr()
+      if (typeof callback === "function") callback(true)
+      return true
+    }
+    qrCancelBusy = true
     backendClient.sendCommand("cancel_qr_login", null, function(ok, result, error) {
+      root.qrCancelBusy = false
+      if (ok) root.dismissQr()
+      else root.fail(error || "Could not cancel QR login")
       if (typeof callback === "function") callback(ok)
     })
     return true
@@ -1529,7 +1539,7 @@ Item {
   function restartQrLogin() {
     if (lifecycle !== "qr_pending") return startQrLogin()
     qrMissing = false
-    return cancelQrLogin(function() { root.startQrLogin() })
+    return cancelQrLogin(function(ok) { if (ok) root.startQrLogin() })
   }
 
   function watchQrReplay() {
@@ -1543,6 +1553,8 @@ Item {
 
   function dismissQr() {
     qr = null
+    qrMissing = false
+    qrReplayTimer.stop()
   }
 
   function applyQrEvent(name, message) {
