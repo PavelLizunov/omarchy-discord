@@ -85,6 +85,10 @@ if ldd "$backend_binary" 2>/dev/null | grep -q 'not found'; then
   exit 32
 fi
 
+if [[ ! -x $runtime_dir/omarchy-discord-login || $source_root/auth/main.cpp -nt $runtime_dir/omarchy-discord-login || $source_root/auth/login.pro -nt $runtime_dir/omarchy-discord-login ]]; then
+  "$source_root/scripts/build-login.sh"
+fi
+
 install -d -m 700 -- "$unit_dir"
 if [[ -n ${OMARCHY_DISCORD_RUNTIME_DIR:-} ]]; then
   sed -e "s|^ExecStart=.*|ExecStart=$backend_binary|" \

@@ -22,7 +22,7 @@ stamp_file="$runtime_dir/installed-version"
 
 source_root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 "$source_root/scripts/backend-runtime.sh" stop
-rm -f -- "$unit_file" "$backend_binary" "$stamp_file"
+rm -f -- "$unit_file" "$backend_binary" "$stamp_file" "$runtime_dir/omarchy-discord-login"
 rmdir -- "$runtime_dir" 2>/dev/null || true
 systemctl --user daemon-reload
 

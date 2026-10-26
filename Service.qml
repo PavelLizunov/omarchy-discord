@@ -77,6 +77,18 @@ Item {
   property var dirtyThreadParents: ({})
   property bool structureBusy: false
   property bool loginBusy: false
+  readonly property bool browserLoginBusy: browserLogin.running
+
+  function startBrowserLogin() {
+    if (!connected) { fail(qsTr("The Discord backend is not connected yet")); return false }
+    if (loginBusy || browserLoginBusy || qrBusy || qrCancelBusy) return false
+    if (!loggedOut && lifecycle !== "qr_pending") return false
+    lastError = ""
+    if (lifecycle === "qr_pending")
+      return cancelQrLogin(function(ok) { if (ok) browserLogin.start() })
+    dismissQr()
+    return browserLogin.start()
+  }
   property double lastGeneration: -1
 
   property string lastError: ""
@@ -319,7 +331,7 @@ Item {
   property bool restartBusy: false
   readonly property string restartBlockedReason: Object.keys(drafts).length || Object.keys(staged).length
     ? "Finish or clear drafts and staged attachments before restarting."
-    : Object.keys(pendingByNonce).length || Object.keys(uploadChannels).length || qrBusy
+    : Object.keys(pendingByNonce).length || Object.keys(uploadChannels).length || qrBusy || browserLoginBusy || loginBusy
       ? "Wait for messages, uploads or sign-in to finish before restarting." : ""
   function restartBackend() {
     if (restartBusy || daemonManager.busy || daemonManager.setupBusy) return false
@@ -1539,7 +1551,7 @@ Item {
 
   function startQrLogin() {
     if (!connected) { fail("The Discord backend is not connected yet"); return false }
-    if (qrBusy || qrCancelBusy || lifecycle === "qr_pending") return false
+    if (qrBusy || qrCancelBusy || browserLoginBusy || loginBusy || lifecycle === "qr_pending") return false
     qrBusy = true
     lastError = ""
     qr = null
@@ -1940,6 +1952,7 @@ Item {
 
     function toggle(): string { return root.togglePanel() }
     function open(): string { return root.openPanel(null) }
+    function signIn(): string { return root.startBrowserLogin() ? "opened" : "unavailable" }
     function close(): string { return root.closePanel() }
     function restart(): string { return root.restartBackend() ? "started" : "blocked" }
     function refreshVoice(): string { root.refreshVoiceMembers(root.voice.guildId || root.selectedGuildId); return "requested" }
@@ -2043,6 +2056,12 @@ Item {
         if (typeof cb === "function") cb(true, isFinite(size) ? size : 0)
       }
     }
+  }
+
+  BrowserLogin {
+    id: browserLogin
+    pluginDir: root.pluginDir
+    onFailed: function(reason) { root.fail(reason) }
   }
 
   DaemonManager {

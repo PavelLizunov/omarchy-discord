@@ -75,12 +75,12 @@
       "removed": 367
     },
     "README.md": {
-      "added": 25,
+      "added": 31,
       "removed": 519
     },
     "Service.qml": {
-      "added": 87,
-      "removed": 415
+      "added": 121,
+      "removed": 418
     },
     "backend/cmd/omarchy-discord-backend/main.go": {
       "added": 5,
@@ -368,11 +368,11 @@
       "removed": 10
     },
     "scripts/remove-runtime.sh": {
-      "added": 3,
-      "removed": 2
+      "added": 4,
+      "removed": 3
     },
     "scripts/setup.sh": {
-      "added": 0,
+      "added": 4,
       "removed": 21
     }
   },

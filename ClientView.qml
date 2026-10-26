@@ -114,6 +114,7 @@ Item {
   readonly property bool qrCancelable: lifecycle === "qr_pending" && qrStage !== "approved"
   readonly property bool qrMissing: !!(service && service.qrMissing)
   property int qrSecondsLeft: 0
+  property bool tokenLoginShown: false
 
   property string zone: "sidebar"
   property string column: "rail"
@@ -333,7 +334,9 @@ Item {
 
   function loginStops() {
     var stops = qrView ? (qrRetryButton.visible ? [qrRetryButton, qrActionButton, closeButton]
-      : [qrActionButton, closeButton]) : [scanQrButton, tokenField, loginButton, closeButton]
+      : [qrActionButton, closeButton]) : tokenLoginShown
+      ? [browserLoginButton, scanQrButton, tokenField, loginButton, closeButton]
+      : [browserLoginButton, scanQrButton, tokenOptionsButton, closeButton]
     if (errorText) stops.push(dismissErrorButton)
     return stops
   }
@@ -1606,12 +1609,12 @@ Item {
                 Button {
                   id: qrRetryButton
                   visible: root.qrStage === "cancelled" || root.qrMissing
-                  text: "Try again"
+                  text: qsTr("Continue on Discord sign-in")
                   focusable: true
                   activeFocusOnTab: false
                   foreground: root.foreground
-                  enabled: !!root.service && !root.service.qrBusy && !root.service.qrCancelBusy
-                  onClicked: root.service.restartQrLogin()
+                  enabled: !!root.service && !root.service.qrBusy && !root.service.qrCancelBusy && !root.service.browserLoginBusy
+                  onClicked: root.service.startBrowserLogin()
                 }
                 Button {
                   id: qrActionButton
@@ -1630,45 +1633,77 @@ Item {
               visible: !root.qrView
               spacing: Style.spacing.lg
 
+              Button {
+                id: browserLoginButton
+                text: root.service && root.service.browserLoginBusy
+                  ? qsTr("Sign-in window is open") : qsTr("Sign in with email or QR")
+                focusable: true
+                activeFocusOnTab: false
+                foreground: root.foreground
+                enabled: !!root.service && !root.service.browserLoginBusy && !root.service.loginBusy
+                onClicked: root.service.startBrowserLogin()
+              }
+              Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                textFormat: Text.PlainText
+                text: qsTr("Opens the official Discord page in a private window. Use email and password or scan its QR code. Complete CAPTCHA and two-factor verification there; Omacord connects automatically after sign-in.")
+                color: root.muted
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+              }
               Row {
                 spacing: Style.spacing.md
                 Button {
                   id: scanQrButton
-                  text: "Scan QR"
+                  text: qsTr("Direct QR (alternative)")
                   focusable: true
                   activeFocusOnTab: false
                   foreground: root.foreground
-                  enabled: !(root.service && (root.service.loginBusy || root.service.qrBusy))
+                  enabled: !(root.service && (root.service.loginBusy || root.service.qrBusy || root.service.browserLoginBusy))
                   onClicked: root.startQrLogin()
                 }
                 Text {
                   anchors.verticalCenter: parent.verticalCenter
                   width: parent.parent.width - scanQrButton.width - parent.spacing
                   wrapMode: Text.WordWrap
-                  text: "Scan with the Discord mobile app and confirm on your phone. Discord may require additional verification."
+                  text: qsTr("Uses the native QR flow. If Discord asks for CAPTCHA, continue through the sign-in window above.")
                   color: root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
                 }
               }
+              Button {
+                id: tokenOptionsButton
+                visible: !root.tokenLoginShown
+                text: qsTr("Use a user token (advanced)")
+                focusable: true
+                activeFocusOnTab: false
+                foreground: root.foreground
+                onClicked: { root.tokenLoginShown = true; tokenField.forceActiveFocus() }
+              }
               Text {
+                visible: root.tokenLoginShown
                 width: parent.width
                 wrapMode: Text.WordWrap
-                text: "This field accepts a Discord user token, not your email or password. Password sign-in is not available in Omacord. You can switch to Scan QR above. The backend stores the token in your system keyring."
+                textFormat: Text.PlainText
+                text: qsTr("Advanced fallback: this field accepts a Discord user token, not your password. The backend stores the session in your system keyring.")
                 color: root.muted
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
               }
               TextField {
                 id: tokenField
+                visible: root.tokenLoginShown
                 width: parent.width
                 password: true
                 placeholderText: "Discord user token"
                 activeFocusOnTab: false
-                enabled: !(root.service && root.service.loginBusy)
+                enabled: !(root.service && (root.service.loginBusy || root.service.browserLoginBusy))
                 onAccepted: root.submitToken()
               }
               Row {
+                visible: root.tokenLoginShown
                 spacing: Style.spacing.controlGap
                 Button {
                   id: loginButton
@@ -1676,7 +1711,7 @@ Item {
                   focusable: true
                   activeFocusOnTab: false
                   foreground: root.foreground
-                  enabled: !(root.service && root.service.loginBusy)
+                  enabled: !(root.service && (root.service.loginBusy || root.service.browserLoginBusy))
                   onClicked: root.submitToken()
                 }
                 Text {
