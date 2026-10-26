@@ -22,4 +22,6 @@ Left-click the bar icon for the compact, bar-anchored panel. During a call it op
 - Log out asks for confirmation before ending the session and attempting to remove its saved token. Cancel is initially focused. Close only hides the panel.
 - Escape walks back through focus zones; it does not close a ready panel from the server rail.
 
-Attachments remain links, not image previews. The experimental call-camera viewer is separate from attachment fetching. Bar settings control connection lifetime, notifications, mention count and window persistence. Real QR login, delivery, clipboard and audio depend on the account, network and desktop; inert tests do not certify them.
+Use the paperclip button or Ctrl+U in the composer to select images, videos or other local files. You can also drop files onto the composer; Ctrl+V attaches an image copied to the clipboard. Selected files appear as removable attachment chips. Enter or Send uploads them, with an optional message; selecting or dropping files does not send them. Up to 10 files fit in one message, subject to Discord upload limits and channel permissions. Files are copied to private runtime staging, so sending or removing an attachment never deletes the original.
+
+Received attachments remain links, not image previews. The experimental call-camera viewer is separate from attachment fetching. Bar settings control connection lifetime, notifications, mention count and window persistence. Real QR login, delivery, clipboard and audio depend on the account, network and desktop; inert tests do not certify them.

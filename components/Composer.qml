@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import "../ui" as PluginTheme
 import QtQuick.Controls
+import QtQuick.Dialogs as Dialogs
 import "../ui"
 
 import "../Api.js" as Api
@@ -35,6 +36,7 @@ FocusScope {
   readonly property bool editing: editingId !== ""
   readonly property bool replying: replyToId !== ""
   readonly property bool uploading: {
+    if (service && service.attachmentStaging) return true
     for (var i = 0; i < chips.length; i++) if (chips[i].uploading) return true
     return false
   }
@@ -167,6 +169,17 @@ FocusScope {
       chipViewport.contentY = item.y + item.height - chipViewport.height
   }
 
+  function attachFiles(urls) {
+    if (!service || !channelId || editing || uploading) return false
+    return service.stageAttachments(channelId, urls)
+  }
+
+  function chooseAttachments() {
+    if (!service || !channelId || editing || uploading) return
+    fileDialog.targetChannelId = channelId
+    fileDialog.open()
+  }
+
   function pasteFromClipboard() {
     if (!service || !channelId) { input.paste(); return }
     service.stageClipboardImage(channelId, function(staged) {
@@ -203,11 +216,12 @@ FocusScope {
       if (input.length !== 0 || editing) return
       if (!startEditLast()) return
     }
+    else if (ctrl && key === Qt.Key_U) chooseAttachments()
     else if (ctrl && key === Qt.Key_V) pasteFromClipboard()
     else if (ctrl && key === Qt.Key_K) switcherRequested()
     else if (ctrl && key === Qt.Key_Slash) cheatsheetRequested()
     else if (key === Qt.Key_Tab) { if (chips.length) focusChip(0); else if (sendButton.enabled) sendButton.forceActiveFocus(); else cycleFocus(1) }
-    else if (key === Qt.Key_Backtab) cycleFocus(-1)
+    else if (key === Qt.Key_Backtab) { if (attachButton.enabled) attachButton.forceActiveFocus(); else cycleFocus(-1) }
     else if (key === Qt.Key_Left && chips.length && input.cursorPosition === 0 && !shift) focusChip(chips.length - 1)
     else if (key === Qt.Key_Right && chips.length && input.cursorPosition === input.length && !shift) focusChip(0)
     else return
@@ -228,6 +242,7 @@ FocusScope {
     else if (ctrl && shift && key === Qt.Key_D) voiceRequested("deafen")
     else if (ctrl && shift && key === Qt.Key_H) voiceRequested("leave")
     else if (key === Qt.Key_Escape) focusInput()
+    else if (ctrl && key === Qt.Key_U) chooseAttachments()
     else if ((event.modifiers & Qt.ControlModifier) && key === Qt.Key_K) switcherRequested()
     else if ((event.modifiers & Qt.ControlModifier) && key === Qt.Key_Slash) cheatsheetRequested()
     else if (key === Qt.Key_Return || key === Qt.Key_Enter) submit()
@@ -261,6 +276,30 @@ FocusScope {
       if (composer.editing) composer.savedDraft = merged
       else composer.setText(merged)
       composer.service.setDraft(channelId, merged)
+    }
+  }
+
+  Dialogs.FileDialog {
+    id: fileDialog
+    property string targetChannelId: ""
+    title: qsTr("Attach files")
+    fileMode: Dialogs.FileDialog.OpenFiles
+    onAccepted: {
+      if (composer.channelId === targetChannelId) composer.attachFiles(selectedFiles)
+      composer.focusInput()
+    }
+    onRejected: composer.focusInput()
+  }
+
+  DropArea {
+    anchors.fill: parent
+    enabled: !!composer.service && composer.channelId !== "" && !composer.editing && !composer.uploading
+    onEntered: function(drag) { drag.accepted = drag.hasUrls }
+    onDropped: function(drop) {
+      if (drop.hasUrls && composer.attachFiles(drop.urls)) {
+        drop.acceptProposedAction()
+        composer.focusInput()
+      }
     }
   }
 
@@ -345,7 +384,7 @@ FocusScope {
       }
     BorderSurface {
       id: frame
-      width: parent.width - sendButton.width - parent.spacing
+      width: parent.width - sendButton.width - attachButton.width - parent.spacing * 2
       height: flick.height + Style.spacing.inputPaddingY * 2
       radius: Style.cornerRadius
       color: Style.controlFill(composer.inputFocused, composer.active, composer.foreground, composer.accent)
@@ -397,6 +436,20 @@ FocusScope {
         }
       }
     }
+      Button {
+        id: attachButton
+        objectName: "attach-button"
+        iconOnly: true
+        text: qsTr("Attach files")
+        iconName: "attach"
+        enabled: !!composer.service && composer.channelId !== "" && !composer.editing && !composer.uploading
+        focusable: true
+        tooltipText: qsTr("Attach images, videos or files (Ctrl+U)")
+        onClicked: composer.chooseAttachments()
+        Keys.onTabPressed: composer.focusInput()
+        Keys.onBacktabPressed: composer.cycleFocus(-1)
+        Keys.onEscapePressed: composer.focusInput()
+      }
     }
   }
 }

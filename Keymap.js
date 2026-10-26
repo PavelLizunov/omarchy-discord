@@ -39,6 +39,8 @@ var ENTRIES = [
     action: "In an empty composer: edit your most recent message" },
   { id: "composer.paste", zone: "composer", keys: "Ctrl+V", hint: "paste",
     action: "Paste text or attach image from clipboard" },
+  { id: "composer.attach", zone: "composer", keys: "Ctrl+U", hint: "attach files",
+    action: "Choose images, videos or files to attach" },
   { id: "composer.cancel", zone: "composer", keys: "Esc", hint: "cancel",
     action: "Cancel edit or reply mode" },
 

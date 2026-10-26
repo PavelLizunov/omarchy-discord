@@ -138,6 +138,7 @@ Item {
 
   property var drafts: ({})
   property var staged: ({})
+  readonly property bool attachmentStaging: attachmentCopy.running
   property var pendingByNonce: ({})
   property var uploadChannels: ({})
   property var lastTypingAt: ({})
@@ -331,7 +332,7 @@ Item {
   property bool restartBusy: false
   readonly property string restartBlockedReason: Object.keys(drafts).length || Object.keys(staged).length
     ? "Finish or clear drafts and staged attachments before restarting."
-    : Object.keys(pendingByNonce).length || Object.keys(uploadChannels).length || qrBusy || browserLoginBusy || loginBusy
+    : attachmentStaging || Object.keys(pendingByNonce).length || Object.keys(uploadChannels).length || qrBusy || browserLoginBusy || loginBusy
       ? "Wait for messages, uploads or sign-in to finish before restarting." : ""
   function restartBackend() {
     if (restartBusy || daemonManager.busy || daemonManager.setupBusy) return false
@@ -1098,6 +1099,31 @@ Item {
     var filename = file.slice(file.lastIndexOf("/") + 1)
     setStaged(channelId, stagedFor(channelId).concat([{ path: file, filename: filename,
       size: Math.max(0, Number(size) || 0), sent: 0, total: 0, uploading: false }]))
+  }
+
+  function stageAttachments(channelId, urls) {
+    var id = String(channelId || "")
+    if (!id || !stagedDir || !urls || !urls.length) return false
+    if (attachmentCopy.running) { fail(qsTr("Wait for the selected files to finish attaching")); return false }
+    if (stagedFor(id).length + urls.length > 10) {
+      fail(qsTr("At most 10 attachments per message"))
+      return false
+    }
+    var paths = []
+    for (var i = 0; i < urls.length; i++) {
+      var url = String(urls[i])
+      if (url.indexOf("file:///") !== 0) {
+        fail(qsTr("Choose local files to attach"))
+        return false
+      }
+      try { paths.push(decodeURIComponent(url.slice(7))) }
+      catch (error) { fail(qsTr("Could not read the selected file path")); return false }
+    }
+    attachmentCopy.channelId = id
+    attachmentCopy.command = ["python3", pluginDir + "/scripts/stage-files.py", stagedDir].concat(paths)
+    attachmentCopy.running = true
+    noteActivity()
+    return true
   }
 
   function unstage(channelId, path) {
@@ -2005,6 +2031,23 @@ Item {
       root.emojiCatalog = parsed.length ? parsed : Emoji.FALLBACK
     }
     onLoadFailed: root.emojiCatalog = Emoji.FALLBACK
+  }
+
+  Process {
+    id: attachmentCopy
+    property string channelId: ""
+    property string result: ""
+    stdout: StdioCollector { onStreamFinished: attachmentCopy.result = text }
+    onExited: function(code) {
+      var data = Api.parseJson(result, null)
+      result = ""
+      if (code !== 0 || !data || !Array.isArray(data.files)) {
+        root.fail(qsTr("Could not attach the selected files: %1").arg(data && data.error ? data.error : qsTr("File copy failed")))
+        return
+      }
+      for (var i = 0; i < data.files.length; i++)
+        root.stageFile(channelId, data.files[i].path, data.files[i].size)
+    }
   }
 
   Process {

@@ -59,7 +59,7 @@
       "removed": 36
     },
     "Keymap.js": {
-      "added": 103,
+      "added": 105,
       "removed": 229
     },
     "Markdown.js": {
@@ -79,7 +79,7 @@
       "removed": 519
     },
     "Service.qml": {
-      "added": 121,
+      "added": 164,
       "removed": 418
     },
     "backend/cmd/omarchy-discord-backend/main.go": {
@@ -288,8 +288,8 @@
       "removed": 14
     },
     "components/Composer.qml": {
-      "added": 75,
-      "removed": 49
+      "added": 129,
+      "removed": 50
     },
     "components/EmojiPicker.qml": {
       "added": 11,
