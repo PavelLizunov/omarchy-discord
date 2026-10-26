@@ -2,6 +2,7 @@ import QtQuick
 import "ui" as PluginTheme
 import Quickshell
 import Quickshell.Hyprland
+import Quickshell.Io
 import qs.Commons as Host
 import "ui"
 
@@ -29,6 +30,26 @@ Item {
     for (var i = 0; i < list.length; i++)
       if (String(list[i].title || "") === window.title) return list[i]
     return null
+  }
+
+  IpcHandler {
+    target: root.pluginId + ".ui"
+    function status(): string {
+      return JSON.stringify({ source: String(Qt.resolvedUrl("ClientView.qml")),
+        composerSource: String(Qt.resolvedUrl("components/Composer.qml")),
+        opened: view.opened, width: view.width, height: view.height,
+        channelSelected: view.currentChannelId !== "", channelId: view.currentChannelId,
+        textLength: view.composer.text.length, chatHeight: view.composer.height,
+        draftCount: root.service ? Object.keys(root.service.drafts).length : 0,
+        pendingCount: root.service ? Object.keys(root.service.pendingByNonce).length + Object.keys(root.service.uploadChannels).length : 0,
+        attachments: view.composer.chips.length, canSend: view.composer.canSubmit,
+        sendVisible: view.composer.sendControl.visible,
+        sendX: view.composer.sendControl.mapToItem(view, 0, 0).x,
+        sendY: view.composer.sendControl.mapToItem(view, 0, 0).y,
+        sendWidth: view.composer.sendControl.width, sendHeight: view.composer.sendControl.height,
+        attachVisible: view.composer.attachControl.visible,
+        attachmentMessages: view.currentMessages.filter(function(row) { return row.attachments && row.attachments.length }).length })
+    }
   }
 
   ThemeSync { hostColor: Host.Color; hostStyle: Host.Style }

@@ -170,22 +170,54 @@ Item {
     }
     Repeater {
       model: root.attachments
-      delegate: Text {
+      delegate: Column {
+        id: attachment
         required property var modelData
         width: body.width
-        textFormat: Text.RichText
-        wrapMode: Text.Wrap
+        spacing: Style.spacing.xs
         readonly property bool covered: !!modelData.spoiler && !root.spoilersRevealed
-        text: covered ? "[spoiler attachment — Enter to reveal]"
-          : '<a style="color:' + root.linkColor + '" href="' + Markdown.escapeHtml(String(modelData.url || "")) + '">'
-            + Markdown.escapeHtml(String(modelData.filename || "attachment")) + '</a>  '
-            + Markdown.formatSize(modelData.size)
-        color: root.linkColor
-        linkColor: root.linkColor
-        font.family: Style.font.family
-        font.pixelSize: Style.font.bodySmall
-        onLinkActivated: function(url) { root.linkActivated(url) }
-        TapHandler { onSingleTapped: if (parent.covered) root.revealRequested() }
+        readonly property string url: String(modelData.url || "")
+        readonly property bool imageFile: String(modelData.content_type || "").indexOf("image/") === 0
+          || /\.(png|jpe?g|webp|gif|avif)$/i.test(String(modelData.filename || ""))
+        readonly property bool preview: !covered && imageFile && !!root.ctx.imagePreviews
+        readonly property string path: preview && typeof root.ctx.mediaPath === "function"
+          ? root.ctx.mediaPath(url, 0) : ""
+        function requestPreview() {
+          if (preview && typeof root.ctx.requestMedia === "function") root.ctx.requestMedia(url, 0)
+        }
+        onPreviewChanged: requestPreview()
+        onUrlChanged: requestPreview()
+        Component.onCompleted: requestPreview()
+        Image {
+          id: previewImage
+          objectName: "attachment-image"
+          visible: attachment.preview && status === Image.Ready
+          width: Math.min(parent.width, Style.space(420))
+          height: visible ? Math.min(Style.space(300), width
+            * (Number(attachment.modelData.height) || implicitHeight || 1)
+            / Math.max(1, Number(attachment.modelData.width) || implicitWidth)) : 0
+          source: attachment.path ? "file://" + attachment.path : ""
+          sourceSize: Qt.size(1024, 1024)
+          asynchronous: true
+          fillMode: Image.PreserveAspectFit
+          horizontalAlignment: Image.AlignLeft
+          TapHandler { onTapped: root.linkActivated(attachment.url) }
+        }
+        Text {
+          width: parent.width
+          textFormat: Text.RichText
+          wrapMode: Text.Wrap
+          text: attachment.covered ? "[spoiler attachment — Enter to reveal]"
+            : '<a style="color:' + root.linkColor + '" href="' + Markdown.escapeHtml(attachment.url) + '">'
+              + Markdown.escapeHtml(String(attachment.modelData.filename || "attachment")) + '</a>  '
+              + Markdown.formatSize(attachment.modelData.size)
+          color: root.linkColor
+          linkColor: root.linkColor
+          font.family: Style.font.family
+          font.pixelSize: Style.font.bodySmall
+          onLinkActivated: function(url) { root.linkActivated(url) }
+          TapHandler { onSingleTapped: if (attachment.covered) root.revealRequested() }
+        }
       }
     }
     Repeater {

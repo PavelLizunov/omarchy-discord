@@ -256,6 +256,9 @@ func wireChannel(n *ningen.State, ch discord.Channel) protocol.Channel {
 		}
 		if c.Name == "" {
 			c.Name = strings.Join(names, ", ")
+			if c.Name == "" {
+				c.Name = "Unnamed conversation"
+			}
 		}
 	}
 	return c

@@ -25,7 +25,7 @@
       "showMentionCount": "On",
       "middleClick": "Last unread DM",
       "window": "On demand",
-      "imagePreviews": "Off",
+      "imagePreviews": "On",
       "mediaCacheMB": 512
     },
     "schema": [
@@ -73,9 +73,9 @@
         "key": "imagePreviews",
         "type": "enum",
         "label": "Image previews",
-        "options": ["Off"],
-        "defaultValue": "Off",
-        "description": "Text-only build: attachments are links; remote images are never downloaded."
+        "options": ["On"],
+        "defaultValue": "On",
+        "description": "Show image attachments through the bounded Discord media cache. File links remain available if a preview cannot load."
       },
       {
         "key": "mediaCacheMB",

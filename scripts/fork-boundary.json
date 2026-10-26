@@ -67,8 +67,8 @@
       "removed": 51
     },
     "Panel.qml": {
-      "added": 71,
-      "removed": 2227
+      "added": 89,
+      "removed": 2224
     },
     "QuickSwitch.qml": {
       "added": 19,
@@ -79,7 +79,7 @@
       "removed": 519
     },
     "Service.qml": {
-      "added": 164,
+      "added": 165,
       "removed": 418
     },
     "backend/cmd/omarchy-discord-backend/main.go": {
@@ -89,7 +89,7 @@
     "backend/dist/x86_64/omarchy-discord-backend": {
       "added": null,
       "removed": null,
-      "sha256": "87cf3af54776f5d1d2412dffce6650b124f882426e483d3893c61049748b2007"
+      "sha256": "54295b62d31e92749d34cbac2206b09b78e25d84dbe51264b6a0b4ec57c6f5e8"
     },
     "backend/internal/keyring/keyring.go": {
       "added": 4,
@@ -156,7 +156,7 @@
       "removed": 6
     },
     "backend/internal/session/manager.go": {
-      "added": 72,
+      "added": 73,
       "removed": 108
     },
     "backend/internal/session/manager_test.go": {
@@ -208,7 +208,7 @@
       "removed": 14
     },
     "backend/internal/session/structure.go": {
-      "added": 6,
+      "added": 9,
       "removed": 16
     },
     "backend/internal/session/structure_test.go": {
@@ -228,8 +228,8 @@
       "removed": 9
     },
     "backend/internal/session/voice.go": {
-      "added": 209,
-      "removed": 36
+      "added": 235,
+      "removed": 39
     },
     "backend/internal/session/voice_test.go": {
       "added": 7,
@@ -288,7 +288,7 @@
       "removed": 14
     },
     "components/Composer.qml": {
-      "added": 129,
+      "added": 140,
       "removed": 50
     },
     "components/EmojiPicker.qml": {
@@ -300,8 +300,8 @@
       "removed": 49
     },
     "components/MessageRow.qml": {
-      "added": 157,
-      "removed": 650
+      "added": 187,
+      "removed": 648
     },
     "components/Timeline.qml": {
       "added": 157,
@@ -352,8 +352,8 @@
       "removed": 22
     },
     "manifest.json": {
-      "added": 7,
-      "removed": 7
+      "added": 5,
+      "removed": 5
     },
     "scripts/backend-runtime.sh": {
       "added": 15,

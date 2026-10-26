@@ -19,6 +19,7 @@ FocusScope {
   readonly property bool canSubmit: !!service && channelId !== "" && !uploading
     && (editing ? text.trim().length > 0 : text.trim().length > 0 || chips.length > 0)
   readonly property alias sendControl: sendButton
+  readonly property alias attachControl: attachButton
   readonly property alias attachmentViewport: chipViewport
 
   property string editingId: ""
@@ -58,6 +59,7 @@ FocusScope {
   readonly property int lineHeight: Math.ceil(metrics.height)
 
   implicitHeight: layout.implicitHeight
+  height: implicitHeight
 
   function focusInput() {
     chipCursor = -1
@@ -364,15 +366,18 @@ FocusScope {
       }
     }
 
-    Row {
+    Item {
+      id: inputRow
       width: parent.width
-      spacing: Style.spacing.xs
-      layoutDirection: Qt.RightToLeft
+      height: Math.max(frame.height, sendButton.implicitHeight, attachButton.implicitHeight)
       Button {
         id: sendButton
         objectName: "send-button"
-        iconOnly: true
-        text: composer.editing ? "Save" : "Send"
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        iconOnly: false
+        bordered: true
+        text: composer.editing ? qsTr("Save") : qsTr("Send")
         iconName: composer.editing ? "save" : "send"
         enabled: composer.canSubmit
         focusable: true
@@ -384,7 +389,11 @@ FocusScope {
       }
     BorderSurface {
       id: frame
-      width: parent.width - sendButton.width - attachButton.width - parent.spacing * 2
+      anchors.left: attachButton.right
+      anchors.right: sendButton.left
+      anchors.leftMargin: Style.spacing.xs
+      anchors.rightMargin: Style.spacing.xs
+      anchors.verticalCenter: parent.verticalCenter
       height: flick.height + Style.spacing.inputPaddingY * 2
       radius: Style.cornerRadius
       color: Style.controlFill(composer.inputFocused, composer.active, composer.foreground, composer.accent)
@@ -439,6 +448,8 @@ FocusScope {
       Button {
         id: attachButton
         objectName: "attach-button"
+        anchors.left: parent.left
+        anchors.verticalCenter: parent.verticalCenter
         iconOnly: true
         text: qsTr("Attach files")
         iconName: "attach"

@@ -36,7 +36,7 @@ Item {
     showMentionCount: "On",
     middleClick: "Last unread DM",
     window: "On demand",
-    imagePreviews: "Off",
+    imagePreviews: "On",
     mediaCacheMB: 512
   })
   property var settings: defaults()
@@ -45,8 +45,8 @@ Item {
   readonly property bool showMentionCount: settings.showMentionCount !== "Off"
   readonly property string middleClickAction: settings.middleClick
   readonly property bool persistentWindow: settings.window === "Persistent"
-  readonly property bool imagePreviews: false
-  readonly property bool textOnly: true
+  readonly property bool imagePreviews: true
+  readonly property bool textOnly: false
   readonly property int mediaCacheMB: settings.mediaCacheMB
   readonly property int idleDisconnectMinutes: 15
 
@@ -185,6 +185,7 @@ Item {
     imagePreviews: imagePreviews,
     mediaPaths: mediaPaths,
     mediaPath: function(url, size) { return root.mediaPath(url, size) },
+    requestMedia: function(url, size) { root.requestMedia(url, size) },
     mediaError: function(path) { return root.mediaError(path) },
     emojiPath: function(id, animated) { return root.emojiPath(id, animated) }
   })
@@ -212,7 +213,7 @@ Item {
   property var visibleSurfaces: ({})
   readonly property bool uiVisible: Object.keys(visibleSurfaces).length > 0
   property bool panelMapped: false
-  readonly property bool mediaAllowed: false
+  readonly property bool mediaAllowed: connected && uiVisible
   onMediaAllowedChanged: if (mediaAllowed) flushMediaRequests()
   property double lastActivityAt: Date.now()
 
@@ -261,7 +262,7 @@ Item {
     next.middleClick = Api.oneOf(next.middleClick,
       ["Last unread DM", "Raise panel"], "Last unread DM")
     next.window = Api.oneOf(next.window, ["On demand", "Persistent"], "On demand")
-    next.imagePreviews = "Off"
+    next.imagePreviews = "On"
     next.mediaCacheMB = Api.clampInt(next.mediaCacheMB, 64, 4096, 512)
     return next
   }
@@ -1405,7 +1406,7 @@ Item {
   }
 
   function mediaPath(url, size) {
-    return ""
+    return String(mediaPaths[mediaKey(url, size)] || "")
   }
 
   function requestMedia(url, size) {
@@ -1983,7 +1984,7 @@ Item {
     function restart(): string { return root.restartBackend() ? "started" : "blocked" }
     function refreshVoice(): string { root.refreshVoiceMembers(root.voice.guildId || root.selectedGuildId); return "requested" }
     function status(): string {
-      return JSON.stringify({ pluginDir: root.pluginDir, textOnly: root.textOnly,
+      return JSON.stringify({ pluginDir: root.pluginDir, source: String(Qt.resolvedUrl("Service.qml")), textOnly: root.textOnly,
         mediaQueued: Object.keys(root.mediaWanted).length, mediaPending: Object.keys(root.mediaPending).length,
         runtimeAvailable: daemonManager.runtimeAvailable,
         voiceGuild: root.voice.guildId, voiceChannel: root.voice.channelId,
