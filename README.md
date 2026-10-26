@@ -12,6 +12,10 @@ The plugin runs with your user permissions inside the shared Omarchy shell. The 
 
 Linux offscreen QML render with sample data, not a live-account screenshot.
 
+## Sign-in in beta.3
+
+Use QR login with the Discord mobile app, or a Discord user token. The masked field is not a password field; email/password sign-in is not implemented. QR login now has separate Back to sign-in and Try again actions. A Discord CAPTCHA requirement is reported explicitly, but cannot be completed inside Omacord. The reported remote password screen and HTTP 400 cause remain unresolved until the exact screen and response are available.
+
 ## Requirements and installation
 
 Requires Omarchy Quattro, Quickshell, Qt Quick Controls, systemd, `secret-tool`, `libopus`, `rsync` and `jq`. Experimental video viewing additionally requires `ffmpeg`. Clipboard image staging uses `wl-paste`. The bundled backend is for x86_64; other architectures or changed backend sources require Go and build dependencies. Source builds may download Go modules. Never start a second Quickshell instance to run the plugin.

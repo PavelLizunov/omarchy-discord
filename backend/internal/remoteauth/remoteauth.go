@@ -310,12 +310,25 @@ func exchangeTicket(ctx context.Context, userAgent, ticket, fingerprint string) 
 		h.Set("X-Fingerprint", fingerprint)
 	}
 	client.OnRequest = append(client.OnRequest, httputil.WithHeaders(h))
-	return client.ExchangeRemoteAuthTicket(ticket)
+	var response struct {
+		EncryptedToken string `json:"encrypted_token"`
+	}
+	err := client.RequestJSON(&response, http.MethodPost, api.EndpointRemoteAuthLogin,
+		httputil.WithJSONBody(struct {
+			Ticket string `json:"ticket"`
+		}{ticket}))
+	return response.EncryptedToken, err
 }
 
 func wrapExchangeErr(err error) error {
 	var httpErr *httputil.HTTPError
 	if errors.As(err, &httpErr) {
+		var challenge struct {
+			CaptchaKey []string `json:"captcha_key"`
+		}
+		if json.Unmarshal(httpErr.Body, &challenge) == nil && len(challenge.CaptchaKey) > 0 {
+			return fmt.Errorf("%w: Discord requires a CAPTCHA that Omacord cannot display; return to sign-in and use a user token, or sign in with the official Discord client", ErrExchange)
+		}
 		return fmt.Errorf("%w: http %d", ErrExchange, httpErr.Status)
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {

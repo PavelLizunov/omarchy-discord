@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0-beta.3 — Sign-in recovery
+
+A focused update to beta.2 for installation on another computer.
+
+- QR login has separate Back to sign-in and Try again actions. Cancelling clears the retained QR screen and restores keyboard focus. Cancellation failures are shown.
+- Read the encrypted token only after decoding the QR ticket exchange response.
+- Identify Discord CAPTCHA challenges instead of showing only HTTP 400. Omacord cannot display or solve those challenges.
+- Clarify that the masked sign-in field accepts a user token, not an email or password. Password sign-in is not implemented.
+- Register the local QML controls explicitly for native module loading.
+
+The Linux x86_64 backend was built for this package. No new tests, offscreen previews or account sign-in checks were run. The reported password screen on the other computer and its exact HTTP 400 response have not been identified; this release does not claim to repair password authentication. The earlier beta.2 evidence remains historical, not evidence for this candidate.
+
 ## 0.2.0-beta.2 — Bar audio and live server counters
 
 This testing prerelease includes the reviewed changes after beta.1. Earlier release tags and assets remain unchanged.

@@ -1,9 +1,11 @@
-# Testing release: 0.2.0-beta.2
+# Testing release: 0.2.0-beta.3
 
-GitHub tag `v0.2.0-beta.2` freezes the reviewed bar-audio, server-counter and repository-check changes after the video preview. Download the complete plugin archive, rather than only the backend binary, and verify it against the release checksums. See [CHANGELOG.md](../CHANGELOG.md) for changes and known limitations.
+This is a focused sign-in recovery update to beta.2. Download the complete Linux x86_64 plugin archive from the GitHub release, not only a backend executable.
 
-This release contains the selected solid stepped mark, separate microphone/listening control, all-server cached voice-roster synchronization and delayed server-stat protection. The earlier immutable `v0.2.0-beta.1` retains its original video checkpoint; `v0.1.0` does not contain video viewing.
+QR login now has separate Back to sign-in and Try again actions, clears cancelled QR state, and reads the encrypted token after decoding the ticket response. Discord CAPTCHA requirements are reported explicitly. CAPTCHA completion and email/password authentication are not implemented in Omacord; the masked input accepts a Discord user token.
 
-Screen video and audio have bounded live evidence. Live webcam delivery, different-sender switching, physical audio/control acceptance and uninterrupted voice recovery remain incomplete. Video presentation is H.264/JPEG-based at at most 5 updates per second. Quality is an output cap and server hint, not a promise of remote source detail. Audio/video synchronization and automatic stream reconnect are not implemented. This is a prerelease for testing, not stable-release certification.
+The reported password screen on another computer and its HTTP 400 response are not yet identified. This release does not claim to repair that unidentified password flow or establish successful account authentication.
 
-Server voice counts reflect cached, permission-filtered rosters, excluding archived servers. They refresh on load/open and every 15 seconds while the window is open; missing upstream events can still leave stale data. The installed snapshot matches the backend, but a natural remote join/leave acceptance check remains pending.
+The backend was built for this release. No new tests, previews, account requests or installation on the other computer were performed. Earlier beta.2 verification is historical and is not a pass for this candidate. Voice and video retain beta.2 limitations.
+
+Installation replaces the installed plugin copy, installs the user backend unit, can restart the backend and rescans the shared shell. It does not intentionally log out the account. Keep unsent work and installed customizations before updating. Use the release's complete archive and run `bash scripts/install-local.sh --section right` from its extracted directory.

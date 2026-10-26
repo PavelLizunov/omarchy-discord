@@ -2,3 +2,10 @@ singleton Color 1.0 Color.qml
 singleton Style 1.0 Style.qml
 singleton Border 1.0 Border.qml
 singleton Util 1.0 Util.qml
+BorderOverlay 1.0 BorderOverlay.qml
+BorderSurface 1.0 BorderSurface.qml
+Button 1.0 Button.qml
+PanelSectionHeader 1.0 PanelSectionHeader.qml
+PanelToolTip 1.0 PanelToolTip.qml
+Select 1.0 Select.qml
+TextField 1.0 TextField.qml
