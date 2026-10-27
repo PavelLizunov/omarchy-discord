@@ -5,7 +5,7 @@
   ],
   "derived_preserved": {
     "backend/internal/voicewire/LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
-    "backend/internal/voicewire/OMACORD-PATCH.md": "fe31bb25c25b92c09c4543fc0379d7237860673b5977d9ca0cc4e7e305608fa9",
+    "backend/internal/voicewire/OMACORD-PATCH.md": "10c5c28120a1323f102d836c61cdcfa7bfaee78bca93ee8ab3a8c74325aafea3",
     "backend/internal/voicewire/audio_receiver.go": "96f0287b936663975cbdb65a8ea97429892946e6f9173931801b5eb9053dbffe",
     "backend/internal/voicewire/audio_sender.go": "ee0e642c4a8d7a19aacfc32a576697fca9b91ddfc87b7ef44465f62389507027",
     "backend/internal/voicewire/camera_stages_test.go": "646e05c32cfb8f19bc5141119056bd8dc633c9e52847c27dea6e0d8677f0ce1c",
@@ -28,7 +28,7 @@
     "backend/internal/voicewire/nack_test.go": "0f5afec2cb7e24024ade63e47bcf10de5a30aed4313e528d491285759274bde6",
     "backend/internal/voicewire/opus.go": "b9af6b28c956a801759f7864f0d6e9d0fc2877e7f663a18fe5be92d866978000",
     "backend/internal/voicewire/rtx_test.go": "1d21f10363f5731de3abf3097dd3b09adef882fdc048daae692d5dec398a25fe",
-    "backend/internal/voicewire/udp_conn.go": "c6fb4f0a642b03f845a1f6f19ec34e1ddb2f63bf3a0fb98e02817920ea23481f",
+    "backend/internal/voicewire/udp_conn.go": "7db64148ad3bbc68cdda6f520f02e33ecd61df956f5dae3ff60ceb8454822477",
     "backend/internal/voicewire/udp_conn_config.go": "957434ba87a62d9d2f3e6174568bef494fa102393e6dd97067fbb5807b82d013",
     "backend/internal/voicewire/udp_observation_test.go": "fbd0582a0d12c517838fe641edff6ddc5c6f46204cd17af40035320a7d3d8f74"
   },
@@ -79,8 +79,8 @@
       "removed": 519
     },
     "Service.qml": {
-      "added": 121,
-      "removed": 418
+      "added": 130,
+      "removed": 419
     },
     "backend/cmd/omarchy-discord-backend/main.go": {
       "added": 5,
@@ -89,7 +89,7 @@
     "backend/dist/x86_64/omarchy-discord-backend": {
       "added": null,
       "removed": null,
-      "sha256": "87cf3af54776f5d1d2412dffce6650b124f882426e483d3893c61049748b2007"
+      "sha256": "4e0b9554487b6bcc919640dca5ad44ad9dcf8d4f2cbd2eae04b8c765a2a76c0b"
     },
     "backend/internal/keyring/keyring.go": {
       "added": 4,
@@ -264,11 +264,11 @@
       "removed": 41
     },
     "backend/internal/voice/voice.go": {
-      "added": 111,
+      "added": 119,
       "removed": 97
     },
     "backend/internal/voice/voice_test.go": {
-      "added": 140,
+      "added": 205,
       "removed": 38
     },
     "components/AttachmentChip.qml": {

@@ -788,3 +788,68 @@ func TestPulseSmoke(t *testing.T) {
 		t.Fatal("streams must be closed")
 	}
 }
+
+func TestStableCallReplenishesInvalidSessionRecovery(t *testing.T) {
+	h := newHarness(t)
+	if err := h.join(10, 11, 0); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		h.e.mu.Lock()
+		h.e.connectedAt = time.Now().Add(-recoveryResetAfter)
+		gen := h.e.gen
+		h.e.mu.Unlock()
+		h.e.observeClose(gen, &websocket.CloseError{Code: 4006})
+		h.wait("replacement connection", func() bool {
+			h.e.mu.Lock()
+			defer h.e.mu.Unlock()
+			return h.e.conn != nil && h.e.gen != gen
+		})
+		h.echo(10, 11)
+		h.wait("stable recovery", func() bool { return h.e.State().Status == StatusConnected })
+	}
+	if st := h.e.State(); st.Status != StatusConnected || st.ChannelID != 11 {
+		t.Fatalf("stable call lost: %+v", st)
+	}
+}
+
+func TestSuccessfulResumeResetsConsecutiveDrops(t *testing.T) {
+	h := newHarness(t)
+	if err := h.join(10, 11, 0); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		gen := h.e.gen
+		h.e.observeClose(gen, &websocket.CloseError{Code: 1006})
+		if st := h.e.State(); st.Status != StatusConnecting {
+			t.Fatalf("drop %d: %+v", i, st)
+		}
+		h.e.onEvent(gen, dvoice.OpcodeResumed, dvoice.GatewayMessageDataResumed{})
+		if st := h.e.State(); st.Status != StatusConnected {
+			t.Fatalf("resume %d: %+v", i, st)
+		}
+	}
+}
+
+func TestMicrophoneMuteKeepsPlaybackAndConnection(t *testing.T) {
+	h := newHarness(t)
+	if err := h.join(10, 11, 0); err != nil {
+		t.Fatal(err)
+	}
+	original := h.conn()
+	for _, muted := range []bool{true, false, true, false} {
+		if err := h.e.SetMute(context.Background(), muted); err != nil {
+			t.Fatal(err)
+		}
+		st := h.e.State()
+		if st.Status != StatusConnected || st.GuildID != 10 || st.ChannelID != 11 || st.Muted != muted || st.Deafened {
+			t.Fatalf("mute altered call: %+v", st)
+		}
+		h.e.mu.Lock()
+		deafened := h.e.audio.rx.deafened.Load()
+		h.e.mu.Unlock()
+		if deafened || h.conn() != original {
+			t.Fatal("microphone toggle changed playback or transport")
+		}
+	}
+}

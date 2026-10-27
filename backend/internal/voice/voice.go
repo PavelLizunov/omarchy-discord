@@ -42,6 +42,7 @@ type Events struct {
 }
 
 const joinTimeout = 30 * time.Second
+const recoveryResetAfter = time.Minute
 
 type Engine struct {
 	n   *ningen.State
@@ -51,12 +52,13 @@ type Engine struct {
 	opMu sync.Mutex
 	mu   sync.Mutex
 
-	st         State
-	selfID     discord.UserID
-	mgr        dvoice.Manager
-	gen        uint64
-	drops      int
-	recoveries int
+	st          State
+	selfID      discord.UserID
+	mgr         dvoice.Manager
+	gen         uint64
+	drops       int
+	recoveries  int
+	connectedAt time.Time
 
 	op4      dvoice.StateUpdateFunc
 	newAudio func() (*audio, error)
@@ -203,6 +205,7 @@ func (e *Engine) join(ctx context.Context, guildID discord.GuildID, channelID di
 		}
 		audio = e.audio
 		e.st.Status = StatusConnected
+		e.connectedAt = time.Now()
 		return func() {
 			conn.SetOpusFrameReceiver(audio.rx)
 			conn.SetOpusFrameProvider(audio.tx)
@@ -421,8 +424,11 @@ func (e *Engine) observeClose(gen uint64, err error) {
 		if gen != e.gen || e.st.Status == StatusIdle {
 			return nil
 		}
-		// One fresh session per explicit Join. Both gateway close callbacks may
-		// report the same loss; detach advances gen before either can re-enter.
+		// Reset the retry budget after a stable connection, not after each retry.
+		// Both close callbacks may report one loss; detach advances gen first.
+		if e.st.Status == StatusConnected && !e.connectedAt.IsZero() && time.Since(e.connectedAt) >= recoveryResetAfter {
+			e.recoveries, e.drops = 0, 0
+		}
 		if closeCode(err) == 4006 && e.conn != nil && e.recoveries == 0 && (e.st.Status == StatusConnected || e.st.Status == StatusConnecting) {
 			e.recoveries++
 			st := e.st
@@ -485,6 +491,8 @@ func (e *Engine) onEvent(gen uint64, op dvoice.Opcode, data dvoice.GatewayMessag
 		e.update(func() func() {
 			if gen == e.gen && e.st.Status == StatusConnecting {
 				e.st.Status = StatusConnected
+				e.connectedAt = time.Now()
+				e.drops = 0
 			}
 			return nil
 		})

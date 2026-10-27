@@ -206,6 +206,7 @@ Item {
   property var voice: emptyVoice()
   readonly property bool inCall: String(voice.status || "idle") !== "idle"
   property var voiceMembers: ({})
+  property var voiceMemberRevisions: ({})
   property var speaking: ({})
 
   property var visibleSurfaces: ({})
@@ -600,13 +601,18 @@ Item {
   function refreshVoiceMembers(guildId) {
     var id = String(guildId || "")
     if (!id || !ready) return
+    var revisions = voiceMemberRevisions
+    var revision = Number(revisions[id]) || 0
     backendClient.sendCommand("voice_members", {guild_id:id}, function(ok,result) {
-      if (ok && root.ready && result) root.applyVoiceMembers(result)
+      if (ok && root.ready && result && String(result.guild_id) === id
+          && revisions === root.voiceMemberRevisions
+          && revision === (Number(revisions[id]) || 0)) root.applyVoiceMembers(result)
     })
   }
   function applyVoiceMembers(message) {
     var guildId = String(message.guild_id || "")
-    if (!guildId) return
+    if (!guildId || !Array.isArray(message.channels)) return
+    voiceMemberRevisions[guildId] = (Number(voiceMemberRevisions[guildId]) || 0) + 1
     var next = Api.shallowCopy(voiceMembers)
     next[guildId] = Array.isArray(message.channels) ? message.channels : []
     voiceMembers = next
@@ -1668,6 +1674,7 @@ Item {
       threadsByParent = ({})
       serverEmoji = []
       voiceMembers = ({})
+      voiceMemberRevisions = ({})
       clearMessages()
     }
   }
@@ -1938,6 +1945,7 @@ Item {
         root.backendState = null
         root.voice = root.emptyVoice()
         root.voiceMembers = ({})
+        root.voiceMemberRevisions = ({})
         root.speaking = ({})
         root.lastGeneration = -1
         reconnectGraceTimer.stop()

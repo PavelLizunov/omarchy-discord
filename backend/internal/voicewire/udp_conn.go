@@ -143,8 +143,9 @@ func NewUDPConn(daveSession godave.Session, ssrcLookup SsrcLookupFunc, opts ...U
 type udpConnImpl struct {
 	config udpConnConfig
 
-	conn   net.Conn
-	connMu sync.Mutex
+	conn            net.Conn
+	connMu          sync.Mutex
+	keepAliveCancel context.CancelFunc
 
 	encrypter   Encrypter
 	writeMu     sync.Mutex
@@ -214,6 +215,12 @@ func (u *udpConnImpl) SetWriteDeadline(t time.Time) error {
 func (u *udpConnImpl) Open(ctx context.Context, ip string, port int, ssrc uint32) (string, int, error) {
 	u.connMu.Lock()
 	defer u.connMu.Unlock()
+	if u.keepAliveCancel != nil {
+		u.keepAliveCancel()
+	}
+	if u.conn != nil {
+		_ = u.conn.Close()
+	}
 	host := net.JoinHostPort(ip, strconv.Itoa(port))
 	u.config.Logger.Debug("Opening UDPConn connection", slog.String("host", host))
 	var err error
@@ -277,7 +284,33 @@ func (u *udpConnImpl) Open(ctx context.Context, ip string, port int, ssrc uint32
 	u.ssrc = ssrc
 	u.daveSession.AssignSsrcToCodec(ssrc, godave.CodecOpus)
 
+	keepAliveCtx, cancel := context.WithCancel(context.Background())
+	u.keepAliveCancel = cancel
+	go u.keepAlive(keepAliveCtx, u.conn, 5*time.Second)
 	return ourAddress, ourPort, nil
+}
+
+// Keep the receive route open while capture is muted or the speech gate is shut.
+// This is a transport ping, never microphone audio or an RTP speaking packet.
+func (u *udpConnImpl) keepAlive(ctx context.Context, conn net.Conn, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	var packet [8]byte
+	binary.BigEndian.PutUint32(packet[:4], 0x1337CAFE)
+	for sequence := uint32(0); ; sequence++ {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		binary.BigEndian.PutUint32(packet[4:], sequence)
+		if _, err := conn.Write(packet[:]); err != nil {
+			if ctx.Err() == nil {
+				u.config.Logger.Warn("voice: UDP keepalive failed", "err", err)
+			}
+			return
+		}
+	}
 }
 
 // SendPLI requests a fresh keyframe on the selected camera using encrypted RTCP.
@@ -601,6 +634,10 @@ func stripRTPPadding(payload []byte) []byte {
 func (u *udpConnImpl) Close() error {
 	u.connMu.Lock()
 	defer u.connMu.Unlock()
+	if u.keepAliveCancel != nil {
+		u.keepAliveCancel()
+		u.keepAliveCancel = nil
+	}
 	if u.conn == nil {
 		return nil
 	}
