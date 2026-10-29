@@ -204,6 +204,9 @@ func TestConcurrentLoginKeepsOneSession(t *testing.T) {
 		wg.Add(1)
 		go func(n *ningen.State) {
 			defer wg.Done()
+			// Match Login and QR completion: replacement owns the operation lock.
+			m.opMu.Lock()
+			defer m.opMu.Unlock()
 			m.replaceSession(n, "tok")
 		}(n)
 	}

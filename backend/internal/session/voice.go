@@ -288,12 +288,22 @@ func (m *Manager) voiceSet(ctx context.Context, req *protocol.Request) (any, *pr
 
 func voiceUser(n *ningen.State, guildID discord.GuildID, vs discord.VoiceState) protocol.User {
 	mem := vs.Member
-	if mem == nil {
-		mem, _ = n.Cabinet.Member(guildID, vs.UserID)
+	if mem == nil || mem.User.Username == "" {
+		if cached, err := n.Cabinet.Member(guildID, vs.UserID); err == nil {
+			mem = cached
+		}
 	}
 	var cachedUser discord.User
 	if mem != nil {
 		cachedUser = mem.User
+	}
+	if cachedUser.Username == "" {
+		for _, id := range []discord.GuildID{guildID, 0} {
+			if presence, _ := n.Cabinet.Presence(id, vs.UserID); presence != nil && presence.User.Username != "" {
+				cachedUser = presence.User
+				break
+			}
+		}
 	}
 	if !cachedUser.ID.IsValid() || cachedUser.Username == "" {
 		if channels, err := n.Cabinet.PrivateChannels(); err == nil {
@@ -339,7 +349,11 @@ func VoiceMembers(n *ningen.State, guildID discord.GuildID) protocol.VoiceMember
 		if !vs.ChannelID.IsValid() || !n.HasPermissions(vs.ChannelID, discord.PermissionViewChannel) {
 			continue
 		}
-		byChannel[vs.ChannelID] = append(byChannel[vs.ChannelID], voiceUser(n, guildID, vs))
+		user := voiceUser(n, guildID, vs)
+		if user.Username == "" && user.DisplayName == "" {
+			n.MemberState.RequestMember(guildID, vs.UserID)
+		}
+		byChannel[vs.ChannelID] = append(byChannel[vs.ChannelID], user)
 	}
 	ids := make([]discord.ChannelID, 0, len(byChannel))
 	for chID := range byChannel {
@@ -381,6 +395,15 @@ func (m *Manager) pushVoiceMembersLocked(n *ningen.State) {
 }
 
 func (m *Manager) installVoiceHandlers(n *ningen.State) {
+	addSyncHandler(n, "voice_member_names", func(ev *gateway.GuildMembersChunkEvent) {
+		m.mu.Lock()
+		live := m.n == n && m.lifecycle == protocol.LifecycleReady
+		m.mu.Unlock()
+		if !live {
+			return
+		}
+		m.push(VoiceMembers(n.Offline(), ev.GuildID))
+	})
 	// READY precedes the supplemental voice cache on user sessions.
 	n.State.AddSyncHandler(func(ev *gateway.ReadySupplementalEvent) {
 		m.mu.Lock()

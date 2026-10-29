@@ -286,6 +286,7 @@ func (m *Manager) installHandlers(n *ningen.State) {
 		}
 		if ready, ok := ev.Event.(*gateway.ReadyEvent); ok {
 			seedSelfMembers(n, ready)
+			seedPrivateChannels(n, ready)
 		}
 		off := n.Offline()
 		if me, err := off.Cabinet.Me(); err == nil {

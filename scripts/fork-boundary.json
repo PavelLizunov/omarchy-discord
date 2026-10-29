@@ -24,6 +24,7 @@
     "backend/internal/voicewire/manager_config.go": "b22a5cd931fbb5b3ef27d62c3383ec2ae0ae4be60f87881bef43f2f2bedf0733",
     "backend/internal/voicewire/media.go": "be907e41b3ba5c83f54b51310f3c1464e19d1620a1820e62ce9951f11f4d8cc2",
     "backend/internal/voicewire/media_test.go": "30ac5a484870e0cb96b82c60e4bacd681dce0534cb0fb809a4ef37b7c1697ccf",
+    "backend/internal/voicewire/native_media_test.go": "c6c4695ae9abd309029d44370767def12d72bf2744e3f1d2fad8d465fcaad20e",
     "backend/internal/voicewire/nack.go": "1febe64c835f9bc81f806d7431be65c3171ec851e483a4e37d0491573c52ea62",
     "backend/internal/voicewire/nack_test.go": "0f5afec2cb7e24024ade63e47bcf10de5a30aed4313e528d491285759274bde6",
     "backend/internal/voicewire/opus.go": "b9af6b28c956a801759f7864f0d6e9d0fc2877e7f663a18fe5be92d866978000",
@@ -34,6 +35,14 @@
   },
   "documentation_restructure": "README fork-layer details moved losslessly to docs; reviewed hygiene snapshot",
   "hooks": {
+    "backend/go.mod": {
+      "added": 3,
+      "removed": 0
+    },
+    "backend/go.sum": {
+      "added": 7,
+      "removed": 0
+    },
     "Api.js": {
       "added": 85,
       "removed": 76
@@ -89,7 +98,7 @@
     "backend/dist/x86_64/omarchy-discord-backend": {
       "added": null,
       "removed": null,
-      "sha256": "809ddf1c8ef0751a9a28260603b8b59409840063eb7559277874f75c4f24fa0f"
+      "sha256": "ef67fa2f1ff861d1e6c5abb7e09952334062ae9bb34a854113b8c56dd3f2bba0"
     },
     "backend/internal/keyring/keyring.go": {
       "added": 4,
@@ -156,11 +165,11 @@
       "removed": 6
     },
     "backend/internal/session/manager.go": {
-      "added": 72,
+      "added": 73,
       "removed": 108
     },
     "backend/internal/session/manager_test.go": {
-      "added": 3,
+      "added": 6,
       "removed": 21
     },
     "backend/internal/session/mediacmd.go": {
@@ -208,7 +217,7 @@
       "removed": 14
     },
     "backend/internal/session/structure.go": {
-      "added": 6,
+      "added": 9,
       "removed": 16
     },
     "backend/internal/session/structure_test.go": {
@@ -228,8 +237,8 @@
       "removed": 9
     },
     "backend/internal/session/voice.go": {
-      "added": 209,
-      "removed": 36
+      "added": 235,
+      "removed": 39
     },
     "backend/internal/session/voice_test.go": {
       "added": 7,
@@ -380,8 +389,6 @@
     ".gitignore": "157f22ffc633e3eb65c10b7998c892ac68ff354b30cd3f7bca19b2303dfac4bf",
     "LICENSE": "1cc4c5c12876b712b46988be352e712408f9208debabcc461908cdc8a2f97f5d",
     "backend/.gitignore": "4ce02b2dbde06fd21ffd2c3bb307cb4ad83a06eb5b39fb230b423a5a8f7d7e5a",
-    "backend/go.mod": "042a6b576c9940afcf15c6043ff40080550cc55364e70b2d50bcdb899b44b2cd",
-    "backend/go.sum": "ffed8ca04886f2a97611dfa7366d3acbb36da3f4d57f6052b0694f7efab53755",
     "backend/internal/protocol/testdata/event_channel_update_delete.json": "b6b1e6b55872364d753daa1752ad00e901603dfbfd7b467aac3d58742a5b9704",
     "backend/internal/protocol/testdata/event_channel_update_thread_archived.json": "3f8bb1369f67816a8cefddcba0d673f96f6e1af1551ec4d60fb746554c614c71",
     "backend/internal/protocol/testdata/event_channel_update_thread_create.json": "3c76e170270a07b57cb09453a0aa06f1f81a90213eb688e3976e7bafe54341df",
