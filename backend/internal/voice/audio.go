@@ -3,6 +3,7 @@ package voice
 import (
 	"log/slog"
 	"math"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -18,11 +19,8 @@ const (
 	frameLen     = frameSamples * channels
 	frameBytes   = frameLen * 2
 	bitrate      = 64000
-	holdFrames   = 15
 	maxOpusBytes = 1400
 )
-
-var gateRMS = 500.0
 
 var audioWatchInterval = time.Second
 
@@ -107,9 +105,9 @@ type capture struct {
 	muted   atomic.Bool
 	frames  chan []byte
 
-	buf  []int16
-	n    int
-	hold int
+	mu  sync.Mutex
+	buf []int16
+	n   int
 }
 
 func newCapture(log *slog.Logger) (*capture, error) {
@@ -120,17 +118,23 @@ func newCapture(log *slog.Logger) (*capture, error) {
 	if err := enc.SetBitrate(bitrate); err != nil {
 		return nil, err
 	}
+	// Let libopus classify silence instead of cutting quiet speech before encoding.
+	if err := enc.SetDTX(true); err != nil {
+		return nil, err
+	}
 	return &capture{log: log, enc: enc, frames: make(chan []byte, 4), buf: make([]int16, frameLen)}, nil
 }
 
 func (c *capture) write(p []int16) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	total := len(p)
 	if c.metrics != nil && total > 0 {
 		c.metrics.inputLevel.Store(int64(min(100.0, rms(p)/32768*100)))
 		c.metrics.inputAt.Store(time.Now().UnixMilli())
 	}
 	if c.muted.Load() || (c.metrics != nil && c.metrics.testUntil.Load() > time.Now().UnixMilli()) {
-		c.n, c.hold = 0, 0
+		c.n = 0
 		return total, nil
 	}
 	for len(p) > 0 {
@@ -146,33 +150,30 @@ func (c *capture) write(p []int16) (int, error) {
 }
 
 func (c *capture) setMuted(m bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.muted.Store(m)
+	c.n = 0
 	for {
 		select {
 		case <-c.frames:
 		default:
-			c.muted.Store(m)
 			return
 		}
 	}
 }
 
 func (c *capture) frame(pcm []int16) {
-	loud := rms(pcm) >= gateRMS
-	if loud {
-		c.hold = holdFrames
-	}
-	open := loud || c.hold > 0
-	if !loud && c.hold > 0 {
-		c.hold--
+	data := make([]byte, maxOpusBytes)
+	n, err := c.enc.Encode(pcm, data)
+	if err != nil {
+		c.log.Warn("voice: opus encode", "err", err)
+		return
 	}
 	var out []byte
-	if open {
-		data := make([]byte, maxOpusBytes)
-		n, err := c.enc.Encode(pcm, data)
-		if err != nil {
-			c.log.Warn("voice: opus encode", "err", err)
-			return
-		}
+	// libopus recommends omitting packets of at most two bytes during DTX.
+	// Keep its comfort-noise updates and all encoded speech, regardless of RMS.
+	if n > 2 {
 		out = data[:n]
 	}
 	for {
@@ -194,6 +195,9 @@ func (c *capture) ProvideOpusFrame() ([]byte, error) {
 	}
 	select {
 	case f := <-c.frames:
+		if c.muted.Load() || (c.metrics != nil && c.metrics.testUntil.Load() > time.Now().UnixMilli()) {
+			return nil, nil
+		}
 		return f, nil
 	case <-time.After(2 * 20 * time.Millisecond):
 		return nil, nil

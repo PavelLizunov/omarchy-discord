@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -45,7 +46,10 @@ type (
 
 // NewAudioSender creates a new AudioSender sending audio from the given OpusFrameProvider to the given Conn.
 func NewAudioSender(logger *slog.Logger, opusProvider OpusFrameProvider, conn Conn) AudioSender {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &defaultAudioSender{
+		ctx:          ctx,
+		cancelFunc:   cancel,
 		logger:       logger,
 		opusProvider: opusProvider,
 		conn:         conn,
@@ -55,7 +59,9 @@ func NewAudioSender(logger *slog.Logger, opusProvider OpusFrameProvider, conn Co
 
 type defaultAudioSender struct {
 	logger       *slog.Logger
+	ctx          context.Context
 	cancelFunc   context.CancelFunc
+	startOnce    sync.Once
 	opusProvider OpusFrameProvider
 	conn         Conn
 
@@ -65,32 +71,20 @@ type defaultAudioSender struct {
 }
 
 func (s *defaultAudioSender) Open() {
-	go s.open()
+	s.startOnce.Do(func() { go s.open() })
 }
 
 func (s *defaultAudioSender) open() {
 	defer s.logger.Debug("closing audio sender")
-	lastFrameSent := time.Now().UnixMilli()
-	ctx, cancel := context.WithCancel(context.Background())
-	s.cancelFunc = cancel
-	defer cancel()
-loop:
-	for {
+	defer s.cancelFunc()
+	ticker := time.NewTicker(OpusFrameSizeMs * time.Millisecond)
+	defer ticker.Stop()
+	for s.ctx.Err() == nil {
+		s.send()
 		select {
-		case <-ctx.Done():
-			break loop
-
-		default:
-			s.send()
-			sleepTime := time.Duration(int64(OpusFrameSizeMs) - (time.Now().UnixMilli() - lastFrameSent))
-			if sleepTime > 0 {
-				time.Sleep(sleepTime * time.Millisecond)
-			}
-			if time.Now().UnixMilli() < lastFrameSent+int64(OpusFrameSizeMs)*3 {
-				lastFrameSent += int64(OpusFrameSizeMs)
-			} else {
-				lastFrameSent = time.Now().UnixMilli()
-			}
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
 		}
 	}
 }
@@ -110,6 +104,9 @@ func (s *defaultAudioSender) send() {
 	}
 
 	opus, err := s.opusProvider.ProvideOpusFrame()
+	if s.ctx.Err() != nil {
+		return
+	}
 	if err != nil && err != io.EOF {
 		s.logger.Error("error while reading opus frame", slog.Any("err", err))
 		return
@@ -121,10 +118,11 @@ func (s *defaultAudioSender) send() {
 			}
 			s.silentFrames--
 		} else if !s.sentSpeakingStop {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
 			defer cancel()
 			if err = s.conn.SetSpeaking(ctx, SpeakingFlagNone); err != nil {
 				s.handleErr(err)
+				return
 			}
 			s.sentSpeakingStop = true
 			s.sentSpeakingStart = false
@@ -133,16 +131,20 @@ func (s *defaultAudioSender) send() {
 	}
 
 	if !s.sentSpeakingStart {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
 		defer cancel()
 		if err = s.conn.SetSpeaking(ctx, SpeakingFlagMicrophone); err != nil {
 			s.handleErr(err)
+			return
 		}
 		s.sentSpeakingStart = true
 		s.sentSpeakingStop = false
 		s.silentFrames = 5
 	}
 
+	if s.ctx.Err() != nil {
+		return
+	}
 	if _, err = s.conn.UDP().Write(opus); err != nil {
 		s.handleErr(err)
 	}

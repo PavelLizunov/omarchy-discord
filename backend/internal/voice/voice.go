@@ -294,16 +294,8 @@ func (e *Engine) detachLocked() func() {
 	}
 }
 
-type sender struct {
-	dvoice.AudioSender
-	started <-chan struct{}
-	once    sync.Once
-}
-
 type senderConn struct {
 	dvoice.Conn
-	started chan struct{}
-	once    sync.Once
 	metrics *audioMetrics
 }
 
@@ -314,22 +306,12 @@ func (c *senderConn) UDP() dvoice.UDPConn {
 	return observedUDP{UDPConn: c.Conn.UDP(), metrics: c.metrics}
 }
 
-func (c *senderConn) DAVE() godave.Session {
-	c.once.Do(func() { close(c.started) })
-	return c.Conn.DAVE()
-}
-
-func newSender(l *slog.Logger, p dvoice.OpusFrameProvider, c dvoice.Conn) *sender {
-	sc := &senderConn{Conn: c, started: make(chan struct{})}
+func newSender(l *slog.Logger, p dvoice.OpusFrameProvider, c dvoice.Conn) dvoice.AudioSender {
+	sc := &senderConn{Conn: c}
 	if tx, ok := p.(*capture); ok {
 		sc.metrics = tx.metrics
 	}
-	return &sender{AudioSender: dvoice.NewAudioSender(l, p, sc), started: sc.started}
-}
-
-func (s *sender) Close() {
-	<-s.started
-	s.once.Do(s.AudioSender.Close)
+	return dvoice.NewAudioSender(l, p, sc)
 }
 
 func (e *Engine) fail(gen uint64, msg string) {

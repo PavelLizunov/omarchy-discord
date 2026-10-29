@@ -2,8 +2,10 @@ package voice
 
 import (
 	"encoding/binary"
-	"github.com/disgoorg/snowflake/v2"
 	"time"
+
+	"github.com/disgoorg/snowflake/v2"
+	"github.com/pion/rtcp"
 )
 
 // Native Discord assigns transport-wide congestion control to extension 5.
@@ -43,7 +45,7 @@ type transportFeedback struct {
 	initialized bool
 }
 
-// add batches one bounded transport-cc report per 50ms or full512-packet window. The
+// add batches one bounded transport-cc report per 50ms or full 512-packet window. The
 // receiver reports authenticated packet arrival, including padding probes,
 // before media admission; a probe is never passed to a video decoder.
 func (f *transportFeedback) add(sequence uint16, at time.Time, sender uint32) []byte {
@@ -71,7 +73,9 @@ func (f *transportFeedback) add(sequence uint16, at time.Time, sender uint32) []
 	if distance >= 32768 {
 		return nil
 	} // Late packet already acknowledged.
-	f.arrivals[sequence] = at.UnixMicro()
+	if _, exists := f.arrivals[sequence]; !exists {
+		f.arrivals[sequence] = at.UnixMicro()
+	}
 	if distance > int(uint16(f.latest-f.base)) {
 		f.latest = sequence
 	}
@@ -101,51 +105,50 @@ func (f *transportFeedback) report(sender uint32) []byte {
 	}
 	reference := first / 64000
 	previous := reference * 64000
-	statuses := make([]byte, n)
-	var deltas []byte
+	statuses := make([]uint16, n)
+	var deltas []*rtcp.RecvDelta
 	for i := 0; i < n; i++ {
 		at, ok := f.arrivals[f.base+uint16(i)]
 		if !ok {
 			continue
 		}
-		delta := (at - previous + 125) / 250
+		delta := at - previous
+		if delta < 0 {
+			delta = (delta - 125) / 250
+		} else {
+			delta = (delta + 125) / 250
+		}
 		if delta < -32768 || delta > 32767 {
 			return nil
 		}
 		previous += delta * 250
+		statuses[i] = rtcp.TypeTCCPacketReceivedLargeDelta
 		if delta >= 0 && delta <= 255 {
-			statuses[i] = 1
-			deltas = append(deltas, byte(delta))
-		} else {
-			statuses[i] = 2
-			deltas = append(deltas, byte(uint16(int16(delta))>>8), byte(delta))
+			statuses[i] = rtcp.TypeTCCPacketReceivedSmallDelta
 		}
+		deltas = append(deltas, &rtcp.RecvDelta{Type: statuses[i], Delta: delta * 250})
 	}
-	p := make([]byte, 20)
-	p[0] = 0x8f
-	p[1] = 205
-	binary.BigEndian.PutUint32(p[4:8], sender)
-	// A transport-cc report spans a transport, not one media SSRC.
-	binary.BigEndian.PutUint16(p[12:14], f.base)
-	binary.BigEndian.PutUint16(p[14:16], uint16(n))
-	p[16] = byte(reference >> 16)
-	p[17] = byte(reference >> 8)
-	p[18] = byte(reference)
-	p[19] = f.count
-	f.count++
+	// Pion serializes standard transport feedback; only arrival accounting
+	// and Discord's negotiated extension identifier remain plugin-owned.
+	report := rtcp.TransportLayerCC{
+		SenderSSRC: sender, BaseSequenceNumber: f.base, PacketStatusCount: uint16(n),
+		ReferenceTime: uint32(reference) & 0xffffff, FbPktCount: f.count, RecvDeltas: deltas,
+	}
 	for i := 0; i < n; i += 7 {
-		chunk := uint16(0xc000)
-		for j := 0; j < 7 && i+j < n; j++ {
-			chunk |= uint16(statuses[i+j]) << uint(12-j*2)
-		}
-		p = append(p, byte(chunk>>8), byte(chunk))
+		symbols := make([]uint16, 7)
+		copy(symbols, statuses[i:min(i+7, n)])
+		report.PacketChunks = append(report.PacketChunks, &rtcp.StatusVectorChunk{
+			Type: rtcp.TypeTCCStatusVectorChunk, SymbolSize: rtcp.TypeTCCSymbolSizeTwoBit, SymbolList: symbols,
+		})
 	}
-	p = append(p, deltas...)
-	for len(p)%4 != 0 {
-		p = append(p, 0)
+	report.Header = rtcp.Header{Count: rtcp.FormatTCC, Type: rtcp.TypeTransportSpecificFeedback,
+		Length: uint16(report.MarshalSize()/4 - 1)}
+	wire, err := report.Marshal()
+	if err != nil {
+		return nil
 	}
-	binary.BigEndian.PutUint16(p[2:4], uint16(len(p)/4-1))
-	return p
+	f.count++
+	return wire
 }
 func (u *udpConnImpl) feedbackArrival(p *Packet) {
 	if p.Type == H264PayloadType || p.Type == H264PayloadType+1 {
@@ -249,15 +252,13 @@ func (r *receiverReport) add(p *Packet, at time.Time, sender uint32) []byte {
 	if lost > 8388607 {
 		lost = 8388607
 	}
-	wire := make([]byte, 32)
-	wire[0] = 0x81
-	wire[1] = 201
-	binary.BigEndian.PutUint16(wire[2:4], 7)
-	binary.BigEndian.PutUint32(wire[4:8], sender)
-	binary.BigEndian.PutUint32(wire[8:12], p.SSRC)
-	binary.BigEndian.PutUint32(wire[12:16], fraction<<24|uint32(lost)&0xffffff)
-	binary.BigEndian.PutUint32(wire[16:20], r.highest)
-	binary.BigEndian.PutUint32(wire[20:24], uint32(r.jitter))
+	wire, err := (rtcp.ReceiverReport{SSRC: sender, Reports: []rtcp.ReceptionReport{{
+		SSRC: p.SSRC, FractionLost: uint8(fraction), TotalLost: uint32(lost) & 0xffffff,
+		LastSequenceNumber: r.highest, Jitter: uint32(r.jitter),
+	}}}).Marshal()
+	if err != nil {
+		return nil
+	}
 	return wire
 }
 

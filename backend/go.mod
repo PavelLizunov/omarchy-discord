@@ -11,6 +11,8 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/hraban/opus v0.0.0-20260708213942-bde8e4304501
 	github.com/jfreymuth/pulse v0.1.3
+	github.com/pion/rtcp v1.2.20
+	github.com/pion/rtp v1.10.6
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/thomas-vilte/dave-go v0.5.1
 )
@@ -20,6 +22,7 @@ require (
 	github.com/disgoorg/omit v1.0.0 // indirect
 	github.com/gorilla/schema v1.4.1 // indirect
 	github.com/klauspost/compress v1.19.0 // indirect
+	github.com/pion/randutil v0.1.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/sasha-s/go-csync v0.0.0-20240107134140-fcbab37b09ad // indirect
 	github.com/thomas-vilte/mls-go v1.6.0 // indirect

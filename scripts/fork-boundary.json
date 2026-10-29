@@ -5,16 +5,16 @@
   ],
   "derived_preserved": {
     "backend/internal/voicewire/LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
-    "backend/internal/voicewire/OMACORD-PATCH.md": "a26c157dfbbbea858b2bf7e244f57a820520328924c44722ddddb0cbca4b4665",
+    "backend/internal/voicewire/OMACORD-PATCH.md": "b295b60b10bbc3df52217133132818a404753baea662031af47db70e1015b490",
     "backend/internal/voicewire/audio_receiver.go": "96f0287b936663975cbdb65a8ea97429892946e6f9173931801b5eb9053dbffe",
-    "backend/internal/voicewire/audio_sender.go": "7e5727e34b3cd52d4c7e357aba616a8f626d34cc812e5370bf4352724398fb94",
+    "backend/internal/voicewire/audio_sender.go": "bf9dca71cbdfbb965c06e2f02b74d3999f45f6f0622243b986e59815ab3a6f4f",
     "backend/internal/voicewire/camera_stages_test.go": "646e05c32cfb8f19bc5141119056bd8dc633c9e52847c27dea6e0d8677f0ce1c",
     "backend/internal/voicewire/camera_transport_test.go": "18264828a859d86c485e97e2e6694933ee3d30e02e7bc7b21b96829f51c9157a",
-    "backend/internal/voicewire/conn.go": "fd3cc6d4a241c059fe14f6cd121629167314dacdbad168e1f28ad77dec7a2789",
+    "backend/internal/voicewire/conn.go": "ef6f23499a0fecc6c587441f2af310747eca46aaeb6ac47bd7219bbdd2f90a30",
     "backend/internal/voicewire/conn_config.go": "b67e80bd1b9be415b4f7357b429bdc4cdf0d3ed90072ee4e27a92f088a4d090a",
     "backend/internal/voicewire/doc.go": "d22716c2347955e8b79199f2c427919d7cb4d22ae7291c5739f4e1b7b51d4bcb",
     "backend/internal/voicewire/encryption_modes.go": "cdd4390abfb03acfd0cb8cb5d836df04b2d58878682c394c603aeb5099d82f17",
-    "backend/internal/voicewire/feedback.go": "210c53874b73f8283de0f7df6dc5289ec5111d837f093c697ea7ae136a42bebb",
+    "backend/internal/voicewire/feedback.go": "1bb4103280eea1c879af9d78a86887c2825d681e67ec4ab9cc3ee8bd57fc65f1",
     "backend/internal/voicewire/feedback_test.go": "68d70372b7198981ba7d80dd03fb739bcfede8f64386dc278e9dd8dab5921af4",
     "backend/internal/voicewire/gateway.go": "7dbabb65da84d5a9eb7f7f889b8cba4b60546116f235f4cdb156a74ebad3d8d6",
     "backend/internal/voicewire/gateway_config.go": "e4963353d47789b3f0f1d5f5d553d618e7581f4716f608c4e2c7071ea49787a4",
@@ -24,11 +24,11 @@
     "backend/internal/voicewire/manager_config.go": "b22a5cd931fbb5b3ef27d62c3383ec2ae0ae4be60f87881bef43f2f2bedf0733",
     "backend/internal/voicewire/media.go": "be907e41b3ba5c83f54b51310f3c1464e19d1620a1820e62ce9951f11f4d8cc2",
     "backend/internal/voicewire/media_test.go": "30ac5a484870e0cb96b82c60e4bacd681dce0534cb0fb809a4ef37b7c1697ccf",
-    "backend/internal/voicewire/nack.go": "43056e587156ed1b24d2dfbec9981cd210b16bf895e5fca4c6553f831748173d",
+    "backend/internal/voicewire/nack.go": "1febe64c835f9bc81f806d7431be65c3171ec851e483a4e37d0491573c52ea62",
     "backend/internal/voicewire/nack_test.go": "0f5afec2cb7e24024ade63e47bcf10de5a30aed4313e528d491285759274bde6",
     "backend/internal/voicewire/opus.go": "b9af6b28c956a801759f7864f0d6e9d0fc2877e7f663a18fe5be92d866978000",
     "backend/internal/voicewire/rtx_test.go": "1d21f10363f5731de3abf3097dd3b09adef882fdc048daae692d5dec398a25fe",
-    "backend/internal/voicewire/udp_conn.go": "26f519a6636295f4df0c2a126358282dc7519bb6153eaaea57423b9b4193b9e3",
+    "backend/internal/voicewire/udp_conn.go": "13e85de18f39c4b5a3a6daf6426180a04f6dcc85dc246f5fb5e0f6af70541067",
     "backend/internal/voicewire/udp_conn_config.go": "957434ba87a62d9d2f3e6174568bef494fa102393e6dd97067fbb5807b82d013",
     "backend/internal/voicewire/udp_observation_test.go": "fbd0582a0d12c517838fe641edff6ddc5c6f46204cd17af40035320a7d3d8f74"
   },
@@ -252,24 +252,24 @@
       "removed": 40
     },
     "backend/internal/voice/audio.go": {
-      "added": 27,
-      "removed": 47
+      "added": 51,
+      "removed": 67
     },
     "backend/internal/voice/gateway.go": {
       "added": 0,
       "removed": 11
     },
     "backend/internal/voice/receive.go": {
-      "added": 146,
+      "added": 153,
       "removed": 62
     },
     "backend/internal/voice/voice.go": {
-      "added": 119,
-      "removed": 97
+      "added": 120,
+      "removed": 116
     },
     "backend/internal/voice/voice_test.go": {
-      "added": 205,
-      "removed": 38
+      "added": 238,
+      "removed": 65
     },
     "components/AttachmentChip.qml": {
       "added": 28,

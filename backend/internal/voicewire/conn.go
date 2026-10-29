@@ -316,7 +316,6 @@ func (c *connImpl) handleMessage(gateway Gateway, op Opcode, sequenceNumber int,
 		for ssrc, userID := range c.ssrcs {
 			if userID == d.UserID {
 				delete(c.ssrcs, ssrc)
-				break
 			}
 		}
 		c.ssrcsMu.Unlock()

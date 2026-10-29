@@ -34,7 +34,7 @@ For updates, rerun the installer after preserving drafts and local changes. A sh
 
 ## What works and what is experimental
 
-Text channels, direct messages, server navigation and voice controls are the core client. Video viewing is experimental: H.264 only, at most 5 JPEG updates per second. Live screen reception has bounded evidence; webcam reception, long-running voice recovery and physical audio acceptance remain incomplete. Read the [release scope](docs/releases.md) before choosing a build.
+Text channels, direct messages, server navigation and voice controls are the core client. Video viewing is experimental: H.264 only, at most 30 JPEG updates per second. Outbound sharing is not implemented; see the [media boundaries](docs/media.md). Live screen reception has bounded evidence; webcam reception, long-running voice recovery and physical audio acceptance remain incomplete. Read the [release scope](docs/releases.md) before choosing a build.
 
 ## Documentation
 
@@ -46,4 +46,4 @@ Text channels, direct messages, server navigation and voice controls are the cor
 
 ## License
 
-MIT. See [LICENSE](LICENSE). The [voice transport license](backend/internal/voicewire/LICENSE) and patch provenance remain bundled.
+MIT. See [LICENSE](LICENSE). The [voice transport license](backend/internal/voicewire/LICENSE), patch provenance and [media dependency notices](THIRD-PARTY.md) remain bundled.

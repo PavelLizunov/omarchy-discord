@@ -340,10 +340,17 @@ func (u *user) pop(log *slog.Logger, metrics ...*audioMetrics) bool {
 			u.decoded = make([]int16, sampleRate*channels*120/1000)
 		}
 		if plc {
-			if err := u.dec.DecodePLC(u.decoded[:frameLen:frameLen]); err != nil {
+			// Conceal one packet, not one playback block: Opus packets may
+			// carry 2.5–120ms even though PulseAudio consumes 20ms blocks.
+			samples, err := u.dec.LastPacketDuration()
+			if err != nil || samples <= 0 || samples*channels > len(u.decoded) {
+				samples = frameSamples
+			}
+			n := samples * channels
+			if err := u.dec.DecodePLC(u.decoded[:n:n]); err != nil {
 				break
 			}
-			u.pending = u.decoded[:frameLen]
+			u.pending = u.decoded[:n]
 			continue
 		}
 		n, err := u.dec.Decode(f.opus, u.decoded)

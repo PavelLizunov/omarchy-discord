@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"sync"
 	"time"
 
@@ -125,10 +126,14 @@ func openScreen(ctx context.Context, state dvoice.State, user snowflake.ID, log 
 					s.fail("Screen connection lost. Select it again.")
 					return
 				}
-				select {
-				case <-run.Done():
-					return
-				case <-time.After(20 * time.Millisecond):
+				// Rejected media is already consumed; only network errors need a delay.
+				var networkError net.Error
+				if errors.As(err, &networkError) {
+					select {
+					case <-run.Done():
+						return
+					case <-time.After(20 * time.Millisecond):
+					}
 				}
 				continue
 			}

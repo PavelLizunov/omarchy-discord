@@ -1,9 +1,10 @@
 package voice
 
 import (
-	"encoding/binary"
 	"errors"
 	"time"
+
+	"github.com/pion/rtcp"
 )
 
 // SendNACK requests only explicitly missing primary sequences, bounded per
@@ -15,14 +16,13 @@ func (u *udpConnImpl) SendNACK(ssrc uint32, sequences []uint16) error {
 	if len(sequences) > 16 {
 		sequences = sequences[:16]
 	}
-	packet := make([]byte, 12+4*len(sequences))
-	packet[0] = 0x81
-	packet[1] = 205
-	binary.BigEndian.PutUint16(packet[2:4], uint16(len(packet)/4-1))
-	binary.BigEndian.PutUint32(packet[4:8], u.ssrc)
-	binary.BigEndian.PutUint32(packet[8:12], ssrc)
+	nacks := make([]rtcp.NackPair, len(sequences))
 	for i, seq := range sequences {
-		binary.BigEndian.PutUint16(packet[12+i*4:14+i*4], seq)
+		nacks[i] = rtcp.NackPair{PacketID: seq}
+	}
+	packet, err := (rtcp.TransportLayerNack{SenderSSRC: u.ssrc, MediaSSRC: ssrc, Nacks: nacks}).Marshal()
+	if err != nil {
+		return err
 	}
 	u.writeMu.Lock()
 	defer u.writeMu.Unlock()
@@ -35,7 +35,7 @@ func (u *udpConnImpl) SendNACK(ssrc uint32, sequences []uint16) error {
 	}
 	_ = conn.SetWriteDeadline(time.Now().Add(time.Second))
 	defer conn.SetWriteDeadline(time.Time{})
-	_, err := conn.Write(a.encryptHeader(packet[:8], packet[8:]))
+	_, err = conn.Write(a.encryptHeader(packet[:8], packet[8:]))
 	if err == nil {
 		u.cameraStage("nack_sent")
 	}

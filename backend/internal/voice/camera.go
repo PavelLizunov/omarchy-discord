@@ -257,45 +257,6 @@ func (v *camera) receive(p *dvoice.Packet, ds godave.Session) {
 		}
 	}
 }
-func appendH264(frame *[]byte, p []byte) error {
-	if len(p) == 0 {
-		return errors.New("empty camera packet")
-	}
-	add := func(nal []byte) { *frame = append(*frame, 0, 0, 0, 1); *frame = append(*frame, nal...) }
-	switch p[0] & 31 {
-	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23:
-		add(p)
-	case 24:
-		for off := 1; off < len(p); {
-			if off+2 > len(p) {
-				return errors.New("invalid H264 aggregation")
-			}
-			n := int(p[off])<<8 | int(p[off+1])
-			off += 2
-			if n == 0 || off+n > len(p) {
-				return errors.New("invalid H264 aggregation")
-			}
-			add(p[off : off+n])
-			off += n
-		}
-	case 28:
-		if len(p) < 2 || p[1]&31 == 0 {
-			return errors.New("invalid H264 fragment")
-		}
-		if p[1]&128 != 0 {
-			add([]byte{(p[0] & 0xe0) | (p[1] & 31)})
-		} else if len(*frame) == 0 {
-			return errors.New("incomplete H264 frame")
-		}
-		*frame = append(*frame, p[2:]...)
-	default:
-		return errors.New("unsupported camera packet")
-	}
-	if len(*frame) > cameraFrameLimit {
-		return errors.New("camera frame exceeds MVP limit")
-	}
-	return nil
-}
 
 // Never set a global "any":0: unspecified media includes the call's audio.
 // Disable only announced video SSRCs; keep the server's audio subscription intact.

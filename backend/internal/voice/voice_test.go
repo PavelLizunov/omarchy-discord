@@ -1,6 +1,7 @@
 package voice
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -59,7 +60,7 @@ func tone(amp float64) []int16 {
 	return pcm
 }
 
-func TestGateHold(t *testing.T) {
+func TestCaptureUsesOpusDTX(t *testing.T) {
 	c, err := newCapture(slog.Default())
 	if err != nil {
 		t.Fatal(err)
@@ -73,23 +74,33 @@ func TestGateHold(t *testing.T) {
 			return nil
 		}
 	}
-	c.frame(tone(0))
-	if f := next(); f != nil {
-		t.Fatal("silence must be gated")
+	reference, err := opus.NewEncoder(sampleRate, channels, opus.AppVoIP)
+	if err != nil {
+		t.Fatal(err)
 	}
-	c.frame(tone(8000))
-	if f := next(); len(f) == 0 {
-		t.Fatal("loud frame must be encoded")
+	if err := reference.SetBitrate(bitrate); err != nil {
+		t.Fatal(err)
 	}
-	for i := 0; i < holdFrames; i++ {
-		c.frame(tone(0))
-		if f := next(); len(f) == 0 {
-			t.Fatalf("hold frame %d must still be encoded", i)
+	if err := reference.SetDTX(true); err != nil {
+		t.Fatal(err)
+	}
+	for _, amplitude := range []float64{0, 100, 400, 8000, 100, 0} {
+		for i := 0; i < 50; i++ {
+			pcm := tone(amplitude)
+			encoded := make([]byte, maxOpusBytes)
+			n, err := reference.Encode(pcm, encoded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var want []byte
+			if n > 2 {
+				want = encoded[:n]
+			}
+			c.frame(pcm)
+			if got := next(); !bytes.Equal(got, want) {
+				t.Fatalf("capture changed libopus output at amplitude %v", amplitude)
+			}
 		}
-	}
-	c.frame(tone(0))
-	if f := next(); f != nil {
-		t.Fatal("gate must close after the hold")
 	}
 	c.setMuted(true)
 	if _, err := c.write(tone(8000)); err != nil || len(c.frames) != 0 {
@@ -105,15 +116,14 @@ func TestIdleQueueDropsOldest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < cap(c.frames)+2; i++ {
-		c.frame(tone(8000))
+	for i := 0; i < cap(c.frames); i++ {
+		c.frames <- []byte{255}
 	}
-	c.hold = 0
 	for i := 0; i < cap(c.frames); i++ {
 		c.frame(tone(0))
 	}
 	for i := 0; i < cap(c.frames); i++ {
-		if f, _ := c.ProvideOpusFrame(); f != nil {
+		if f, _ := c.ProvideOpusFrame(); bytes.Equal(f, []byte{255}) {
 			t.Fatalf("frame %d: stale speech left in the queue", i)
 		}
 	}
@@ -744,20 +754,16 @@ func (c *daveConn) DAVE() godave.Session {
 	return notReady{}
 }
 
-func TestSenderCloseWaitsForStart(t *testing.T) {
+func TestSenderCloseBeforeStart(t *testing.T) {
 	c := &daveConn{}
 	s := newSender(slog.Default(), &capture{frames: make(chan []byte)}, c)
+	s.Close()
+	s.Close()
 	s.Open()
-	s.Close()
-	s.Close()
-	if c.calls.Load() == 0 {
-		t.Fatal("Close must wait for the sender goroutine to start")
-	}
+	s.Open()
 	time.Sleep(50 * time.Millisecond)
-	n := c.calls.Load()
-	time.Sleep(50 * time.Millisecond)
-	if c.calls.Load() != n {
-		t.Fatal("sender goroutine survived Close")
+	if c.calls.Load() != 0 {
+		t.Fatal("closed sender started reading frames")
 	}
 }
 

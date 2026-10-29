@@ -24,6 +24,12 @@ github.com/jfreymuth/pulse v0.1.3 h1:bc5TdxiB8E+2INnFjFWWgyfgXtz2IyNNNCX+Wt/ZD14
 github.com/jfreymuth/pulse v0.1.3/go.mod h1:cpYspI6YljhkUf1WLXLLDmeaaPFc3CnGLjDZf9dZ4no=
 github.com/klauspost/compress v1.19.0 h1:sXLILfc9jV2QYWkzFOPWStmcUVH2RHEB1JCdY2oVvCQ=
 github.com/klauspost/compress v1.19.0/go.mod h1:cwPg85FWrGar70rWktvGQj8/hthj3wpl0PGDogxkrSQ=
+github.com/pion/randutil v0.1.0 h1:CFG1UdESneORglEsnimhUjf33Rwjubwj6xfiOXBa3mA=
+github.com/pion/randutil v0.1.0/go.mod h1:XcJrSMMbbMRhASFVOlj/5hQial/Y8oH/HVo7TBZq+j8=
+github.com/pion/rtcp v1.2.20 h1:ZxQpb1Z3st9W5Rts4PjGoC3ynDhUtQ9B/itKJho8h2I=
+github.com/pion/rtcp v1.2.20/go.mod h1:vX7Es6skWYm4oVvOSC5+4WHLYUTZHcbGNmk5wjzMGH4=
+github.com/pion/rtp v1.10.6 h1:1qs356bmniSc89gTF1KFdI0kej7qTdIUSnHOXu3P2EY=
+github.com/pion/rtp v1.10.6/go.mod h1:qvV617FVkp5DBUfoHGxP8uOnTI4UaNDJK0z7Sildylk=
 github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
 github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
@@ -34,6 +40,7 @@ github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e h1:MRM5ITcdelLK2j1
 github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e/go.mod h1:XV66xRDqSt+GTGFMVlhk3ULuV0y9ZmzeVGR4mloJI3M=
 github.com/stretchr/testify v1.10.0 h1:Xv5erBjTwe/5IxqUQTdXv5kgmIvbHo3QQyRwhJsOfJA=
 github.com/stretchr/testify v1.10.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
+github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
 github.com/thomas-vilte/dave-go v0.5.1 h1:sc0roOie5Ayn+3eKOUjry9kbBPDvFQCF8t+gy/EOrW4=
 github.com/thomas-vilte/dave-go v0.5.1/go.mod h1:h0UvVsCDECUe6W6dlSHEQTbx3TT13pGmHGngG0GXg1o=
 github.com/thomas-vilte/mls-go v1.6.0 h1:HGxrRe0kRfEAXu7MtTemNzqGmC/758rfGkarhYGPOYg=

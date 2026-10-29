@@ -5,6 +5,7 @@ import (
 	"time"
 
 	dvoice "github.com/mattcalayo/omarchy-discord/backend/internal/voicewire"
+	"github.com/pion/rtp/codecs"
 )
 
 // One selected stream: bounded jitter/RTX repair, no retained recording.
@@ -147,7 +148,9 @@ func (a *h264Assembly) complete(timestamp uint32, u *h264AccessUnit) ([]byte, er
 		return nil, nil
 	}
 	var frame []byte
+	var depacketizer codecs.H264Packet
 	fragmentOpen := false
+	var fragmentHeader byte
 	for offset := uint16(0); offset <= distance; offset++ {
 		seq := start + offset
 		packet := u.packets[seq]
@@ -159,9 +162,12 @@ func (a *h264Assembly) complete(timestamp uint32, u *h264AccessUnit) ([]byte, er
 			return nil, nil
 		}
 		payload := packet.Opus
+		if payload[0]&0x80 != 0 {
+			return nil, errors.New("invalid H264 forbidden bit")
+		}
 		typ := payload[0] & 31
 		if typ == 28 {
-			if len(payload) < 3 || payload[1]&31 == 0 || payload[1]&31 > 23 {
+			if len(payload) < 3 || payload[1]&0x20 != 0 || payload[1]&31 == 0 || payload[1]&31 > 23 {
 				return nil, errors.New("invalid H264 fragment")
 			}
 			begin, end := payload[1]&128 != 0, payload[1]&64 != 0
@@ -173,8 +179,11 @@ func (a *h264Assembly) complete(timestamp uint32, u *h264AccessUnit) ([]byte, er
 					return nil, errors.New("overlapping H264 fragments")
 				}
 				fragmentOpen = true
+				fragmentHeader = payload[0]&0x60 | payload[1]&31
 			} else if !fragmentOpen {
 				return nil, nil
+			} else if fragmentHeader != payload[0]&0x60|payload[1]&31 {
+				return nil, errors.New("inconsistent H264 fragment header")
 			}
 			if end {
 				fragmentOpen = false
@@ -182,9 +191,19 @@ func (a *h264Assembly) complete(timestamp uint32, u *h264AccessUnit) ([]byte, er
 		} else if fragmentOpen {
 			return nil, errors.New("missing H264 fragment end")
 		}
-		if err := appendH264(&frame, payload); err != nil {
+		if typ == 24 {
+			if err := validateH264Aggregation(payload); err != nil {
+				return nil, err
+			}
+		}
+		nal, err := depacketizer.Unmarshal(payload)
+		if err != nil {
 			return nil, err
 		}
+		if len(frame)+len(nal) > cameraFrameLimit {
+			return nil, errors.New("camera frame exceeds limit")
+		}
+		frame = append(frame, nal...)
 	}
 	if fragmentOpen {
 		return nil, nil
@@ -248,7 +267,7 @@ func (a *h264Assembly) accept(timestamp uint32) {
 	a.completed++
 }
 
-// No retries-until-PASS: at most four NACK rounds per 500ms assembly window.
+// Bound retransmission requests to four NACK rounds per 500ms assembly window.
 func (a *h264Assembly) missing(now time.Time) []uint16 {
 	a.expire(now)
 	if !a.lastNACK.IsZero() && now.Sub(a.lastNACK) < 50*time.Millisecond {
@@ -294,6 +313,30 @@ func (a *h264Assembly) missing(now time.Time) []uint16 {
 	}
 	return missing
 }
+
+// Pion permits a trailing STAP-A length byte; retain strict frame admission
+// before authenticated DAVE reconstruction rather than silently truncating it.
+func validateH264Aggregation(payload []byte) error {
+	if len(payload) < 4 {
+		return errors.New("empty H264 aggregation")
+	}
+	for offset := 1; offset < len(payload); {
+		if offset+2 > len(payload) {
+			return errors.New("invalid H264 aggregation")
+		}
+		n := int(payload[offset])<<8 | int(payload[offset+1])
+		offset += 2
+		if n == 0 || offset+n > len(payload) {
+			return errors.New("invalid H264 aggregation")
+		}
+		if payload[offset]&0x80 != 0 || payload[offset]&31 == 0 || payload[offset]&31 >= 24 {
+			return errors.New("invalid aggregated H264 NAL")
+		}
+		offset += n
+	}
+	return nil
+}
+
 func h264PacketStart(payload []byte) bool {
 	if len(payload) == 0 {
 		return false

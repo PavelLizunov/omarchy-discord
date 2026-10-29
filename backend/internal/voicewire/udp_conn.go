@@ -17,6 +17,7 @@ import (
 
 	"github.com/disgoorg/godave"
 	"github.com/disgoorg/snowflake/v2"
+	"github.com/pion/rtcp"
 )
 
 const (
@@ -290,7 +291,7 @@ func (u *udpConnImpl) Open(ctx context.Context, ip string, port int, ssrc uint32
 	return ourAddress, ourPort, nil
 }
 
-// Keep the receive route open while capture is muted or the speech gate is shut.
+// Keep the receive route open while capture is muted or Opus is in DTX.
 // This is a transport ping, never microphone audio or an RTP speaking packet.
 func (u *udpConnImpl) keepAlive(ctx context.Context, conn net.Conn, interval time.Duration) {
 	ticker := time.NewTicker(interval)
@@ -324,15 +325,13 @@ func (u *udpConnImpl) SendPLI(ssrc uint32) error {
 	if !ok || conn == nil {
 		return errors.New("camera transport not ready")
 	}
-	p := make([]byte, 12)
-	p[0] = 0x81
-	p[1] = 206
-	binary.BigEndian.PutUint16(p[2:4], 2)
-	binary.BigEndian.PutUint32(p[4:8], u.ssrc)
-	binary.BigEndian.PutUint32(p[8:12], ssrc)
+	p, err := (rtcp.PictureLossIndication{SenderSSRC: u.ssrc, MediaSSRC: ssrc}).Marshal()
+	if err != nil {
+		return err
+	}
 	_ = conn.SetWriteDeadline(time.Now().Add(time.Second))
 	defer conn.SetWriteDeadline(time.Time{})
-	_, err := conn.Write(a.encryptHeader(p[:8], p[8:]))
+	_, err = conn.Write(a.encryptHeader(p[:8], p[8:]))
 	return err
 }
 
@@ -342,6 +341,13 @@ func (u *udpConnImpl) Write(p []byte) (int, error) {
 	u.connMu.Lock()
 	conn := u.conn
 	u.connMu.Unlock()
+	if conn == nil || u.encrypter == nil {
+		return 0, net.ErrClosed
+	}
+	if err := conn.SetWriteDeadline(time.Now().Add(time.Second)); err != nil {
+		return 0, err
+	}
+	defer conn.SetWriteDeadline(time.Time{})
 
 	binary.BigEndian.PutUint16(u.header[2:4], u.sequence)
 	u.sequence++
@@ -350,9 +356,7 @@ func (u *udpConnImpl) Write(p []byte) (int, error) {
 	u.timestamp += OpusFrameSize
 
 	bufferCap := u.daveSession.MaxEncryptedFrameSize(len(p))
-	if cap(u.encryptBuffer) < bufferCap {
-		u.encryptBuffer = slices.Grow(u.encryptBuffer, bufferCap)
-	}
+	u.encryptBuffer = slices.Grow(u.encryptBuffer[:0], bufferCap)[:bufferCap]
 
 	n, err := u.daveSession.Encrypt(u.ssrc, p, u.encryptBuffer)
 	if err != nil {
@@ -602,9 +606,7 @@ func (u *udpConnImpl) ReadPacket() (*Packet, error) {
 
 		userID := godave.UserID(u.ssrcLookup(p.SSRC).String())
 		bufferCap := u.daveSession.MaxDecryptedFrameSize(userID, len(decrypted))
-		if cap(u.decryptBuffer) < bufferCap {
-			u.decryptBuffer = slices.Grow(u.decryptBuffer, bufferCap)
-		}
+		u.decryptBuffer = slices.Grow(u.decryptBuffer[:0], bufferCap)[:bufferCap]
 
 		n, err = u.daveSession.Decrypt(userID, decrypted, u.decryptBuffer)
 		if err != nil {
