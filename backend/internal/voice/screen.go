@@ -99,15 +99,22 @@ func openScreen(ctx context.Context, state dvoice.State, user snowflake.ID, log 
 	s.mu.Unlock()
 	go func() {
 		defer close(s.done)
-		for run.Err() == nil {
-			if !c.DAVE().Ready() {
+		feedbackDone := make(chan struct{})
+		go func() {
+			defer close(feedbackDone)
+			ticker := time.NewTicker(50 * time.Millisecond)
+			defer ticker.Stop()
+			for {
 				select {
 				case <-run.Done():
 					return
-				case <-time.After(20 * time.Millisecond):
+				case now := <-ticker.C:
+					videoFeedback(s.video, c.UDP(), now)
 				}
-				continue
 			}
+		}()
+		defer func() { cancel(); <-feedbackDone }()
+		for run.Err() == nil {
 			_ = c.UDP().SetReadDeadline(time.Now().Add(time.Second))
 			p, err := c.UDP().ReadPacket()
 			if err != nil {
@@ -128,12 +135,6 @@ func openScreen(ctx context.Context, state dvoice.State, user snowflake.ID, log 
 			s.audio.receive(c.UserIDBySSRC(p.SSRC), p)
 			if p.Type == dvoice.H264PayloadType {
 				s.video.receive(p, c.DAVE())
-				if transport, ok := c.UDP().(interface{ SendNACK(uint32, []uint16) error }); ok {
-					ssrc, missing := s.video.missingPackets()
-					if len(missing) > 0 {
-						_ = transport.SendNACK(ssrc, missing)
-					}
-				}
 			}
 		}
 	}()

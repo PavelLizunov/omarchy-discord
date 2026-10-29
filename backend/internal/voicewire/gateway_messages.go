@@ -20,9 +20,10 @@ type GatewayMessage struct {
 // UnmarshalJSON unmarshalls the GatewayMessage from json
 func (m *GatewayMessage) UnmarshalJSON(data []byte) error {
 	var v struct {
-		Op  Opcode          `json:"op"`
-		D   json.RawMessage `json:"d"`
-		Seq int             `json:"s,omitempty"`
+		Op       Opcode          `json:"op"`
+		D        json.RawMessage `json:"d"`
+		Seq      int             `json:"s,omitempty"`
+		Sequence *int            `json:"seq"`
 	}
 	if err := json.Unmarshal(data, &v); err != nil {
 		return err
@@ -127,6 +128,9 @@ func (m *GatewayMessage) UnmarshalJSON(data []byte) error {
 	m.D = messageData
 	m.RawD = v.D
 	m.Seq = v.Seq
+	if v.Sequence != nil {
+		m.Seq = *v.Sequence
+	}
 	return nil
 }
 
@@ -319,7 +323,7 @@ type GatewayMessageDataResume struct {
 	GuildID   snowflake.ID `json:"server_id"` // wtf is this?
 	SessionID string       `json:"session_id"`
 	Token     string       `json:"token"`
-	SeqAck    int          `json:"seq"`
+	SeqAck    int          `json:"seq_ack"`
 }
 
 func (GatewayMessageDataResume) voiceGatewayMessageData() {}

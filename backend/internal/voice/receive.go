@@ -45,7 +45,10 @@ type receiver struct {
 type user struct {
 	dec      *opus.Decoder
 	pcm      []int16
+	decoded  []int16
+	pending  []int16
 	q        []frame
+	ssrc     uint32
 	next     uint16
 	primed   bool
 	plc      int
@@ -88,6 +91,16 @@ func (r *receiver) ReceiveOpusFrame(userID snowflake.ID, p *dvoice.Packet) error
 		r.mu.Unlock()
 		return err
 	}
+	if u.ssrc != p.SSRC {
+		// A restarted source has a new sequence space. Old next/PLC state
+		// otherwise rejects valid audio as late until sequence wraparound.
+		u.ssrc = p.SSRC
+		u.q, u.pending = nil, nil
+		u.primed, u.plc = false, 0
+		if decoder, err := opus.NewDecoder(sampleRate, channels); err == nil {
+			u.dec = decoder
+		}
+	}
 	if silent {
 		u.silence++
 		if u.silence >= silenceToStop && u.speaking {
@@ -121,7 +134,7 @@ func (r *receiver) userLocked(id snowflake.ID) (*user, error) {
 	if err != nil {
 		return nil, err
 	}
-	u := &user{dec: dec, pcm: make([]int16, frameLen)}
+	u := &user{dec: dec, pcm: make([]int16, frameLen), decoded: make([]int16, sampleRate*channels*120/1000)}
 	u.timer = time.AfterFunc(speakingTimeout, func() { r.timeout(id) })
 	r.users[id] = u
 	return u, nil
@@ -308,29 +321,45 @@ func (u *user) pop(log *slog.Logger, metrics ...*audioMetrics) bool {
 	if len(metrics) > 0 {
 		m = metrics[0]
 	}
-	f, plc := u.take()
-	switch {
-	case plc:
-		if err := u.dec.DecodePLC(u.pcm); err != nil {
-			return false
+	// Packet duration and the playback block size are independent. Preserve
+	// long packets and combine short ones instead of dropping samples.
+	clear(u.pcm)
+	filled := 0
+	for filled < len(u.pcm) {
+		if len(u.pending) > 0 {
+			n := copy(u.pcm[filled:], u.pending)
+			filled += n
+			u.pending = u.pending[n:]
+			continue
 		}
-		return true
-	case f == nil:
-		return false
-	}
-	n, err := u.dec.Decode(f.opus, u.pcm)
-	if err != nil {
-		log.Debug("voice: opus decode", "err", err)
+		f, plc := u.take()
+		if f == nil && !plc {
+			break
+		}
+		if len(u.decoded) == 0 {
+			u.decoded = make([]int16, sampleRate*channels*120/1000)
+		}
+		if plc {
+			if err := u.dec.DecodePLC(u.decoded[:frameLen:frameLen]); err != nil {
+				break
+			}
+			u.pending = u.decoded[:frameLen]
+			continue
+		}
+		n, err := u.dec.Decode(f.opus, u.decoded)
+		if err != nil {
+			log.Debug("voice: opus decode", "err", err)
+			if m != nil {
+				m.decodeErrors.Add(1)
+			}
+			break
+		}
 		if m != nil {
-			m.decodeErrors.Add(1)
+			m.decodedAt.Store(time.Now().UnixMilli())
 		}
-		return false
+		u.pending = u.decoded[:n*channels]
 	}
-	if m != nil {
-		m.decodedAt.Store(time.Now().UnixMilli())
-	}
-	clear(u.pcm[n*channels:])
-	return true
+	return filled > 0
 }
 
 type rxDriver struct {
@@ -350,18 +379,31 @@ func (d *rxDriver) Open() {
 	go d.loop(ctx)
 }
 
-func (d *rxDriver) loop(ctx context.Context) {
+func (d *rxDriver) loop(parent context.Context) {
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
 	pause := func() {
 		select {
 		case <-ctx.Done():
 		case <-time.After(20 * time.Millisecond):
 		}
 	}
-	for ctx.Err() == nil {
-		if !d.conn.DAVE().Ready() {
-			pause()
-			continue
+	feedbackDone := make(chan struct{})
+	go func() {
+		defer close(feedbackDone)
+		ticker := time.NewTicker(50 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-ticker.C:
+				videoFeedback(d.video, d.conn.UDP(), now)
+			}
 		}
+	}()
+	defer func() { cancel(); <-feedbackDone }()
+	for ctx.Err() == nil {
 		p, err := d.conn.UDP().ReadPacket()
 		if errors.Is(err, net.ErrClosed) {
 			return
@@ -371,18 +413,17 @@ func (d *rxDriver) loop(ctx context.Context) {
 			if r, ok := d.rx.(*receiver); ok && r.metrics != nil {
 				r.metrics.receiveErrors.Add(1)
 			}
-			pause()
+			// A rejected media packet has already been consumed. Sleeping for
+			// 20 ms here delays every other speaker on this shared transport.
+			var networkError net.Error
+			if errors.As(err, &networkError) {
+				pause()
+			}
 			continue
 		}
 		if p.Type == dvoice.H264PayloadType {
 			if d.video != nil {
 				d.video.receive(p, d.conn.DAVE())
-				if transport, ok := d.conn.UDP().(interface{ SendNACK(uint32, []uint16) error }); ok {
-					ssrc, missing := d.video.missingPackets()
-					if len(missing) > 0 {
-						_ = transport.SendNACK(ssrc, missing)
-					}
-				}
 			}
 			continue
 		}

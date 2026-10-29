@@ -103,7 +103,7 @@ Item {
  Component.onDestruction: {
   if((requestedUser || sample.user_id) && service && service.backend) service.backend.sendCommand("video_watch",{kind:"stop",user_id:"",revision:revision()},function(){})
  }
- Timer {interval:200;repeat:true;running:root.visible && root.voice.status==="connected";onTriggered:{root.clock=Date.now();root.poll()}}
+ Timer {interval:33;repeat:true;running:root.visible && root.voice.status==="connected";onTriggered:{root.clock=Date.now();root.poll()}}
  Timer {id:deadline;interval:18000;onTriggered:{root.generation++;root.busy=false;root.selecting=false;root.error="Video request timed out";if(root.pendingCommand==="video_watch" && root.service && root.service.backend)root.service.backend.sendCommand("video_watch",{kind:"stop",revision:root.revision()},function(){})}}
  Keys.onEscapePressed: function(event) {root.hide();event.accepted=true}
  BorderSurface {

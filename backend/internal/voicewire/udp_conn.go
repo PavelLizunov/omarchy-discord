@@ -330,6 +330,8 @@ func (u *udpConnImpl) SendPLI(ssrc uint32) error {
 	binary.BigEndian.PutUint16(p[2:4], 2)
 	binary.BigEndian.PutUint32(p[4:8], u.ssrc)
 	binary.BigEndian.PutUint32(p[8:12], ssrc)
+	_ = conn.SetWriteDeadline(time.Now().Add(time.Second))
+	defer conn.SetWriteDeadline(time.Time{})
 	_, err := conn.Write(a.encryptHeader(p[:8], p[8:]))
 	return err
 }

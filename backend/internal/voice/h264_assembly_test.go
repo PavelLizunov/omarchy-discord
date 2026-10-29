@@ -81,10 +81,10 @@ func TestH264MissingNACKBoundAndPaddingExclusion(t *testing.T) {
 func TestH264AssemblyEqualTimeEvictionBound(t *testing.T) {
 	a := h264Assembly{}
 	at := time.Unix(1700000000, 0)
-	for i := 0; i < 20; i++ {
+	for i := 0; i < videoReorderUnits+16; i++ {
 		a.push(&dvoice.Packet{Sequence: 1, Timestamp: uint32(i + 1), Opus: []byte{0x7c, 0x85, 1}}, at)
 	}
-	if len(a.units) != 4 || a.dropped != 16 {
+	if len(a.units) != videoReorderUnits || a.dropped != 16 {
 		t.Fatal("unit eviction bound", len(a.units), a.dropped)
 	}
 }

@@ -2,19 +2,15 @@ package voice
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"image"
-	"image/jpeg"
 	"io"
 	"os/exec"
 	"sort"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/disgoorg/godave"
@@ -47,20 +43,23 @@ type CameraSnapshot struct {
 	Quality          int            `json:"quality"`
 }
 type camera struct {
-	mu           sync.Mutex
-	streams      map[snowflake.ID]uint32
-	videoSSRCs   map[uint32]bool
-	audioSSRCs   map[uint32]bool
-	selected     snowflake.ID
-	ssrc         uint32
-	decoder      *cameraDecoder
-	packets      uint64
-	dispatched   uint64
-	ssrcMismatch uint64
-	packetAt     time.Time
-	err          string
-	assembly     h264Assembly
-	quality      int
+	mu               sync.Mutex
+	streams          map[snowflake.ID]uint32
+	videoSSRCs       map[uint32]bool
+	audioSSRCs       map[uint32]bool
+	selected         snowflake.ID
+	ssrc             uint32
+	decoder          *cameraDecoder
+	packets          uint64
+	dispatched       uint64
+	ssrcMismatch     uint64
+	packetAt         time.Time
+	err              string
+	assembly         h264Assembly
+	quality          int
+	awaitingKeyframe bool
+	lastPLI          time.Time
+	observedDrops    uint64
 }
 
 func newCamera() *camera {
@@ -100,8 +99,11 @@ func (v *camera) announce(d dvoice.GatewayMessageDataVideo) {
 	if v.selected == d.UserID && v.ssrc != ssrc {
 		v.ssrc = ssrc
 		v.assembly.reset()
+		v.awaitingKeyframe = true
+		v.observedDrops = 0
+		v.lastPLI = time.Time{}
 		if v.decoder != nil {
-			v.decoder.setError("Camera changed. Select it again.")
+			v.decoder.setError("Waiting for the changed video source")
 		}
 	}
 }
@@ -123,6 +125,9 @@ func (v *camera) close() {
 	v.packets = 0
 	v.packetAt = time.Time{}
 	v.assembly.reset()
+	v.awaitingKeyframe = true
+	v.lastPLI = time.Time{}
+	v.observedDrops = 0
 	v.mu.Unlock()
 	if d != nil {
 		d.close()
@@ -209,7 +214,11 @@ func (v *camera) receive(p *dvoice.Packet, ds godave.Session) {
 	}
 	v.packets++
 	v.packetAt = time.Now()
+	dropped := v.assembly.dropped
 	frame, err := v.assembly.push(p, time.Now())
+	if v.assembly.dropped != dropped {
+		v.awaitingKeyframe = true
+	}
 	if err != nil {
 		v.decoder.setError(err.Error())
 		return
@@ -217,17 +226,35 @@ func (v *camera) receive(p *dvoice.Packet, ds godave.Session) {
 	if len(frame) == 0 {
 		return
 	}
-	plain := make([]byte, ds.MaxDecryptedFrameSize(godave.UserID(v.selected.String()), len(frame)))
-	n, err := ds.Decrypt(godave.UserID(v.selected.String()), frame, plain)
-	if err != nil {
-		v.decoder.setError("Camera frame decryption failed")
-		return
-	}
-	v.assembly.accept(v.assembly.candidateTimestamp)
-	select {
-	case v.decoder.frames <- plain[:n]:
-	default:
-		v.decoder.setError("Camera decoder is behind; select the camera again")
+	for len(frame) > 0 {
+		plain := make([]byte, ds.MaxDecryptedFrameSize(godave.UserID(v.selected.String()), len(frame)))
+		n, err := ds.Decrypt(godave.UserID(v.selected.String()), frame, plain)
+		if err != nil {
+			v.decoder.setError("Camera frame decryption failed")
+			return
+		}
+		v.assembly.accept(v.assembly.candidateTimestamp)
+		if v.observedDrops != v.assembly.dropped {
+			v.awaitingKeyframe = true
+			v.observedDrops = v.assembly.dropped
+		}
+		keyframe := h264IDR(plain[:n])
+		if !v.awaitingKeyframe || keyframe {
+			if keyframe {
+				v.awaitingKeyframe = false
+			}
+			select {
+			case v.decoder.frames <- plain[:n]:
+			default:
+				v.awaitingKeyframe = true
+				v.decoder.setError("Video is recovering after decoder overload")
+			}
+		}
+		frame, err = v.assembly.next()
+		if err != nil {
+			v.decoder.setError(err.Error())
+			return
+		}
 	}
 }
 func appendH264(frame *[]byte, p []byte) error {
@@ -295,7 +322,6 @@ func (v *camera) sinkWants(selected uint32) dvoice.GatewayMessageDataUnknown {
 }
 
 type cameraDecoder struct {
-	quality  atomic.Int64
 	mu       sync.Mutex
 	image    []byte
 	sequence uint64
@@ -321,8 +347,7 @@ func newCameraDecoderQuality(height int) (*cameraDecoder, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	d := &cameraDecoder{cancel: cancel, frames: make(chan []byte, 4), done: make(chan struct{})}
-	d.quality.Store(int64(height))
-	d.cmd = exec.CommandContext(ctx, path, "-hide_banner", "-loglevel", "error", "-threads", "1", "-probesize", "32", "-analyzeduration", "0", "-protocol_whitelist", "pipe", "-max_pixels", "8294400", "-f", "h264", "-i", "pipe:0", "-an", "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2", "-threads", "1", "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "5", "pipe:1")
+	d.cmd = exec.CommandContext(ctx, path, "-hide_banner", "-loglevel", "error", "-threads", "1", "-probesize", "32", "-analyzeduration", "0", "-protocol_whitelist", "pipe", "-max_pixels", "8294400", "-f", "h264", "-i", "pipe:0", "-an", "-vf", fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos", height*16/9, height), "-threads", "1", "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "5", "pipe:1")
 	in, err := d.cmd.StdinPipe()
 	if err != nil {
 		cancel()
@@ -383,12 +408,11 @@ func (d *cameraDecoder) readImages(out io.Reader) {
 			}
 			if prev == 0xff && c == 0xd9 {
 				d.mu.Lock()
-				due := time.Since(d.at) >= 200*time.Millisecond
+				due := time.Since(d.at) >= time.Second/30
 				d.mu.Unlock()
 				if due {
-					resized := resizeVideoJPEG(b, int(d.quality.Load()))
 					d.mu.Lock()
-					d.image = resized
+					d.image = b
 					d.sequence++
 					d.at = time.Now()
 					d.err = ""
@@ -456,25 +480,35 @@ func (e *Engine) WatchCamera(ctx context.Context, id snowflake.ID, revision uint
 	return nil
 }
 
-func resizeVideoJPEG(b []byte, height int) []byte {
-	source, err := jpeg.Decode(bytes.NewReader(b))
-	if err != nil {
-		return b
+// Recovery requests are bounded and independent of microphone mute.
+func (v *camera) requestKeyframe(now time.Time) (uint32, bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.assembly.expire(now)
+	if v.observedDrops != v.assembly.dropped {
+		v.awaitingKeyframe = true
+		v.observedDrops = v.assembly.dropped
 	}
-	bounds := source.Bounds()
-	if bounds.Dy() <= height {
-		return b
+	if v.decoder == nil || v.ssrc == 0 || !v.awaitingKeyframe || (!v.lastPLI.IsZero() && now.Sub(v.lastPLI) < time.Second) {
+		return 0, false
 	}
-	width := bounds.Dx() * height / bounds.Dy()
-	scaled := image.NewRGBA(image.Rect(0, 0, width, height))
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
-			scaled.Set(x, y, source.At(bounds.Min.X+x*bounds.Dx()/width, bounds.Min.Y+y*bounds.Dy()/height))
+	v.lastPLI = now
+	return v.ssrc, true
+}
+
+func videoFeedback(video *camera, transport dvoice.UDPConn, now time.Time) {
+	if video == nil {
+		return
+	}
+	if nack, ok := transport.(interface{ SendNACK(uint32, []uint16) error }); ok {
+		ssrc, missing := video.missingPackets()
+		if len(missing) > 0 {
+			_ = nack.SendNACK(ssrc, missing)
 		}
 	}
-	var out bytes.Buffer
-	if jpeg.Encode(&out, scaled, &jpeg.Options{Quality: 80}) != nil {
-		return b
+	if pli, ok := transport.(interface{ SendPLI(uint32) error }); ok {
+		if ssrc, needed := video.requestKeyframe(now); needed {
+			_ = pli.SendPLI(ssrc)
+		}
 	}
-	return out.Bytes()
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	dvoice "github.com/mattcalayo/omarchy-discord/backend/internal/voicewire"
+	"time"
 )
 
 func validQuality(q int) bool { return q == 360 || q == 720 || q == 1080 }
@@ -13,6 +14,16 @@ func (v *camera) setQuality(ctx context.Context, c dvoice.Conn, q int) error {
 	}
 	v.mu.Lock()
 	old, ssrc, decoder := v.quality, v.ssrc, v.decoder
+	v.mu.Unlock()
+	var replacement *cameraDecoder
+	if decoder != nil && old != q {
+		var err error
+		replacement, err = newCameraDecoderQuality(q)
+		if err != nil {
+			return err
+		}
+	}
+	v.mu.Lock()
 	v.quality = q
 	v.mu.Unlock()
 	if ssrc != 0 {
@@ -20,11 +31,26 @@ func (v *camera) setQuality(ctx context.Context, c dvoice.Conn, q int) error {
 			v.mu.Lock()
 			v.quality = old
 			v.mu.Unlock()
+			if replacement != nil {
+				replacement.close()
+			}
 			return err
 		}
 	}
-	if decoder != nil {
-		decoder.quality.Store(int64(q))
+	if replacement != nil {
+		v.mu.Lock()
+		if v.decoder == decoder {
+			v.decoder = replacement
+			v.awaitingKeyframe = true
+			v.lastPLI = time.Time{}
+			replacement = nil
+		}
+		v.mu.Unlock()
+		if replacement != nil {
+			replacement.close()
+		} else {
+			decoder.close()
+		}
 	}
 	return nil
 }

@@ -100,7 +100,12 @@ func (s *defaultAudioSender) send() {
 		return
 	}
 	// we only pull frames when the DAVE session is ready
-	if !s.conn.DAVE().Ready() {
+	session := s.conn.DAVE()
+	if gate, ok := session.(interface{ ShouldHoldFrames() bool }); ok {
+		if gate.ShouldHoldFrames() {
+			return
+		}
+	} else if !session.Ready() {
 		return
 	}
 

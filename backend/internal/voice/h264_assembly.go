@@ -9,6 +9,7 @@ import (
 
 // One selected stream: bounded jitter/RTX repair, no retained recording.
 const videoReorderPackets = 512
+const videoReorderUnits = 32
 const videoReorderAge = 500 * time.Millisecond
 
 type h264AccessUnit struct {
@@ -32,6 +33,7 @@ type h264Assembly struct {
 	candidateTimestamp uint32
 	acceptedTimestamp  uint32
 	hasAccepted        bool
+	acceptedEnd        uint16
 }
 
 func (a *h264Assembly) reset() { *a = h264Assembly{} }
@@ -67,7 +69,7 @@ func (a *h264Assembly) push(p *dvoice.Packet, now time.Time) ([]byte, error) {
 	}
 	u := a.units[p.Timestamp]
 	if u == nil {
-		if len(a.units) >= 4 {
+		if len(a.units) >= videoReorderUnits {
 			var oldest uint32
 			at := now
 			found := false
@@ -109,6 +111,22 @@ func (a *h264Assembly) push(p *dvoice.Packet, now time.Time) ([]byte, error) {
 func (a *h264Assembly) complete(timestamp uint32, u *h264AccessUnit) ([]byte, error) {
 	if !u.marked {
 		return nil, nil
+	}
+	// A complete predicted picture cannot jump over an earlier reference
+	// picture still being repaired. An IDR can safely replace the old GOP.
+	keyframe := false
+	for _, packet := range u.packets {
+		if h264PacketIDR(packet.Opus) {
+			keyframe = true
+			break
+		}
+	}
+	if !keyframe {
+		for older := range a.units {
+			if int32(older-timestamp) < 0 {
+				return nil, nil
+			}
+		}
 	}
 	// The earliest start before the marker wins; FU continuations are not starts.
 	var start uint16
@@ -191,6 +209,25 @@ func (a *h264Assembly) expire(now time.Time) {
 	}
 }
 func (a *h264Assembly) accept(timestamp uint32) {
+	if unit := a.units[timestamp]; unit != nil && unit.marked {
+		if a.hasAccepted {
+			// A whole lost access unit has no map entry to expire. Detect its
+			// missing sequence range before accepting the next picture.
+			distance := uint16(unit.end - a.acceptedEnd)
+			if distance > 0 && distance < 32768 {
+				for i := uint16(1); i <= distance; i++ {
+					seq := a.acceptedEnd + i
+					if unit.packets[seq] == nil {
+						if _, padding := a.padding[seq]; !padding {
+							a.dropped++
+							break
+						}
+					}
+				}
+			}
+		}
+		a.acceptedEnd = unit.end
+	}
 	a.acceptedTimestamp = timestamp
 	a.hasAccepted = true
 	for older, u := range a.units {
@@ -263,4 +300,54 @@ func h264PacketStart(payload []byte) bool {
 	}
 	typ := payload[0] & 31
 	return typ >= 1 && typ <= 24 || typ == 28 && len(payload) >= 3 && payload[1]&128 != 0
+}
+
+func h264PacketIDR(payload []byte) bool {
+	if len(payload) == 0 {
+		return false
+	}
+	switch payload[0] & 31 {
+	case 5:
+		return true
+	case 28:
+		return len(payload) > 1 && payload[1]&31 == 5 && payload[1]&128 != 0
+	case 24:
+		for offset := 1; offset+2 <= len(payload); {
+			n := int(payload[offset])<<8 | int(payload[offset+1])
+			offset += 2
+			if n == 0 || offset+n > len(payload) {
+				return false
+			}
+			if payload[offset]&31 == 5 {
+				return true
+			}
+			offset += n
+		}
+	}
+	return false
+}
+
+func h264IDR(frame []byte) bool {
+	for i := 0; i+3 < len(frame); i++ {
+		if frame[i] == 0 && frame[i+1] == 0 && frame[i+2] == 1 && frame[i+3]&31 == 5 {
+			return true
+		}
+	}
+	return false
+}
+
+// Drain completed pictures held behind a repaired reference in timestamp order.
+func (a *h264Assembly) next() ([]byte, error) {
+	var timestamp uint32
+	found := false
+	for candidate := range a.units {
+		if !found || int32(candidate-timestamp) < 0 {
+			timestamp = candidate
+			found = true
+		}
+	}
+	if !found {
+		return nil, nil
+	}
+	return a.complete(timestamp, a.units[timestamp])
 }
