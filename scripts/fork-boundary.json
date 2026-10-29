@@ -136,8 +136,8 @@
       "removed": 2
     },
     "backend/internal/remoteauth/remoteauth.go": {
-      "added": 26,
-      "removed": 74
+      "added": 40,
+      "removed": 75
     },
     "backend/internal/remoteauth/remoteauth_test.go": {
       "added": 2,
