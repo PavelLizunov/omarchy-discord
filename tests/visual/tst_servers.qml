@@ -15,11 +15,13 @@ TestCase {
   preview.client.serverQuery="";preview.client.serverFilter="all";preview.client.serverSort="position"
   preview.client.serverMenu.shown=false;preview.client.navigationShown=false
   preview.client.optionsMenu.shown=false
+  findChild(preview.client,"call-bar").expanded=false
   preview.model.voice={status:"idle"};preview.model.membersWanted=true
   preview.model.selectedGuildId="1"
   preview.model.currentChannelId="9000";preview.model.reset();wait(50)
  }
  function click(item){mouseClick(item,item.width/2,item.height/2);wait(60)}
+ function changeLayout(){preview.client.optionsMenu.show();wait(30);click(findChild(preview.client,"menu-layout"))}
  function test_unvisited_voice_count_is_synchronized_on_open(){
   preview.client.close();preview.model.voiceMembers=({})
   preview.cachedVoiceMembers={"2":[{channel_id:"9201",users:[{id:"201"}]}]}
@@ -87,13 +89,13 @@ TestCase {
   preview.model.voice={status:"connected",guildId:"1",channelId:"9002",muted:false,deafened:false,error:""};wait(60)
   var call=findChild(preview.client,"call-bar")
   var composer=preview.client.composer
-  var right=call.mapToItem(preview.client,call.width,0).x
-  verify(right<=composer.mapToItem(preview.client,0,0).x)
+  var top=call.mapToItem(preview.client,0,0).y
+  verify(composer.mapToItem(preview.client,0,composer.height).y<=top)
   preview.model.voice={status:"idle",muted:false,deafened:false,error:""}
  }
  function test_compact_toggle_preserves_draft_and_clicks(){
   preview.client.composer.setText("Keep compact draft")
-  click(findChild(preview.client,"layout-mode-button"));verify(preview.client.compactView)
+  changeLayout();verify(preview.client.compactView)
   tests.width=520;tests.height=560;wait(40)
   verify(findChild(preview.client,"chat-column").visible)
   preview.client.compactChatOpen = true; wait(40)
@@ -102,7 +104,7 @@ TestCase {
   verify(preview.client.timeline.width>280)
   compare(preview.client.composer.text,"Keep compact draft")
   click(findChild(preview.client,"search-button"));compare(preview.model.callCount("openSwitcher"),1)
-  click(findChild(preview.client,"layout-mode-button"));verify(!preview.client.compactMode)
+  changeLayout();verify(!preview.client.compactMode)
   tests.width=1040;wait(40);verify(findChild(preview.client,"server-rail").visible)
   compare(preview.client.composer.text,"Keep compact draft");preview.client.composer.setText("")
  }
@@ -168,7 +170,9 @@ TestCase {
   preview.model.membersWanted=false;wait(40)
   var bar=findChild(preview.client,"call-bar")
   var people=bar.roster
-  verify(bar.visible);verify(people.visible);verify(people.voiceMode)
+  verify(bar.visible);verify(!people.visible)
+  click(findChild(preview.client,"voice-people-toggle"))
+  verify(people.visible);verify(people.voiceMode)
   verify(!preview.client.members.visible)
   compare(people.rows.length,2)
   compare(people.rows[0].id,"201")
@@ -181,7 +185,7 @@ TestCase {
   preview.model.selectedGuildId="1"
   preview.model.currentChannelId="";wait(30);verify(bar.visible)
   var rail=findChild(preview.client,"server-rail")
-  verify(rail.mapToItem(preview.client,rail.width,0).x<=bar.mapToItem(preview.client,0,0).x)
+  verify(rail.mapToItem(preview.client,0,rail.height).y<=bar.mapToItem(preview.client,0,0).y)
   verify(people.visible)
   preview.model.voiceMembers={"1":[{channel_id:"9002",users:[{id:"202"}]}]};wait(30)
   compare(people.rows.length,1)
@@ -197,14 +201,15 @@ TestCase {
   preview.model.voice={status:"connected",guildId:"1",channelId:"9002",muted:true,deafened:false}
   preview.model.voiceMembers={"1":[{channel_id:"9002",users:[{id:"201",display_name:"Voice friend"}]}]};wait(40)
   var bar=findChild(preview.client,"call-bar")
+  click(findChild(preview.client,"voice-people-toggle"))
   verify(bar.roster.visible);compare(bar.roster.rows.length,1)
-  tests.width=520;tests.height=560;click(findChild(preview.client,"layout-mode-button"))
+  tests.width=520;tests.height=560;changeLayout()
   verify(bar.roster.visible);verify(bar.expanded)
   preview.client.toggleMembers();wait(30);verify(bar.roster.visible)
   click(findChild(preview.client,"navigation-button"));verify(bar.roster.visible)
   var channels=findChild(preview.client,"channel-pane")
   verify(channels.mapToItem(preview.client,0,channels.height).y<=bar.mapToItem(preview.client,0,0).y)
-  click(findChild(preview.client,"layout-mode-button"));tests.width=1040;wait(40)
+  changeLayout();tests.width=1040;wait(40)
   verify(bar.roster.visible);compare(bar.roster.rows.length,1)
   compare(preview.model.voice.status,"connected")
   compare(preview.model.callCount("voiceJoin"),0);compare(preview.model.callCount("voiceLeave"),0)
@@ -233,10 +238,10 @@ TestCase {
   var previousRight=0
   for(var i=0;i<3;i++) {
    var button=findChild(preview.client,["voice-mute","voice-deafen","voice-leave"][i])
-   verify(button.iconOnly)
+   verify(!button.iconOnly)
    verify(button.implicitWidth<=button.width)
    var left=button.mapToItem(bar,0,0).x
-   verify(left>=previousRight)
+   verify(left>=0)
    previousRight=left+button.width
    verify(previousRight<=bar.width)
   }

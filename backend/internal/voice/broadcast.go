@@ -53,6 +53,10 @@ func StartCapture(ctx context.Context, height, fps int) (*Capture, error) {
 	if _, err = os.Stat(helper); err != nil {
 		return nil, errors.New("screen capture helper is not installed")
 	}
+	return startCapture(ctx, helper, height, fps)
+}
+
+func startCapture(ctx context.Context, helper string, height, fps int) (*Capture, error) {
 	run, cancel := context.WithCancel(ctx)
 	c := &Capture{cancel: cancel, frames: make(chan capturedFrame, 1), done: make(chan struct{})}
 	c.cmd = exec.CommandContext(run, "/usr/bin/python3", helper, "--framed", "--height", fmt.Sprint(height), "--fps", fmt.Sprint(fps))

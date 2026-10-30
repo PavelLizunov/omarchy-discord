@@ -32,12 +32,14 @@ TestCase {
     var oldWidth=tests.width;tests.width=420
     preview.client.open("{}");preview.model.voice={status:"connected",guildId:"1",channelId:"9002",muted:false,deafened:false}
     preview.model.reset();wait(30)
-    var mute=findChild(preview.client,"quick-microphone"),close=findChild(preview.client,"close-window"),restart=findChild(preview.client,"restart-discord")
-    verify(restart.visible);verify(restart.mapToItem(preview.client,0,0).x>=0)
-    verify(close.mapToItem(preview.client,close.width,0).x<=preview.client.width+1)
+    var mute=findChild(preview.client,"voice-mute"),close=findChild(preview.client,"close-window")
+    verify(!findChild(preview.client,"restart-discord").visible)
+    preview.client.optionsMenu.show();wait(20)
+    var restart=findChild(preview.client,"menu-restart")
+    verify(restart.visible)
     mouseClick(restart,restart.width/2,restart.height/2);compare(preview.model.callCount("restartBackend"),1)
-    restart.forceActiveFocus();keyClick(Qt.Key_Return);compare(preview.model.callCount("restartBackend"),2)
-    preview.model.restartBusy=true;wait(10);verify(!restart.enabled);preview.model.restartBusy=false
+    preview.model.restartBusy=true;preview.client.optionsMenu.show();wait(10);verify(!restart.enabled)
+    preview.model.restartBusy=false;preview.client.optionsMenu.hide();wait(20)
     verify(mute.visible);verify(close.visible)
     verify(mute.mapToItem(preview.client,0,0).x>=0)
     verify(close.mapToItem(preview.client,close.width,0).x<=preview.client.width+1)

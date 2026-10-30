@@ -3,80 +3,19 @@ import QtQuick
 import "../ui" as PluginTheme
 import "../ui"
 
-import "../Api.js" as Api
-import "../ui/Icons.js" as Icons
-
 Item {
   id: root
-
-  property bool rejoining: false
-  function rejoin() {
-    if (rejoining || !service || !service.showStructure || !voice.channelId) return
-    rejoining = true
-    if (!service.voiceJoin(String(voice.guildId || ""), String(voice.channelId))) rejoining = false
-    else rejoinDeadline.restart()
-  }
-  onStatusChanged: if (status === "connecting" || status === "error" || status === "idle") { rejoining = false; rejoinDeadline.stop(); departure=null; previousUsers=[]; previousRoom="" }
-  Timer { id: rejoinDeadline; interval: 10000; onTriggered: root.rejoining = false }
-  readonly property bool controlFocused: diagnosticToggle.activeFocus || diagnostics.testFocused || voiceRoster.activeFocus || voiceRoster.audioControls.controlFocused || muteButton.activeFocus || deafenButton.activeFocus || leaveButton.activeFocus || reconnect.activeFocus
-  function focusAudio(delta) {
-    var buttons = voiceRoster.audioUserId ? voiceRoster.audioControls.focusControls() : [voiceRoster]
-    if (diagnosticToggle.visible) buttons.push(diagnosticToggle)
-    if (diagnostics.details) buttons = buttons.concat(diagnostics.focusControls())
-    if (reconnect.visible) buttons.push(reconnect)
-    buttons = buttons.concat([muteButton,deafenButton,leaveButton])
-    var current = buttons.findIndex(function(button) { return button.activeFocus })
-    var next = current < 0 ? (delta < 0 ? buttons.length - 1 : diagnosticToggle.visible ? buttons.indexOf(diagnosticToggle) : 0) : current + delta
-    if (next < 0 || next >= buttons.length) return false
-    if (diagnostics.focusControls().indexOf(buttons[next]) >= 0) diagnostics.focusControl(buttons[next])
-    else buttons[next].forceActiveFocus()
-    return true
-  }
-  function dismissAudio(){if(voiceRoster.audioUserId){voiceRoster.closeAudio();return true}if(!diagnostics.details)return false;diagnostics.details=false;diagnosticToggle.forceActiveFocus();return true}
-  signal chatRequested()
-  function openChat() {
-    if (!service || !voice.channelId) return
-    service.showChannel(String(voice.channelId), String(voice.guildId || ""))
-    chatRequested()
-  }
-
   property var service: null
-  property double clock: Date.now()
-  property var departure: null
-  property var previousUsers: []
-  property string previousRoom: ""
-  onRoomUsersChanged: {
-    var room = String(voice.guildId || "") + ":" + String(voice.channelId || "")
-    if (status === "connected" && previousRoom === room) {
-      for (var i=0;i<previousUsers.length;i++) {
-        var user=previousUsers[i]
-        if (!roomUsers.some(function(row){return String(row.id)===String(user.id)}))
-          departure = {user:user, status:String(user.status || "unknown"), at:Date.now()}
-      }
-    } else departure=null
-    previousUsers=roomUsers.slice();previousRoom=room
-  }
-  Connections {
-    target: root.service && root.service.backend ? root.service.backend : null
-    ignoreUnknownSignals: true
-    function onEventReceived(name, message) {
-      if (name === "presence_update" && root.departure && String(message.user_id) === String(root.departure.user.id))
-        root.departure = Api.assign(Api.shallowCopy(root.departure),{status:String(message.status || "unknown")})
-    }
-  }
-  Timer { interval:1000;repeat:true;running:!!root.departure;onTriggered:{root.clock=Date.now();if(root.clock-root.departure.at>=60000)root.departure=null} }
+  property var sharing: null
   property string channelName: ""
   property bool expanded: false
-  property bool compactRosterHeader: false
+  property bool compactRosterHeader: true
   property bool showDiagnostics: true
-  readonly property var roomUsers: service && voice.channelId
-    ? service.voiceUsers(String(voice.guildId || ""), String(voice.channelId)) : []
-  readonly property alias roster: voiceRoster
+  property bool rejoining: false
   property color foreground: PluginTheme.Color.foreground
   property color secondary: PluginTheme.Color.foreground
   property color accent: PluginTheme.Color.accent
   property string fontFamily: Style.font.family
-
   readonly property var voice: service && service.voice ? service.voice : ({})
   readonly property string status: String(voice.status || "idle")
   readonly property bool inCall: status !== "idle"
@@ -84,229 +23,144 @@ Item {
   readonly property bool failed: status === "error"
   readonly property bool isMuted: !!voice.muted
   readonly property bool isDeafened: !!voice.deafened
-  readonly property string statusText: {
-    if (rejoining) return "Reconnecting…"
-    if (status === "connecting") return "Connecting…"
-    if (failed) return "Disconnected · reconnect to rejoin"
-    if (!connected) return ""
-    if (diagnostics.fresh && !diagnostics.sample.encryption_ready) return "Securing audio…"
-    var parts = []
-    if (isMuted) parts.push("muted")
-    if (isDeafened) parts.push("deafened")
-    return parts.length ? "Connected · " + parts.join(" · ") : "Connected"
-  }
+  readonly property var roomUsers: service && voice.channelId
+    ? service.voiceUsers(String(voice.guildId || ""), String(voice.channelId)) : []
+  readonly property alias roster: voiceRoster
+  readonly property string statusText: failed ? String(voice.error || "Voice disconnected")
+    : rejoining ? "Reconnecting…" : status === "connecting" ? "Connecting…" : ""
+  readonly property bool controlFocused: voiceRoster.activeFocus || voiceRoster.audioControls.controlFocused
+    || diagnostics.testFocused || focusControls().some(function(button) { return button.activeFocus })
+  signal chatRequested()
+  signal videoRequested()
 
+  function openChat() {
+    if (!service || !voice.channelId) return
+    service.showChannel(String(voice.channelId), String(voice.guildId || ""))
+    chatRequested()
+  }
+  function rejoin() {
+    if (rejoining || !service || !service.showStructure || !voice.channelId) return
+    rejoining = !!service.voiceJoin(String(voice.guildId || ""), String(voice.channelId))
+    if (rejoining) rejoinDeadline.restart()
+  }
+  function focusControls() {
+    return [chatButton,peopleButton,diagnosticToggle,muteButton,deafenButton,shareButton,watchButton,reconnect,leaveButton]
+      .filter(function(button) { return button.visible && button.enabled })
+  }
+  function focusAudio(delta) {
+    var buttons = focusControls()
+    if (voiceRoster.visible) buttons = buttons.concat(voiceRoster.audioUserId ? voiceRoster.audioControls.focusControls() : [voiceRoster])
+    if (diagnostics.details) buttons = buttons.concat(diagnostics.focusControls())
+    var current = buttons.findIndex(function(button) { return button.activeFocus })
+    var next = current < 0 ? (delta < 0 ? buttons.length-1 : 0) : current+delta
+    if (next < 0 || next >= buttons.length) return false
+    buttons[next].forceActiveFocus()
+    return true
+  }
+  function dismissAudio() {
+    if (voiceRoster.audioUserId) { voiceRoster.closeAudio(); return true }
+    if (diagnostics.details) { diagnostics.details=false; diagnosticToggle.forceActiveFocus(); return true }
+    return false
+  }
+  onStatusChanged: if (status !== "connected") { rejoining=false; rejoinDeadline.stop() }
+  Timer { id:rejoinDeadline; interval:10000; onTriggered:root.rejoining=false }
   visible: inCall
-  implicitHeight: expanded ? Style.space(320) : content.implicitHeight + Style.spacing.sm * 2
+  implicitHeight: header.height + controls.height + (feedback.visible ? feedback.height + content.spacing : 0)
+    + (expanded || diagnostics.details ? Style.space(120) + content.spacing : 0) + Style.spacing.sm*2 + content.spacing
   height: implicitHeight
 
   BorderSurface {
-    anchors.fill: parent
-    radius: Style.cornerRadius
-    color: root.activeFocus ? Style.focusFillFor(root.foreground, root.accent)
-      : Style.normalFillFor(root.foreground, root.accent)
-    borderSpec: root.activeFocus
-      ? Border.controlSpec("focus", root.foreground, root.accent)
-      : Border.none()
-
+    anchors.fill:parent
+    radius:Style.cornerRadius
+    color:PluginTheme.Color.popups.background
+    borderSpec:Border.flat(PluginTheme.Color.popups.border, Math.max(1,Style.normalBorderWidth))
     Column {
-      id: content
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.top: parent.top
-      anchors.topMargin: Style.spacing.sm
-      anchors.leftMargin: Style.spacing.sm
-      anchors.rightMargin: Style.spacing.sm
-      spacing: Style.spacing.xxs
-
+      id:content
+      anchors.fill:parent; anchors.margins:Style.spacing.sm; spacing:Style.spacing.xs
       Item {
-        id: voiceTitleContainer
-        width: parent.width
-        height: Math.max(voiceTitle.height, chatButton.height)
-
-        Row {
-          id: voiceTitle
-          anchors.left: parent.left
-          anchors.right: chatButton.left
-          anchors.rightMargin: Style.spacing.xs
-          anchors.verticalCenter: parent.verticalCenter
-          spacing: Style.spacing.sm
-
-          Image {
-            id: glyph
-            anchors.verticalCenter: parent.verticalCenter
-            width: Style.space(16)
-            height: width
-            source: Icons.source("headphones", root.failed ? PluginTheme.Color.urgent : (root.connected ? root.accent : root.secondary))
-            sourceSize: Qt.size(width * 2, height * 2)
-          }
-
-          Text {
-            anchors.verticalCenter: parent.verticalCenter
-            width: Math.max(0, parent.width - glyph.width - parent.spacing)
-            elide: Text.ElideRight
-            text: root.channelName || "Voice"
-            color: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-            font.bold: true
-          }
-        }
-
-        MouseArea {
-          anchors.fill: voiceTitle
-          cursorShape: Qt.PointingHandCursor
-          onClicked: root.openChat()
-        }
-
+        id:header; width:parent.width; height:Style.spacing.controlHeight
         Button {
-          id: chatButton
-          objectName: "voice-chat-button"
-          anchors.right: parent.right
-          anchors.verticalCenter: parent.verticalCenter
-          iconOnly: true
-          iconName: "reply"
-          text: "Chat"
-          tooltipText: "Open text chat for this voice room"
-          focusable: true
-          onClicked: root.openChat()
+          id:chatButton; objectName:"voice-chat-button"
+          anchors.left:parent.left; anchors.right:peopleButton.left
+          anchors.rightMargin:Style.spacing.xs
+          text:root.channelName || "Voice"; iconName:"headphones"; leftAlign:true
+          focusable:true; tooltipText:"Open this room's chat"; onClicked:root.openChat()
+        }
+        Button {
+          id:peopleButton; objectName:"voice-people-toggle"
+          anchors.right:diagnosticToggle.visible ? diagnosticToggle.left : parent.right
+          text:"People · " + root.roomUsers.length; iconName:"members"; selected:root.expanded && !diagnostics.details
+          focusable:true; onClicked:{diagnostics.details=false;root.expanded=!root.expanded}
+        }
+        Button {
+          id:diagnosticToggle; objectName:"voice-audio-details"; anchors.right:parent.right
+          visible:root.showDiagnostics; iconOnly:true; iconName:"sliders"; text:"Audio settings"
+          tooltipText:"Audio settings and diagnostics"; selected:diagnostics.details; focusable:true
+          onClicked:diagnostics.details=!diagnostics.details
         }
       }
-
-      Text {
-        id: callStatus
-        objectName: "voice-status"
-        width: parent.width
-        visible: !root.connected || root.expanded
-        wrapMode: Text.WordWrap
-        text: root.statusText
-        color: root.failed ? PluginTheme.Color.urgent : root.secondary
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall
+      Flow {
+        id:controls; objectName:"voice-actions"; width:parent.width; spacing:Style.spacing.controlGap
+        Button {
+          id:muteButton; objectName:"voice-mute"; text:root.isMuted ? "Unmute" : "Mute"
+          iconName:root.isMuted ? "microphoneOff" : "microphone"; active:root.isMuted
+          focusable:true; enabled:root.connected; tooltipText:"Toggle microphone (Ctrl+Shift+M)"
+          onClicked:if(root.service)root.service.toggleMute()
+        }
+        Button {
+          id:deafenButton; objectName:"voice-deafen"; text:root.isDeafened ? "Hear" : "Deafen"
+          iconName:root.isDeafened ? "headphonesOff" : "headphones"; active:root.isDeafened
+          focusable:true; enabled:root.connected; tooltipText:"Toggle incoming audio (Ctrl+Shift+D)"
+          onClicked:if(root.service)root.service.toggleDeafen()
+        }
+        Button {
+          id:shareButton; objectName:"screen-share"; visible:!!root.sharing
+          text:root.sharing && root.sharing.active ? "Stop sharing" : "Share screen"
+          iconName:root.sharing && root.sharing.active ? "close" : "screen"
+          selected:!!(root.sharing && root.sharing.active); focusable:true
+          enabled:root.connected; tooltipText:"Choose a screen or window. System audio is not shared."
+          onClicked:root.sharing.toggle()
+        }
+        Button {
+          id:watchButton; objectName:"voice-watch"; visible:!!root.sharing
+          text:"Watch"; iconName:"camera"; enabled:root.connected; focusable:true
+          tooltipText:"Watch a participant's camera or screen"; onClicked:root.videoRequested()
+        }
+        Button {
+          id:reconnect; objectName:"voice-reconnect"; visible:root.failed
+          text:"Reconnect"; iconName:"reconnect"; enabled:!root.rejoining; focusable:true
+          onClicked:root.rejoin()
+        }
+        Button {
+          id:leaveButton; objectName:"voice-leave"; text:"Leave"; iconName:"leave"
+          foreground:PluginTheme.Color.urgent; bordered:true; focusable:true
+          tooltipText:"Leave the call and stop sharing (Ctrl+Shift+H)"
+          onClicked:if(root.service)root.service.voiceLeave()
+        }
       }
-
       Text {
-        id: departureLine
-        objectName: "voice-departure"
-        textFormat: Text.PlainText
-        width: parent.width
-        visible: root.expanded && !!root.departure && root.clock-root.departure.at<60000
-        text: root.departure ? Api.userLabel(root.departure.user, root.service.knownUsers) + " left voice · " + voiceRoster.statusLabel(root.departure.status) : ""
-        wrapMode: Text.WordWrap
-        color: root.secondary
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
+        id:feedback; objectName:"voice-status"; width:parent.width
+        visible:text!==""; text:root.sharing && root.sharing.message ? root.sharing.message : root.statusText
+        textFormat:Text.PlainText; wrapMode:Text.WordWrap
+        color:root.failed || (root.sharing && root.sharing.error) ? PluginTheme.Color.urgent : root.foreground
+        font.family:root.fontFamily; font.pixelSize:Style.font.bodySmall
       }
       MemberList {
-        id: voiceRoster
-        objectName: "voice-roster"
-        visible: root.expanded
-        width: parent.width
-        height: visible && !diagnostics.details ? Math.max(0, root.height - voiceTitleContainer.height - (callStatus.visible ? callStatus.height : 0) - controls.height - (diagnosticToggle.visible ? diagnosticToggle.height : 0)
-          - (reconnect.visible ? reconnect.height + content.spacing : 0) - (departureLine.visible ? departureLine.height + content.spacing : 0) - Style.spacing.sm * 2 - content.spacing * 3) : 0
-        service: root.service
-        voiceMode: true
-        active: activeFocus || audioControls.controlFocused
-        compactHeader: root.compactRosterHeader
-        voiceUsers: root.roomUsers
-        channelName: root.channelName
-        headingText: root.failed ? "People in room" : "In voice"
-      }
-      Button {
-        id: diagnosticToggle
-        objectName: "voice-audio-details"
-        width: parent.width
-        visible: root.connected && root.showDiagnostics
-        iconName: diagnostics.details ? "members" : "sliders"
-        text: diagnostics.details ? "Show people" : "Audio details"
-        leftAlign: true
-        foreground: root.foreground
-        fontFamily: root.fontFamily
-        implicitHeight: Style.space(32)
-        focusable: true
-        onClicked: diagnostics.details = !diagnostics.details
+        id:voiceRoster; objectName:"voice-roster"; width:parent.width
+        visible:root.expanded && !diagnostics.details
+        height:visible ? Math.max(0,content.height-y) : 0
+        service:root.service; voiceMode:true; compactHeader:root.compactRosterHeader
+        voiceUsers:root.roomUsers; channelName:root.channelName
+        headingText:root.failed ? "People in room" : "In voice"
+        active:activeFocus || audioControls.controlFocused
       }
       VoiceDiagnostics {
-        id: diagnostics
-        visible: root.showDiagnostics
-        objectName: "voice-audio-diagnostics"
-        width: parent.width
-        service: root.service
-        connected: root.connected
-        callIdentity: String(root.voice.guildId || "") + ":" + String(root.voice.channelId || "")
-        muted: root.isMuted
-        deafened: root.isDeafened
-        foreground: root.foreground
-        fontFamily: root.fontFamily
-        rejoining: root.rejoining
-        onReconnectRequested: root.rejoin()
-        height: !details ? 0 : !root.expanded ? Math.min(implicitHeight, Style.space(220))
-          : Math.max(0, root.height - voiceTitleContainer.height - (callStatus.visible ? callStatus.height + content.spacing : 0) - controls.height - diagnosticToggle.height - Style.spacing.sm * 2 - content.spacing * 4)
-      }
-      Button {
-        id: reconnect
-        objectName: "voice-reconnect"
-        visible: root.failed
-        width: parent.width
-        text: "Reconnect"
-        iconName: "reconnect"
-        focusable: true
-        enabled: !root.rejoining && !!(root.service && root.service.showStructure && root.voice.channelId)
-        tooltipText: String(root.voice.error || "Voice disconnected") + " · Rejoin this voice channel"
-        foreground: root.foreground
-        fontFamily: root.fontFamily
-        onClicked: root.rejoin()
-      }
-      Row {
-        id: controls
-        width: parent.width
-        topPadding: Style.spacing.xxs
-        spacing: Style.spacing.controlGap
-        readonly property real cell: Math.max(0, (width - spacing * 2) / 3)
-
-        Button {
-          id: muteButton
-          objectName: "voice-mute"
-          width: controls.cell
-          iconOnly: true
-          text: root.isMuted ? "Unmute" : "Mute"
-          iconName: root.isMuted ? "microphoneOff" : "microphone"
-          focusable: true
-          active: root.isMuted
-          enabled: root.connected
-          foreground: root.foreground
-          fontFamily: root.fontFamily
-          tooltipText: (root.isMuted ? "Unmute" : "Mute") + " the microphone (Ctrl+Shift+M)"
-          onClicked: if (root.service) root.service.toggleMute()
-        }
-        Button {
-          id: deafenButton
-          objectName: "voice-deafen"
-          width: controls.cell
-          iconOnly: true
-          text: root.isDeafened ? "Hear" : "Deafen"
-          iconName: root.isDeafened ? "headphonesOff" : "headphones"
-          focusable: true
-          active: root.isDeafened
-          enabled: root.connected
-          foreground: root.foreground
-          fontFamily: root.fontFamily
-          tooltipText: (root.isDeafened ? "Resume" : "Stop") + " hearing the others (Ctrl+Shift+D)"
-          onClicked: if (root.service) root.service.toggleDeafen()
-        }
-        Button {
-          id: leaveButton
-          objectName: "voice-leave"
-          width: controls.cell
-          iconOnly: true
-          text: "Leave"
-          iconName: "leave"
-          focusable: true
-          foreground: PluginTheme.Color.urgent
-          fontFamily: root.fontFamily
-          tooltipText: "Leave the voice channel (Ctrl+Shift+H)"
-          onClicked: if (root.service) root.service.voiceLeave()
-        }
+        id:diagnostics; objectName:"voice-audio-diagnostics"; width:parent.width
+        visible:root.showDiagnostics; height:details ? Math.max(0,content.height-y) : 0
+        service:root.service; connected:root.connected
+        callIdentity:String(root.voice.guildId || "")+":"+String(root.voice.channelId || "")
+        muted:root.isMuted; deafened:root.isDeafened; rejoining:root.rejoining
+        onReconnectRequested:root.rejoin()
       }
     }
   }

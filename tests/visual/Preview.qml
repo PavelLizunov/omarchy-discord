@@ -12,6 +12,8 @@ Rectangle {
   color: PluginTheme.Color.background
   property string state: "chat"
   property bool lightTheme: false
+  property string sharingState: "idle"
+  property bool showCallPeople: false
   property bool serverListFixture: false
   property var cachedVoiceMembers: null
   property bool useRealServerActions: false
@@ -29,8 +31,15 @@ Rectangle {
     property bool persistentWindow: false
     readonly property bool ready: connected && lifecycle === "ready"
     readonly property var backend: model
+    property string shareStatus: "idle"
     function sendCommand(name, fields, callback) {
       note(name, fields.guild_id)
+      if (name === "screen_share") {
+        if (fields.action === "start") shareStatus = "selecting"
+        if (fields.action === "stop") shareStatus = "idle"
+        if (callback) callback(true,{status:shareStatus},"")
+        return 1
+      }
       if (name === "voice_members") {
         if (callback) callback(true, {guild_id:fields.guild_id, channels:(root.cachedVoiceMembers || voiceMembers)[String(fields.guild_id)] || []}, "")
         return 1
@@ -189,6 +198,8 @@ Rectangle {
         model.voiceMembers = {"1":[{channel_id:"9002",users:[{id:"200",display_name:"Ada"}]}]}
         client.openCamera()
       }
+      if (root.sharingState !== "idle") { model.shareStatus=root.sharingState;client.sharing.sample={status:root.sharingState} }
+      if (root.showCallPeople) client.callControls.expanded=true
       root.ready = true
       stop()
     }

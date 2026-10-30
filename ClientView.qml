@@ -47,7 +47,9 @@ Item {
   readonly property alias picker: pickerView
   readonly property alias members: membersView
   readonly property alias controls: headerControls
-  property bool cameraPreviousChat: false
+  Components.ScreenShare { id:screenShare; service:root.service }
+  readonly property alias sharing: screenShare
+  readonly property alias callControls: callBar
   function openCamera() {cameraView.open()}
   readonly property alias camera: cameraView
   readonly property alias videoWindow: videoWindow
@@ -133,8 +135,7 @@ Item {
   readonly property bool voicePeopleMode: false
   readonly property bool voicePanelPinned: narrowLayout && !!(service && service.voice && String(service.voice.status || "idle") !== "idle")
   readonly property bool voiceRoomVisible: !!(service && service.voice && String(service.voice.status || "idle") !== "idle")
-  readonly property bool voiceNavigation: narrowLayout && !compactChatOpen && voiceRoomVisible
-  readonly property real voicePanelWidth: voiceRoomVisible ? Style.space(narrowLayout ? 155 : 180) : 0
+  readonly property bool voiceNavigation: false
   readonly property var activeVoicePeople: service && activeVoiceChannelId
     ? service.voiceUsers(String(service.voice.guildId || ""), activeVoiceChannelId) : []
   readonly property bool membersVisible: ready && !voiceRoomVisible
@@ -822,6 +823,7 @@ Item {
       if (stop === "search" && !searchButton.visible) continue
       if (stop === "options" && !optionsButton.visible) continue
       if (stop === "mode" && !modeButton.visible) continue
+      if (stop === "restart" && !restartButton.visible) continue
       if (stop === "quickMute" && !quickMuteButton.visible) continue
       if (stop === "close" && !closeButton.visible) continue
       if (stop === "dismissError") {
@@ -1122,7 +1124,7 @@ Item {
         Button {
           id: quickMuteButton
           objectName: "quick-microphone"
-          visible: root.service && root.service.voice && root.service.voice.status === "connected"
+          visible: false
           iconOnly: true
           iconName: root.service && root.service.voice.muted ? "microphoneOff" : "microphone"
           text: root.service && root.service.voice.muted ? "Unmute microphone" : "Mute microphone"
@@ -1146,7 +1148,7 @@ Item {
         Button {
           id: cameraButton
           objectName: "camera-button"
-          visible: root.ready && root.service && root.service.voice && root.service.voice.status === "connected"
+          visible: false
           text: "Video"
           iconOnly: true
           iconName: "camera"
@@ -1184,7 +1186,7 @@ Item {
         Button {
           id: modeButton
           objectName: "layout-mode-button"
-          visible: !root.crowdedToolbar
+          visible: false
           iconOnly: true
           iconName: root.compactView ? "expand" : "compact"
           tooltipText: root.compactView ? "Full layout" : "Compact layout"
@@ -1196,6 +1198,7 @@ Item {
         Button {
           id: restartButton
           objectName: "restart-discord"
+          visible: !root.ready
           text: root.service && root.service.restartBusy ? "Restarting…" : "Restart Discord"
           iconName: "reconnect"
           iconOnly: root.width < Style.space(600)
@@ -1373,6 +1376,20 @@ Item {
 
           Rectangle { width: parent.width; height: 1; color: PluginTheme.Color.popups.border; opacity: 0.4 }
 
+          Button {
+            objectName: "menu-layout"
+            width: parent.width; leftAlign: true; focusable: true
+            text: root.compactView ? "Full layout" : "Compact layout"; iconName: "compact"
+            onClicked: { optionsMenu.hide(); root.setCompactMode(!root.compactView) }
+          }
+          Button {
+            objectName: "menu-restart"
+            width: parent.width; leftAlign: true; focusable: true
+            text: "Reconnect Discord"; iconName: "reconnect"
+            enabled: !!root.service && !root.service.restartBusy
+            tooltipText: "Ends the call; keeps login and settings"
+            onClicked: { optionsMenu.hide(); root.service.restartBackend() }
+          }
           Button {
             id: optionsHelp
             objectName: "menu-help"
@@ -2524,16 +2541,14 @@ Item {
               Components.CallBar {
                 id: callBar
                 objectName: "call-bar"
-                parent: channelContent
-                expanded: true
-                compactRosterHeader: root.voiceNavigation
+                parent: footer
+                expanded: false
+                compactRosterHeader: true
+                sharing: screenShare
+                onVideoRequested: root.openCamera()
                 z: 0
-                anchors.left: parent.left
-                anchors.bottom: parent.bottom
-                width: root.voiceNavigation ? parent.width : root.voicePanelWidth
-                height: parent.height
-                anchors.leftMargin: 0
-                anchors.bottomMargin: 0
+                width: parent.width
+                height: implicitHeight
                 service: root.service
                 onChatRequested: root.enterComposer()
                 channelName: root.service && root.service.voice
@@ -2577,6 +2592,7 @@ Item {
                 objectName: "camera-view"
                 anchors.fill: parent
                 service: root.service
+                sharing: screenShare
                 onMoveRequested: videoWindow.startSystemMove()
                 onResizeRequested: videoWindow.startSystemResize(Qt.RightEdge | Qt.BottomEdge)
               }
@@ -2586,7 +2602,7 @@ Item {
               parent: channelContent
               objectName: "chat-column"
               visible: !root.narrowLayout || root.compactChatOpen
-              x: root.voiceRoomVisible ? callBar.width + conversationRow.spacing : 0
+              x: 0
               width: Math.max(0, parent.width - x
                 - (root.membersVisible ? membersView.width + conversationRow.spacing : 0))
               height: parent.height

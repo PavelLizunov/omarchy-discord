@@ -22,18 +22,7 @@ Item {
  }
  property string error: ""
  property string actionError: ""
- property bool shareBusy: false
- readonly property var share: sample.share || ({status:"idle"})
- readonly property bool shareActive: ["selecting","connecting","waiting","sharing","stopping"].indexOf(String(share.status))>=0
- function toggleShare() {
-  if(shareBusy || !service || !service.backend)return
-  shareBusy=true
-  service.backend.sendCommand("screen_share",{action:shareActive?"stop":"start",height:720,fps:30,revision:revision()},function(ok,result,reason){
-   root.shareBusy=false
-   if(ok){var next=Object.assign({},root.sample);next.share=result;root.sample=next;if(!root.shown && root.shareActive)root.service.backend.sendCommand("screen_share",{action:"stop",revision:root.revision()},function(){})}
-   else root.actionError=String(reason || "Screen sharing failed")
-  })
- }
+ property var sharing: null
  property bool busy: false
  property int generation: 0
  property bool selecting: false
@@ -79,7 +68,6 @@ Item {
  function reset() {pendingWatch=null;pendingSettings=null;streamChoices=[];generation++;deadline.stop();busy=false;selecting=false;requestedUser="";selectedAt=0;sample=({streams:[],user_id:"",image:"",age_ms:-1});clearImage();error="";actionError=""}
  function open() {if(shown)return;reset();shown=true;poll();closeButton.forceActiveFocus()}
  function hide() {
-  if((shareActive || shareBusy) && service && service.backend)service.backend.sendCommand("screen_share",{action:"stop",revision:revision()},function(){})
   var stop=!!(requestedUser || sample.user_id)
   reset();shown=false
   if(stop && service && service.backend) service.backend.sendCommand("video_watch",{kind:"stop",user_id:"",revision:revision()},function(){})
@@ -111,13 +99,12 @@ Item {
   startWatch(id,kind)
  }
  function startWatch(id,kind) {actionError="";requestedUser=id;requestedKind=kind || "camera";selectedAt=Date.now();clearImage();selecting=true;command("video_watch",{kind:requestedKind,user_id:id,revision:revision()})}
- onIdentityChanged: {reset();if(shown)poll()}
+ onIdentityChanged: {reset();if(shown && voice.status!=="connected")hide();else if(shown)poll()}
  onVisibleChanged: if(!visible && (requestedUser || sample.user_id)) hide()
  Component.onDestruction: {
-  if((shareActive || shareBusy) && service && service.backend)service.backend.sendCommand("screen_share",{action:"stop",revision:revision()},function(){})
   if((requestedUser || sample.user_id) && service && service.backend) service.backend.sendCommand("video_watch",{kind:"stop",user_id:"",revision:revision()},function(){})
  }
- Timer {interval:33;repeat:true;running:root.visible && root.voice.status==="connected";onTriggered:{root.clock=Date.now();root.poll()}}
+ Timer {interval:root.sample.user_id ? 33 : 1000;repeat:true;running:root.visible && root.voice.status==="connected";onTriggered:{root.clock=Date.now();root.poll()}}
  Timer {id:deadline;interval:18000;onTriggered:{root.generation++;root.busy=false;root.selecting=false;root.error="Video request timed out";if(root.pendingCommand==="video_watch" && root.service && root.service.backend)root.service.backend.sendCommand("video_watch",{kind:"stop",revision:root.revision()},function(){})}}
  Keys.onEscapePressed: function(event) {root.hide();event.accepted=true}
  BorderSurface {
@@ -126,14 +113,15 @@ Item {
    id:body;anchors.fill:parent;anchors.margins:Style.spacing.sm;spacing:Style.spacing.sm
    Item {
     width:parent.width;height:Style.spacing.controlHeight
-    Text {anchors.left:parent.left;anchors.right:closeButton.left;anchors.verticalCenter:parent.verticalCenter;text:"Video · Camera and screen";elide:Text.ElideRight;color:PluginTheme.Color.foreground;font.family:Style.font.family;font.pixelSize:Style.font.body;font.bold:true}
+    Text {anchors.left:parent.left;anchors.right:closeButton.left;anchors.verticalCenter:parent.verticalCenter;text:"Watch video";elide:Text.ElideRight;color:PluginTheme.Color.foreground;font.family:Style.font.family;font.pixelSize:Style.font.body;font.bold:true}
     MouseArea {anchors.left:parent.left;anchors.right:closeButton.left;anchors.top:parent.top;anchors.bottom:parent.bottom;cursorShape:Qt.SizeAllCursor;onPressed:root.moveRequested()}
     Button {id:closeButton;objectName:"camera-close";anchors.right:parent.right;text:"Close";focusable:true;tooltipText:"Stop this video and its audio; keep voice connected";onClicked:root.hide()}
    }
    Row {
     width:parent.width;height:Style.spacing.controlHeight;spacing:Style.spacing.sm
-    Button {id:shareButton;objectName:"screen-share";text:root.shareActive?"Stop sharing":"Share screen";focusable:true;enabled:root.voice.status==="connected"&&!root.shareBusy&&root.share.status!=="stopping";tooltipText:"Choose one screen or window. Video only; closing this viewer stops sharing.";onClicked:root.toggleShare()}
-    Text {width:Math.max(0,parent.width-shareButton.width-parent.spacing);anchors.verticalCenter:parent.verticalCenter;textFormat:Text.PlainText;elide:Text.ElideRight;color:PluginTheme.Color.foreground;font.family:Style.font.family;font.pixelSize:Style.font.bodySmall;text:root.share.error || (root.share.status==="selecting"?"Choose a source in the system dialog":root.share.status==="connecting"?"Connecting screen stream":root.share.status==="waiting"?"Waiting for an encrypted viewer":root.share.status==="sharing"?"Sharing screen · video only":root.share.status==="stopping"?"Stopping screen share":"")}
+    visible:!!root.sharing && root.sharing.active
+    Button {id:shareButton;objectName:"video-stop-share";text:"Stop sharing";iconName:"screen";focusable:true;onClicked:root.sharing.stop()}
+    Button {objectName:"video-leave";text:"Leave call";iconName:"leave";foreground:PluginTheme.Color.urgent;focusable:true;onClicked:{if(root.service)root.service.voiceLeave();root.hide()}}
    }
    Controls.ScrollView {
     id:picker;width:parent.width;height:Math.min(Style.space(100),choices.implicitHeight)
@@ -147,7 +135,7 @@ Item {
     }
    }
    Row {
-    objectName:"video-settings";width:parent.width;spacing:Style.spacing.sm;height:Style.spacing.controlHeight
+    objectName:"video-settings";visible:!!root.sample.user_id;width:parent.width;spacing:Style.spacing.sm;height:Style.spacing.controlHeight
     Text {text:"Quality";anchors.verticalCenter:parent.verticalCenter;color:PluginTheme.Color.foreground;font.family:Style.font.family;font.pixelSize:Style.font.bodySmall}
     Controls.ComboBox {palette.button:PluginTheme.Color.popups.background;palette.buttonText:PluginTheme.Color.foreground;palette.base:PluginTheme.Color.popups.background;palette.text:PluginTheme.Color.foreground;palette.highlight:PluginTheme.Color.accent;id:quality;objectName:"video-quality";width:Style.space(98);model:["360p","720p","1080p"];currentIndex:0;enabled:!!root.sample.user_id&&!root.selecting;Accessible.name:"Video output size";onActivated:root.settings({quality:[360,720,1080][currentIndex]})
      function sync(){if(!popup.visible&&!root.pendingSettings&&!root.busy)currentIndex=root.sample.quality===1080?2:root.sample.quality===720?1:0}
@@ -173,7 +161,7 @@ Item {
      color:"white";font.family:Style.font.family;font.pixelSize:Style.font.bodySmall
     }
    }
-   Text {id:footer;width:parent.width;text:root.error && root.imageSource ? root.error : "H.264 · Drag the title to move. Main window can close; this video stays open.";wrapMode:Text.WordWrap;color:PluginTheme.Color.foreground;font.family:Style.font.family;font.pixelSize:Style.font.bodySmall}
+   Text {id:footer;width:parent.width;text:root.error && root.imageSource ? root.error : "Closing this viewer keeps your call and screen share running.";wrapMode:Text.WordWrap;color:PluginTheme.Color.foreground;font.family:Style.font.family;font.pixelSize:Style.font.bodySmall}
   }
   MouseArea {objectName:"video-resize";width:Style.space(16);height:width;anchors.right:parent.right;anchors.bottom:parent.bottom;cursorShape:Qt.SizeFDiagCursor;onPressed:root.resizeRequested()}
  }

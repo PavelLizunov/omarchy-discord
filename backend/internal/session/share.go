@@ -31,7 +31,7 @@ type screenShare struct {
 func (s *screenShare) snapshot() voice.BroadcastSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.broadcast != nil {
+	if s.broadcast != nil && s.status != "stopping" {
 		return s.broadcast.Snapshot()
 	}
 	status := s.status
@@ -118,6 +118,9 @@ func (m *Manager) shareScreen(ctx context.Context, req *protocol.Request) (any, 
 		return nil, protocol.Errorf(protocol.CodeGatewayUnavailable, "screen sharing unavailable")
 	}
 	s := mod.share
+	if p.Action == "status" {
+		return s.snapshot(), nil
+	}
 	if p.Action == "stop" {
 		s.mu.Lock()
 		if p.Revision == 0 || p.Revision <= s.revision {

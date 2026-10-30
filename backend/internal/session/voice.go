@@ -239,7 +239,7 @@ func (m *Manager) voiceJoin(ctx context.Context, req *protocol.Request) (any, *p
 	mod := m.video
 	m.mu.Unlock()
 	if mod != nil {
-		mod.close()
+		mod.invalidate()
 	}
 	if err := v.Join(ctx, guildID, chID); err != nil {
 		return nil, protocol.Errorf(protocol.CodeDiscordError, "voice join failed: %v", err)
@@ -256,7 +256,7 @@ func (m *Manager) voiceLeave(ctx context.Context) (any, *protocol.Error) {
 	mod := m.video
 	m.mu.Unlock()
 	if mod != nil {
-		mod.close()
+		mod.invalidate()
 	}
 	if err := v.Leave(ctx); err != nil {
 		return nil, protocol.Errorf(protocol.CodeDiscordError, "voice leave failed: %v", err)

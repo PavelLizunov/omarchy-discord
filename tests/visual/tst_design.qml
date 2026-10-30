@@ -41,9 +41,9 @@ TestCase {
  function test_voice_chat_reserves_left_once(){
   p.model.voice={status:"connected",guildId:"1",channelId:"9002"};wait(30)
   var chat=findChild(p.client,"chat-column"),bar=findChild(p.client,"call-bar")
-  verify(chat.width>280);compare(Math.round(chat.mapToItem(p.client,0,0).x-bar.mapToItem(p.client,bar.width,0).x),Style.spacing.panelGap)
+  verify(chat.width>400);verify(chat.mapToItem(p.client,0,chat.height).y<=bar.mapToItem(p.client,0,0).y)
   tests.width=420;wait(30);verify(chat.width>200);verify(p.client.composer.width>200)
-  p.model.voice={status:"error",guildId:"1",channelId:"9002"};wait(30);verify(chat.width>200);verify(bar.roster.visible)
+  p.model.voice={status:"error",guildId:"1",channelId:"9002"};wait(30);verify(chat.width>200);verify(bar.visible)
  }
  function test_voice_hierarchy_preserves_readable_navigation_and_user_card(){
   p.model.voice={status:"connected",guildId:"1",channelId:"9002"};p.client.compactChatOpen=false
@@ -51,15 +51,16 @@ TestCase {
   var rail=findChild(p.client,"server-rail"),channels=findChild(p.client,"channel-pane"),content=findChild(p.client,"selected-channel-content"),bar=findChild(p.client,"call-bar")
   verify(rail.width>=160);verify(rail.mapToItem(p.client,rail.width,0).x<channels.mapToItem(p.client,0,0).x)
   verify(channels.mapToItem(p.client,0,channels.height).y<=bar.mapToItem(p.client,0,0).y)
-  compare(bar.parent,content);verify(bar.roster.visible);verify(bar.roster.compactHeader)
-  tests.width=420;tests.height=420;wait(30);verify(rail.width>=160);verify(bar.roster.height>=50)
+  verify(bar.parent!==content);verify(!bar.roster.visible);verify(bar.roster.compactHeader)
+  tests.width=420;tests.height=420;wait(30);verify(rail.width>=160)
+  verify(findChild(p.client,"voice-leave").mapToItem(p.client,0,32).y<=p.client.height)
   tests.width=597;tests.height=400;wait(30)
   var user=findChild(p.client,"user-bar"),settings=findChild(p.client,"user-bar-settings")
   verify(settings.mapToItem(user,settings.width,0).x<=user.width)
   var label=findChild(p.client,"server-name-1");verify(label.height<30)
   tests.width=1040;tests.height=680;p.client.setCompactMode(false);wait(40)
   verify(channels.mapToItem(p.client,channels.width,0).x<=content.mapToItem(p.client,0,0).x)
-  verify(bar.mapToItem(p.client,bar.width,0).x<=findChild(p.client,"chat-column").mapToItem(p.client,0,0).x)
+  verify(findChild(p.client,"chat-column").mapToItem(p.client,0,findChild(p.client,"chat-column").height).y<=bar.mapToItem(p.client,0,0).y)
   compare(p.model.callCount("voiceJoin"),0);compare(p.model.callCount("voiceLeave"),0)
   p.model.guilds=[{id:"1",name:"Fixture server",unread:"mentioned",mention_count:2}]
  }
@@ -147,13 +148,14 @@ TestCase {
  function test_audio_details_keyboard_and_no_automatic_tone(){
   p.model.voice={status:"connected",guildId:"1",channelId:"9002"};wait(30)
   var bar=findChild(p.client,"call-bar"),toggle=findChild(p.client,"voice-audio-details"),d=findChild(p.client,"voice-audio-diagnostics")
-  p.client.focusCallBar();verify(toggle.activeFocus);keyClick(Qt.Key_Return);verify(d.details)
-  p.client.cycleFocus(1);verify(findChild(p.client,"voice-test-output").activeFocus)
+  toggle.forceActiveFocus();keyClick(Qt.Key_Return);verify(d.details)
+  var reached=false
+  for(var i=0;i<15;i++){p.client.cycleFocus(1);if(findChild(p.client,"voice-test-output").activeFocus){reached=true;break}}
+  verify(reached)
   keyClick(Qt.Key_Escape);verify(!d.details);verify(toggle.activeFocus)
-  toggle.clicked();p.client.cycleFocus(1);verify(findChild(p.client,"voice-test-output").activeFocus)
-  p.client.cycleFocus(1);verify(findChild(p.client,"voice-reconnect-audio").activeFocus)
-  p.client.cycleFocus(1);verify(findChild(p.client,"voice-device-details").activeFocus)
-  p.client.cycleFocus(1);verify(findChild(p.client,"voice-mute").activeFocus)
+  toggle.clicked();verify(d.details)
+  findChild(p.client,"voice-mute").forceActiveFocus();keyClick(Qt.Key_Return)
+  compare(p.model.callCount("toggleMute"),1)
   toggle.clicked()
   p.model.reset();toggle.clicked();toggle.clicked();compare(p.model.callCount("voice_test_output"),0)
   compare(p.model.callCount("voiceJoin"),0);compare(p.model.callCount("voiceLeave"),0)

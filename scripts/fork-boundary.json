@@ -5,7 +5,7 @@
   ],
   "derived_preserved": {
     "backend/internal/voicewire/LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
-    "backend/internal/voicewire/OMACORD-PATCH.md": "4a2e7d4724067d11518ea33ee1807741666aaa83bd9909b3de700300d4fa15ac",
+    "backend/internal/voicewire/OMACORD-PATCH.md": "0993cf8ad845d9e0b5cd04fa14ba9a4a8a3b68db6c43029d3b65951a34ff75d0",
     "backend/internal/voicewire/audio_receiver.go": "96f0287b936663975cbdb65a8ea97429892946e6f9173931801b5eb9053dbffe",
     "backend/internal/voicewire/audio_sender.go": "bf9dca71cbdfbb965c06e2f02b74d3999f45f6f0622243b986e59815ab3a6f4f",
     "backend/internal/voicewire/camera_stages_test.go": "646e05c32cfb8f19bc5141119056bd8dc633c9e52847c27dea6e0d8677f0ce1c",
@@ -16,7 +16,7 @@
     "backend/internal/voicewire/encryption_modes.go": "cdd4390abfb03acfd0cb8cb5d836df04b2d58878682c394c603aeb5099d82f17",
     "backend/internal/voicewire/feedback.go": "1bb4103280eea1c879af9d78a86887c2825d681e67ec4ab9cc3ee8bd57fc65f1",
     "backend/internal/voicewire/feedback_test.go": "68d70372b7198981ba7d80dd03fb739bcfede8f64386dc278e9dd8dab5921af4",
-    "backend/internal/voicewire/gateway.go": "fc6e32ddf754ed6e709098d6b00770ca90cdd121f28d113ad97b5f0dfaa059e2",
+    "backend/internal/voicewire/gateway.go": "bcd7889a91441fabdc8ffa4eb24a5a60279b0f6e11a6e8152a5a3dc72b3568fe",
     "backend/internal/voicewire/gateway_config.go": "e4963353d47789b3f0f1d5f5d553d618e7581f4716f608c4e2c7071ea49787a4",
     "backend/internal/voicewire/gateway_messages.go": "706142ee024443fe555264a954df5b0dcb4f1e880d44c541364873f79f335da8",
     "backend/internal/voicewire/gateway_opcodes.go": "e28dbe052b7f8d89d3a4677bafc7654b97e397de9a8c11ae97a981c1c144499e",
@@ -98,7 +98,7 @@
     "backend/dist/x86_64/omarchy-discord-backend": {
       "added": null,
       "removed": null,
-      "sha256": "4245e1247d2bfd76e483085664f46c620b262ee32a7f240a05a133f81110e38b"
+      "sha256": "e3da8197aaaf062c5966e0bd46295f06b447f04bc2717e4dd51e9b074b19f7de"
     },
     "backend/internal/keyring/keyring.go": {
       "added": 4,
@@ -165,8 +165,8 @@
       "removed": 6
     },
     "backend/internal/session/manager.go": {
-      "added": 75,
-      "removed": 108
+      "added": 87,
+      "removed": 109
     },
     "backend/internal/session/manager_test.go": {
       "added": 6,
@@ -289,8 +289,8 @@
       "removed": 51
     },
     "components/CallBar.qml": {
-      "added": 214,
-      "removed": 43
+      "added": 137,
+      "removed": 112
     },
     "components/Cheatsheet.qml": {
       "added": 7,

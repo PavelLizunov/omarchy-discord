@@ -33,14 +33,12 @@ Item {
    camera.poll();compare(camera.error,service.cameraError)
    service.cameraError="";camera.poll();compare(camera.error,"")
   }
-  function test_share_is_explicit_and_close_stops_capture(){
-   service.sharingStatus="idle";camera.open()
-   compare(camera.shareActive,false)
-   var button=findChild(camera,"screen-share");verify(button!==null)
-   mouseClick(button,button.width/2,button.height/2)
-   compare(camera.shareActive,true);compare(service.calls[service.calls.length-1].action,"start")
+  function test_viewer_close_does_not_own_outgoing_share(){
+   service.sharingStatus="sharing";camera.open()
+   verify(findChild(camera,"screen-share")===null)
    camera.hide()
-   compare(service.calls[service.calls.length-1].action,"stop");compare(service.sharingStatus,"idle")
+   compare(service.sharingStatus,"sharing")
+   service.sharingStatus="idle"
   }
   function test_choose_and_close(){
    camera.open();compare(camera.shown,true);compare(camera.sample.streams.length,1)

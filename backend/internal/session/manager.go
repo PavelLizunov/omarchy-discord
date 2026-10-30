@@ -408,13 +408,24 @@ func (m *Manager) reauth(n *ningen.State, cause error) {
 		return
 	}
 	m.token = ""
-	m.cancel = nil
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
+	}
 	v := m.voice
+	media := m.video
+	m.video = nil
+	if media != nil {
+		media.invalidate()
+	}
 	m.voice, m.voiceState = nil, idleVoice
 	m.setLifecycleLocked(protocol.LifecycleReauthNeeded, fmt.Sprintf("session invalidated: %v", cause))
 	m.mu.Unlock()
 	if v != nil {
 		v.Close()
+	}
+	if media != nil {
+		media.close()
 	}
 	if err := m.kr.Clear(context.Background()); err != nil {
 		redact.Logf("session: keyring clear after reauth: %v", err)

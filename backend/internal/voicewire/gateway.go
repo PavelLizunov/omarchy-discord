@@ -204,7 +204,7 @@ func (g *gatewayImpl) open(ctx context.Context, state State) error {
 	g.statusMu.Unlock()
 
 	var readyOnce sync.Once
-	readyChan := make(chan error)
+	readyChan := make(chan error, 1)
 	go g.listen(g.conn, func(err error) {
 		readyOnce.Do(func() {
 			readyChan <- err
@@ -240,7 +240,7 @@ func (g *gatewayImpl) CloseWithCode(code int, message string) {
 	defer g.connMu.Unlock()
 	if g.conn != nil {
 		g.config.Logger.Debug("closing voice gateway connection", slog.Int("code", code), slog.String("message", message))
-		if err := g.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(code, message)); err != nil && !errors.Is(err, websocket.ErrCloseSent) {
+		if err := g.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, message), time.Now().Add(time.Second)); err != nil && !errors.Is(err, websocket.ErrCloseSent) {
 			g.config.Logger.Debug("error writing close code", slog.Any("err", err))
 		}
 		_ = g.conn.Close()
@@ -264,9 +264,7 @@ func (g *gatewayImpl) Status() Status {
 }
 
 func (g *gatewayImpl) Send(ctx context.Context, op Opcode, d GatewayMessageData) error {
-	g.statusMu.Lock()
-	defer g.statusMu.Unlock()
-	if g.status != StatusReady {
+	if g.Status() != StatusReady {
 		return discord.ErrShardNotReady
 	}
 
@@ -309,6 +307,17 @@ func (g *gatewayImpl) send(ctx context.Context, messageType int, data []byte) er
 		return ErrGatewayNotConnected
 	}
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	if limit, ok := ctx.Deadline(); ok && limit.Before(deadline) {
+		deadline = limit
+	}
+	if err := g.conn.SetWriteDeadline(deadline); err != nil {
+		return err
+	}
+	defer g.conn.SetWriteDeadline(time.Time{})
 	if g.config.Logger.Enabled(ctx, slog.LevelDebug) {
 		g.config.Logger.DebugContext(ctx, "sending voice gateway command", slog.String("data", string(data)))
 	}
