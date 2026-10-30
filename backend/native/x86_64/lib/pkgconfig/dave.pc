@@ -1,0 +1,8 @@
+prefix=${pcfiledir}/../..
+libdir=${prefix}/lib
+includedir=${prefix}/include/dave
+Name: dave
+Description: Discord native DAVE media library
+Version: 1.2.2
+Libs: -L${libdir} -ldave
+Cflags: -I${includedir}

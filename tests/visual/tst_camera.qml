@@ -12,6 +12,7 @@ Item {
   property var calls:[]
   property string cameraError:""
   property bool rejectWatch:false
+  property string sharingStatus:"idle"
  property string frameImage:""
  property string selectedUser:""
  property string selectedKind:"camera"
@@ -20,7 +21,7 @@ Item {
  property var replies:[]
  function deliver(){var next=replies[0];replies=replies.slice(1);next.callback(true,next.result,"")}
   function voiceUsers(g,c){return [{id:"123",display_name:"Ada"}]}
-  function sendCommand(name,p,callback){if(name==="video_watch" && rejectWatch && p.kind!=="stop"){callback(false,null,"Screen handshake timed out");return 1}calls=calls.concat([{name:name,user:p.user_id || "",kind:p.kind || ""}]);if(name==="video_watch"){selectedUser=p.user_id || "";selectedKind=p.kind || "camera"}if(p.quality!==undefined)selectedQuality=p.quality;var result={streams:[{user_id:"123",ssrc:42}],choices:[{user_id:"123",kind:"camera"},{user_id:"123",kind:"screen"}],quality:selectedQuality,screen:{audio_volume:p.volume===undefined?100:p.volume},kind:selectedKind,user_id:selectedUser,image:frameImage,age_ms:-1,error:cameraError};if(deferReplies)replies=replies.concat([{callback:callback,result:result}]);else callback(true,result,"");return 1}
+  function sendCommand(name,p,callback){if(name==="screen_share"){sharingStatus=p.action==="start"?"selecting":"idle";calls=calls.concat([{name:name,action:p.action}]);callback(true,{status:sharingStatus},"");return 1}if(name==="video_watch" && rejectWatch && p.kind!=="stop"){callback(false,null,"Screen handshake timed out");return 1}calls=calls.concat([{name:name,user:p.user_id || "",kind:p.kind || ""}]);if(name==="video_watch"){selectedUser=p.user_id || "";selectedKind=p.kind || "camera"}if(p.quality!==undefined)selectedQuality=p.quality;var result={share:{status:sharingStatus},streams:[{user_id:"123",ssrc:42}],choices:[{user_id:"123",kind:"camera"},{user_id:"123",kind:"screen"}],quality:selectedQuality,screen:{audio_volume:p.volume===undefined?100:p.volume},kind:selectedKind,user_id:selectedUser,image:frameImage,age_ms:-1,error:cameraError};if(deferReplies)replies=replies.concat([{callback:callback,result:result}]);else callback(true,result,"");return 1}
  }
  Components.CameraView {id:camera;anchors.fill:parent;service:service}
  TestCase {
@@ -31,6 +32,15 @@ Item {
    compare(camera.error,service.cameraError)
    camera.poll();compare(camera.error,service.cameraError)
    service.cameraError="";camera.poll();compare(camera.error,"")
+  }
+  function test_share_is_explicit_and_close_stops_capture(){
+   service.sharingStatus="idle";camera.open()
+   compare(camera.shareActive,false)
+   var button=findChild(camera,"screen-share");verify(button!==null)
+   mouseClick(button,button.width/2,button.height/2)
+   compare(camera.shareActive,true);compare(service.calls[service.calls.length-1].action,"start")
+   camera.hide()
+   compare(service.calls[service.calls.length-1].action,"stop");compare(service.sharingStatus,"idle")
   }
   function test_choose_and_close(){
    camera.open();compare(camera.shown,true);compare(camera.sample.streams.length,1)

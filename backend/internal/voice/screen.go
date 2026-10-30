@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/disgoorg/snowflake/v2"
+	davesession "github.com/mattcalayo/omarchy-discord/backend/internal/dave"
 	dvoice "github.com/mattcalayo/omarchy-discord/backend/internal/voicewire"
-	davesession "github.com/thomas-vilte/dave-go/session"
 )
 
 // Screen owns one independent receiving transport and decoder. It never joins
@@ -35,7 +35,7 @@ func openScreen(ctx context.Context, state dvoice.State, user snowflake.ID, log 
 		log = slog.Default()
 	}
 	s := &Screen{video: newCamera(), audio: newScreenAudio(log, user), done: make(chan struct{})}
-	opts := []dvoice.ConnConfigOpt{dvoice.WithConnLogger(log), dvoice.WithConnDaveSessionCreateFunc(davesession.CreateFunc()), dvoice.WithConnGatewayConfigOpts(dvoice.WithGatewayCloseObserver(func(error) { s.fail("Screen connection lost. Select it again.") })), dvoice.WithConnEventHandlerFunc(func(g dvoice.Gateway, op dvoice.Opcode, seq int, data dvoice.GatewayMessageData) {
+	opts := []dvoice.ConnConfigOpt{dvoice.WithConnLogger(log), dvoice.WithConnDaveSessionCreateFunc(davesession.NewSession), dvoice.WithConnGatewayConfigOpts(dvoice.WithGatewayCloseObserver(func(error) { s.fail("Screen connection lost. Select it again.") })), dvoice.WithConnEventHandlerFunc(func(g dvoice.Gateway, op dvoice.Opcode, seq int, data dvoice.GatewayMessageData) {
 		if d, ok := data.(dvoice.GatewayMessageDataVideo); ok {
 			s.video.announce(d)
 		}

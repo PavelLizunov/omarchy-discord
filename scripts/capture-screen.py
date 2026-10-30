@@ -3,11 +3,12 @@
 
 Requires PyGObject and GStreamer with PipeWire, x264 and H.264 parsing elements.
 The portal owns selection and permission; GStreamer owns conversion, encoding,
-buffering and pipe output. This helper is not connected to a Discord sender.
+buffering and pipe output. The backend owns the optional Discord sender.
 """
 import argparse
 import os
 import signal
+import struct
 import sys
 import uuid
 
@@ -16,15 +17,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--height', type=int, choices=(360, 720, 1080), default=720)
     parser.add_argument('--fps', type=int, choices=(15, 30), default=30)
+    parser.add_argument('--framed', action='store_true', help='emit length-prefixed H.264 access units')
     args = parser.parse_args()
 
     import gi
     gi.require_version('Gst', '1.0')
-    from gi.repository import Gio, GLib, Gst
+    gi.require_version('GstVideo', '1.0')
+    from gi.repository import Gio, GLib, Gst, GstVideo
 
     Gst.init(None)
     for name in ('pipewiresrc', 'queue', 'videoconvert', 'videoscale', 'videorate',
-                 'x264enc', 'h264parse', 'fdsink'):
+                 'x264enc', 'h264parse', 'appsink' if args.framed else 'fdsink'):
         if Gst.ElementFactory.find(name) is None:
             raise RuntimeError('Missing GStreamer element: ' + name)
 
@@ -124,10 +127,38 @@ def main():
             'videoconvert ! videoscale add-borders=true ! videorate drop-only=true ! '
             f'video/x-raw,format=I420,width={width},height={height},'
             f'pixel-aspect-ratio=1/1,framerate={args.fps}/1 ! '
-            f'x264enc tune=zerolatency speed-preset=veryfast bitrate=2500 '
+            f'x264enc name=encoder tune=zerolatency speed-preset=veryfast bitrate=2500 '
             f'key-int-max={args.fps * 2} byte-stream=true ! '
             'video/x-h264,profile=constrained-baseline,stream-format=byte-stream,alignment=au ! '
-            'h264parse config-interval=-1 ! fdsink fd=1 sync=false')
+            'h264parse config-interval=-1 ! ' +
+            ('appsink name=output emit-signals=true max-buffers=1 drop=false sync=false'
+             if args.framed else 'fdsink fd=1 sync=false'))
+        if args.framed:
+            def encoded_sample(sink):
+                sample = sink.emit('pull-sample')
+                buffer = sample.get_buffer()
+                if buffer.get_size() > 4 * 1024 * 1024:
+                    GLib.idle_add(stop, 'Encoded frame exceeds limit')
+                    return Gst.FlowReturn.ERROR
+                payload = buffer.extract_dup(0, buffer.get_size())
+                stamp = buffer.pts if buffer.pts != Gst.CLOCK_TIME_NONE else 0
+                try:
+                    sys.stdout.buffer.write(struct.pack('!IQ', len(payload), stamp))
+                    sys.stdout.buffer.write(payload)
+                    sys.stdout.buffer.flush()
+                except (BrokenPipeError, OSError):
+                    GLib.idle_add(stop)
+                    return Gst.FlowReturn.ERROR
+                return Gst.FlowReturn.OK
+            pipeline.get_by_name('output').connect('new-sample', encoded_sample)
+
+        def keyframe():
+            if pipeline is not None:
+                event = GstVideo.video_event_new_upstream_force_key_unit(Gst.CLOCK_TIME_NONE, True, 0)
+                pipeline.get_by_name('encoder').get_static_pad('src').send_event(event)
+            return GLib.SOURCE_CONTINUE
+
+        signals.append(GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, keyframe))
         source = pipeline.get_by_name('capture')
         source.set_property('fd', remote_fd)
         if properties.get('pipewire-serial') and source.find_property('target-object'):

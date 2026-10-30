@@ -22,6 +22,7 @@ import (
 // videoModule serializes viewer actions separately from the voice engine.
 // Handshake secrets are retained only while opening the selected transport.
 type videoModule struct {
+	share    *screenShare
 	mu       sync.Mutex
 	op       sync.Mutex
 	key      string
@@ -40,20 +41,22 @@ type videoChoice struct {
 	Kind   string `json:"kind"`
 }
 type videoSnapshot struct {
-	Choices []videoChoice `json:"choices"`
-	Kind    string        `json:"kind"`
+	Share   voice.BroadcastSnapshot `json:"share"`
+	Choices []videoChoice           `json:"choices"`
+	Kind    string                  `json:"kind"`
 	voice.CameraSnapshot
 	Screen *voice.ScreenObservation `json:"screen,omitempty"`
 }
 
 func (m *Manager) installVideoHandlers(n *ningen.State) {
-	owner := &videoModule{leave: func(key string) {
+	owner := &videoModule{share: &screenShare{}, leave: func(key string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		_ = n.SendGateway(ctx, &streamCommand{Code: 19, Key: key})
 	}}
 	m.video = owner
 	n.AddSyncHandler(func(e *streamCreateEvent) {
+		owner.share.create(e)
 		owner.mu.Lock()
 		defer owner.mu.Unlock()
 		if e.Key == owner.key {
@@ -63,6 +66,7 @@ func (m *Manager) installVideoHandlers(n *ningen.State) {
 		}
 	})
 	n.AddSyncHandler(func(e *streamServerEvent) {
+		owner.share.update(e)
 		owner.mu.Lock()
 		defer owner.mu.Unlock()
 		if e.Key == owner.key {
@@ -72,6 +76,7 @@ func (m *Manager) installVideoHandlers(n *ningen.State) {
 		}
 	})
 	n.AddSyncHandler(func(e *streamDeleteEvent) {
+		owner.share.deleted(e)
 		owner.mu.Lock()
 		owner.acknowledge(e.Key)
 		var s *voice.Screen
@@ -163,6 +168,9 @@ func (v *videoModule) reset() {
 
 // invalidate is nonblocking and cannot close a later selection when queued.
 func (v *videoModule) invalidate() {
+	if v.share != nil {
+		v.share.stop()
+	}
 	v.mu.Lock()
 	v.revision++
 	if v.cancel != nil {
@@ -179,6 +187,9 @@ func (v *videoModule) invalidate() {
 	}
 }
 func (v *videoModule) close() {
+	if v.share != nil {
+		v.share.close()
+	}
 	v.mu.Lock()
 	v.revision++
 	if v.cancel != nil {
@@ -217,6 +228,9 @@ func (m *Manager) videoSnapshot() (any, *protocol.Error) {
 	mod := m.video
 	m.mu.Unlock()
 	if mod != nil {
+		if mod.share != nil {
+			r.Share = mod.share.snapshot()
+		}
 		mod.mu.Lock()
 		s := mod.screen
 		mod.mu.Unlock()

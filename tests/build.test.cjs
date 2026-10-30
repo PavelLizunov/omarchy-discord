@@ -12,6 +12,7 @@ function fixture(t) {
   const source = path.join(dir, 'source');
   fs.mkdirSync(path.join(source, 'scripts'), {recursive: true});
   fs.copyFileSync(path.join(root, 'scripts/build-backend.sh'), path.join(source, 'scripts/build-backend.sh'));
+  fs.copyFileSync(path.join(root, 'scripts/capture-screen.py'), path.join(source, 'scripts/capture-screen.py'));
   fs.cpSync(path.join(root, 'backend'), path.join(source, 'backend'), {recursive: true});
   const bin = path.join(dir, 'bin');
   fs.mkdirSync(bin);

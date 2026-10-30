@@ -10,6 +10,10 @@ The media implementation imports these Go modules at the exact versions pinned i
 
 Their upstream license texts are reproduced below without replacing upstream placeholders. These notices accompany any backend built with these modules. Existing libopus, PulseAudio/PipeWire, FFmpeg, GStreamer and x264 installations retain their respective upstream licenses; they are external runtime components, not newly bundled binaries.
 
+## Native DAVE
+
+The native adapter derives from `github.com/disgoorg/godave/golibdave v0.3.0` and imports `github.com/disgoorg/godave/libdave v0.3.0`, both Apache-2.0. Their notice and adaptation record are in [the adapter directory](backend/internal/dave/PROVENANCE.md). The official libdave `v1.2.2/cpp` x86_64 SDK is bundled with unchanged headers/binary and libdave, BoringSSL, mlspp and nlohmann-json notices in [the SDK directory](backend/native/README.md). No custom cryptography is added.
+
 ## Pion rtp v1.10.6
 
 MIT License

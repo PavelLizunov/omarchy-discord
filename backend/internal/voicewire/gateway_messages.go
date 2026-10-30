@@ -210,10 +210,11 @@ type GatewayMessageDataIdentify struct {
 func (GatewayMessageDataIdentify) voiceGatewayMessageData() {}
 
 type GatewayMessageDataReady struct {
-	SSRC  uint32           `json:"ssrc"`
-	IP    string           `json:"ip"`
-	Port  int              `json:"port"`
-	Modes []EncryptionMode `json:"modes"`
+	Streams []VideoStream    `json:"streams"`
+	SSRC    uint32           `json:"ssrc"`
+	IP      string           `json:"ip"`
+	Port    int              `json:"port"`
+	Modes   []EncryptionMode `json:"modes"`
 }
 
 func (GatewayMessageDataReady) voiceGatewayMessageData() {}
@@ -359,12 +360,21 @@ type MediaCodec struct {
 }
 
 type VideoStream struct {
-	RTXSSRC uint32 `json:"rtx_ssrc"`
-	Type    string `json:"type"`
-	SSRC    uint32 `json:"ssrc"`
-	Active  bool   `json:"active"`
-	Quality int    `json:"quality"`
-	RID     string `json:"rid"`
+	MaxBitrate    int              `json:"max_bitrate,omitempty"`
+	MaxFramerate  int              `json:"max_framerate,omitempty"`
+	MaxResolution *VideoResolution `json:"max_resolution,omitempty"`
+	RTXSSRC       uint32           `json:"rtx_ssrc"`
+	Type          string           `json:"type"`
+	SSRC          uint32           `json:"ssrc"`
+	Active        bool             `json:"active"`
+	Quality       int              `json:"quality"`
+	RID           string           `json:"rid"`
+}
+
+type VideoResolution struct {
+	Type   string `json:"type"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
 }
 
 type GatewayMessageDataVideo struct {

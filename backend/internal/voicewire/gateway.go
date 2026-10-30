@@ -72,6 +72,7 @@ type State struct {
 	ChannelID    snowflake.ID
 	MediaGroupID snowflake.ID
 	MediaOnly    bool
+	VideoSend    bool
 	SessionID    string
 	Token        string
 	Endpoint     string
@@ -449,6 +450,9 @@ func (g *gatewayImpl) identify() error {
 		ChannelID:              g.state.ChannelID, Video: true, Streams: []VideoStream{},
 	}
 
+	if g.state.VideoSend {
+		identify.Streams = []VideoStream{{Type: "video", RID: "100", Quality: 100}}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := g.sendInternal(ctx, OpcodeIdentify, identify); err != nil {

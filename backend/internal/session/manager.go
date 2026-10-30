@@ -625,6 +625,8 @@ func (m *Manager) Handle(ctx context.Context, req *protocol.Request) (any, *prot
 			return nil, protocol.Errorf(protocol.CodeUnknownGuild, "guild is not in this session")
 		}
 		return VoiceMembers(n.Offline(), discord.GuildID(sf)), nil
+	case "screen_share":
+		return m.shareScreen(ctx, req)
 	case "video_state":
 		return m.videoSnapshot()
 	case "video_watch":

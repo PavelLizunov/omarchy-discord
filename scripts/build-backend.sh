@@ -11,8 +11,8 @@ source_stamp="$source_root/backend/dist/$architecture/source.sha256"
 source_fingerprint() {
   (
     cd -- "$source_root/backend"
-    { sha256sum go.mod go.sum
-      find cmd internal -type f -name '*.go' ! -name '*_test.go' -print0 \
+    { sha256sum go.mod go.sum ../scripts/capture-screen.py
+      find cmd internal native -type f ! -name '*_test.go' -print0 \
         | LC_ALL=C sort -z | xargs -0 sha256sum
     } | sha256sum | cut -d' ' -f1
   )
@@ -20,7 +20,7 @@ source_fingerprint() {
 
 check_shared_libraries() {
   if ldd "$destination" 2>/dev/null | grep -q 'not found'; then
-    echo "build-backend.sh: the Discord backend needs libopus and it is not installed" >&2
+    echo "build-backend.sh: the Discord backend has missing shared libraries (libopus or bundled libdave)" >&2
     echo "Install it and re-run: sudo pacman -S opus" >&2
     exit 32
   fi
@@ -38,6 +38,8 @@ fi
 if [[ -f $prebuilt && -x $prebuilt && -f $source_stamp ]] \
     && [[ $(< "$source_stamp") == "$(source_fingerprint)" ]]; then
   install -d -m 700 -- "$runtime_dir"
+  install -m 755 -- "$source_root/backend/native/$architecture/lib/libdave.so" "$runtime_dir/libdave.so" || exit 31
+  install -m 755 -- "$source_root/scripts/capture-screen.py" "$runtime_dir/capture-screen.py" || exit 31
   install -m 755 -- "$prebuilt" "$destination" || exit 31
   check_shared_libraries
   printf 'Installed bundled Discord backend: %s\n' "$destination"
@@ -63,6 +65,7 @@ install -d -m 700 -- "$target_dir"
 build_status=0
 (
   cd -- "$source_root/backend"
+  source native/env.sh
   GOCACHE="$go_cache" GOFLAGS="${GOFLAGS:-} -trimpath" CGO_ENABLED=1 \
     go build -tags nolibopusfile -ldflags='-s -w' \
     -o "$target_dir/omarchy-discord-backend" \
@@ -74,6 +77,8 @@ if (( build_status != 0 )); then
 fi
 
 install -d -m 700 -- "$runtime_dir"
+install -m 755 -- "$source_root/backend/native/$architecture/lib/libdave.so" "$runtime_dir/libdave.so" || exit 31
+install -m 755 -- "$source_root/scripts/capture-screen.py" "$runtime_dir/capture-screen.py" || exit 31
 install -m 755 -- "$target_dir/omarchy-discord-backend" "$destination" || exit 31
 check_shared_libraries
 printf 'Built and installed Discord backend: %s\n' "$destination"

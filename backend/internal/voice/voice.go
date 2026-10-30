@@ -14,8 +14,8 @@ import (
 	"github.com/disgoorg/godave"
 	"github.com/disgoorg/snowflake/v2"
 	"github.com/gorilla/websocket"
+	davesession "github.com/mattcalayo/omarchy-discord/backend/internal/dave"
 	dvoice "github.com/mattcalayo/omarchy-discord/backend/internal/voicewire"
-	davesession "github.com/thomas-vilte/dave-go/session"
 )
 
 type Status string
@@ -337,7 +337,7 @@ func (e *Engine) newManager(self snowflake.ID) dvoice.Manager {
 	return dvoice.NewManager(e.op4, self,
 		dvoice.WithLogger(log),
 		dvoice.WithDaveSessionLogger(log),
-		dvoice.WithDaveSessionCreateFunc(davesession.CreateFunc(davesession.WithLogger(log))),
+		dvoice.WithDaveSessionCreateFunc(davesession.NewSession),
 		dvoice.WithConnConfigOpts(
 			dvoice.WithConnGatewayCreateFunc(e.gatewayCreate),
 			dvoice.WithConnAudioSenderCreateFunc(func(l *slog.Logger, p dvoice.OpusFrameProvider, c dvoice.Conn) dvoice.AudioSender {

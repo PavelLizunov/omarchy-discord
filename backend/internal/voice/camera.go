@@ -228,7 +228,13 @@ func (v *camera) receive(p *dvoice.Packet, ds godave.Session) {
 	}
 	for len(frame) > 0 {
 		plain := make([]byte, ds.MaxDecryptedFrameSize(godave.UserID(v.selected.String()), len(frame)))
-		n, err := ds.Decrypt(godave.UserID(v.selected.String()), frame, plain)
+		decrypt := ds.Decrypt
+		if video, ok := ds.(interface {
+			DecryptVideo(godave.UserID, []byte, []byte) (int, error)
+		}); ok {
+			decrypt = video.DecryptVideo
+		}
+		n, err := decrypt(godave.UserID(v.selected.String()), frame, plain)
 		if err != nil {
 			v.decoder.setError("Camera frame decryption failed")
 			return

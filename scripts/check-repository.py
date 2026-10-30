@@ -76,8 +76,8 @@ def main():
     if any(p.is_symlink() for p in ROOT.rglob('*') if '.git' not in p.parts):
         errors.append('repository symlink found')
     backend = ROOT / 'backend'
-    source = [backend / 'go.mod', backend / 'go.sum']
-    source += sorted(p for folder in ('cmd', 'internal') for p in (backend / folder).rglob('*.go') if not p.name.endswith('_test.go'))
+    source = [backend / 'go.mod', backend / 'go.sum', backend / '../scripts/capture-screen.py']
+    source += sorted(p for folder in ('cmd', 'internal', 'native') for p in (backend / folder).rglob('*') if p.is_file() and not p.name.endswith('_test.go'))
     manifest = ''.join(hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + str(p.relative_to(backend)) + '\n' for p in source)
     expected = (backend / 'dist/x86_64/source.sha256').read_text().strip()
     if hashlib.sha256(manifest.encode()).hexdigest() != expected:
